@@ -170,7 +170,7 @@ class SkillEnv(gym.Env):
     map_data = None
     map_cells = frozenset()
     next_cells = {}
-    goal_half, field_margin, fall_margin, walk_par = 2, 6, 1.5, 0
+    goal_half, field_margin, fall_margin, walk_par = 0, 6, 1.5, 0  # a win is standing on the goal block itself, not just near it
     ticks_per_decision = TICKS_PER_DECISION
     max_sneak_ticks = MAX_SNEAK_TICKS
     turn_choices = len(YAW_STEPS)
@@ -222,7 +222,7 @@ class SkillEnv(gym.Env):
     def _use_task(self, stage):
         self.played_stage = stage
         if STAGES[stage][6] == TREENAN:
-            self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
+            self.goal_half, self.field_margin, self.fall_margin = 0, 18, 6.0
         self.kind, self.blocked, self.detour, self.field = None, set(), 0, None
         self.gap, self.directions, self.heights, self.yaw_range, self.ticks_per_block, self.start, self.extras, self.budget, _ = STAGES[stage]
 
@@ -253,7 +253,7 @@ class SkillEnv(gym.Env):
             placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
             # Climbing costs blocks beyond the width of the gap. One stack of 64 is all it holds, so a round that
             # would need more gets a shorter gap instead of too few blocks.
-            fits = int((64 - self.budget[1]) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0)
+            fits = int((64 - self.budget[1] - getattr(self, "push_spare", 0)) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0)
             if self.budget[0] and gap > max(fits, MIN_GAP):
                 gap = max(fits, MIN_GAP)
                 placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
@@ -302,7 +302,7 @@ class SkillEnv(gym.Env):
         self.landing_order = []
         if self.extras == TREENAN:
             return self._treenan_spec()
-        self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 2, 6, 1.5, 0
+        self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 0, 6, 1.5, 0
         r = self.np_random
         ux, uz = self._direction()
         reach = self.gap + 4

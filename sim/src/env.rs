@@ -55,7 +55,7 @@ const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimate
 
 /// The point rules, in the order info["parts"] lists them.
 pub const PARTS: [&str; 16] = [
-    "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "placed toward the goal", "fall damage", "goal",
+    "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
     "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved",
 ];
 const P_TIME: usize = 0;
@@ -455,12 +455,12 @@ impl Env {
             reward += self.points(P_BLOCKS, -cost);
         }
         if let Some((target, _)) = ev.placed {
-            // As far as standing on it would leave: a block under the goal while still below it is no step closer.
-            let reach = climb(((self.course.goal[0] - target[0]) as f64).hypot((self.course.goal[1] - target[2]) as f64), (self.course.dy - target[1] + Y) as f64);
-            if reach < self.closest_block - 0.5 {
-                self.closest_block = reach;
-                reward += self.points(P_PLACED, PLACE_BONUS);
-            }
+            reward += self.closer(target);
+        }
+        if self.course.blocks > 0 && on_ground {
+            // The block it stands on counts the same as one it placed (AutoEnv._tick).
+            let p = self.player.pos;
+            reward += self.closer([p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32]);
         }
         let success = self.reached();
         let fell = self.fell() && !success;
@@ -574,6 +574,17 @@ impl Env {
             self.push_airborne = false;
             self.pushes_given += 1;
         }
+    }
+
+    /// AutoEnv._closer: points for a block closer to the goal than any so far, by how much closer.
+    fn closer(&mut self, c: [i32; 3]) -> f64 {
+        let reach = climb(((self.course.goal[0] - c[0]) as f64).hypot((self.course.goal[1] - c[2]) as f64), (self.course.dy - c[1] + Y) as f64);
+        if reach >= self.closest_block {
+            return 0.0;
+        }
+        let gained = self.closest_block - reach;
+        self.closest_block = reach;
+        self.points(P_PLACED, PLACE_BONUS * gained)
     }
 
     fn fall_line(&self) -> f64 {

@@ -42,7 +42,7 @@ DEATH_COST = 4.0
 STUCK_COST = DEATH_COST  # giving up must not be cheaper than trying and falling
 GOAL_AFTER_DEATH = 0.5  # share of the goal points left when it took a second try
 SPEED_BONUS = 3.0  # at the goal, by the share of the time limit left
-PLACE_BONUS = 1.0  # per block placed closer to the goal than any before it, so it cannot be farmed
+PLACE_BONUS = 1.0  # per block of reach closer to the goal than ever, by a block placed or a block stood on: never paid twice
 LOOK_UP_COST = 0.05  # per tick when looking up at nothing, at the sky, in proportion to how far above level it looks
 RECORD_GRACE = 20  # ticks of spare time when chasing speed, enough to turn around at the start
 FACES_3D = {"north": (0, 0, -1), "south": (0, 0, 1), "west": (-1, 0, 0), "east": (1, 0, 0), "up": (0, 1, 0), "down": (0, -1, 0)}
@@ -56,6 +56,8 @@ CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
 PUSH_FALL_MARGIN = 4.0  # with pushes a clutch lands below the bridge, so a fall counts a little further down
 PUSH_WAIT = 60  # ticks a planned push waits for a moment it fits, then it is dropped
+PUSH_SPARE_BLOCKS = 4  # handed out per planned push, beyond the need: a save and the way back up
+PUSH_SPARE_TICKS = 60  # and time for it
 
 
 CUBE_START = HEAD + KNOWN
@@ -123,7 +125,7 @@ class AutoEnv(SkillEnv):
         self.shape_cells = {}  # blocks of other shapes than a full block, put in after the reset built the course
         self.map_kind = "treenan"
         self.kind, self.blocked, self.detour, self.field = None, set(), 0, None
-        self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 2, 6, 1.5, 0
+        self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 0, 6, 1.5, 0
         self.ticks_per_block, self.budget = t.get("faster") or t["ticks"], t.get("budget", (0.0, 0))
         self.landing_order, self.course, self.poles = [], [], []
         self.landed = 0
@@ -132,6 +134,7 @@ class AutoEnv(SkillEnv):
         r = self.np_random
         self.push_draws = [(float(r.uniform(0.1, 0.6)), float(r.random()), float(r.uniform(0, 22.5))) for _ in range(1 + int(r.random() < 0.5))] if level else []
         self.push_level = level
+        self.push_spare = PUSH_SPARE_BLOCKS * len(self.push_draws)
         self.gap, self.heights, self.directions, self.yaw_range, self.start = 8, (0,), "axis", t.get("yaw", 180), "center"
         if self.family == "hop":
             self.extras = HOPS
@@ -151,16 +154,18 @@ class AutoEnv(SkillEnv):
             # Played like the Treenan map: blocks pasted in before the round, a way around what stands in it.
             self.extras = TREENAN
             self.map_kind = "bedwars"
-            self.goal_half, self.field_margin, self.fall_margin = 1, 24, 6.0
+            self.goal_half, self.field_margin, self.fall_margin = 0, 24, 6.0
         else:
             self.extras = TREENAN
-            self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
+            self.goal_half, self.field_margin, self.fall_margin = 0, 18, 6.0
             self.map_gaps = (10, t["gap"])
             self.map_rise = t.get("height", 0)
             self.map_start = t.get("start", "bed")
 
     def _spec(self):
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()
+        if self.push_spare and spec.get("blocks", 0) > 0:
+            spec["blocks"] = self.blocks_given = min(64, spec["blocks"] + self.push_spare)
         spec["block_radius"] = RADIUS
         spec["map_radius"] = MAP_RADIUS
         return spec
@@ -390,7 +395,7 @@ class AutoEnv(SkillEnv):
         """A fresh Bedwars map (bedwars_map.py), played like the Treenan map: pasted in, then from the start to the goal."""
         r = self.np_random
         for _ in range(20):
-            m = bedwars_map.layout(self.task, r, Y)
+            m = bedwars_map.layout(self.task, r, Y, most_blocks=64 - self.push_spare)
             gx, gy, gz = m.goal
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
             self.blocked = set(m.blocked) - {(x, z) for x in range(-1, 2) for z in range(-1, 2)}
@@ -434,8 +439,8 @@ class AutoEnv(SkillEnv):
 
     def time_limit(self):
         if self.task.get("faster"):
-            return RECORD_GRACE + self.ticks_per_block * (self.par + 1 + max(0, -self.dy))
-        return super().time_limit()
+            return RECORD_GRACE + self.ticks_per_block * (self.par + 1 + max(0, -self.dy)) + PUSH_SPARE_TICKS * len(self.push_draws)
+        return super().time_limit() + PUSH_SPARE_TICKS * len(self.push_draws)
 
     # ---- Where to go ----
 
@@ -659,6 +664,15 @@ class AutoEnv(SkillEnv):
         self._anchor()
         self.pushed = False
 
+    def _closer(self, x, y, z):
+        """Points for a block (placed or stood on) closer to the goal than any so far, by how much closer. As far as
+        standing on it would leave: a block under the goal while still below it is no step closer."""
+        reach = self._climb(math.hypot(self.goal_x - x, self.goal_z - z), self.dy - y + Y)
+        if reach >= self.closest_block:
+            return 0.0
+        gained, self.closest_block = self.closest_block - reach, reach
+        return self._points("closer than ever", PLACE_BONUS * gained)
+
     def _maybe_push(self, before, keys, clicked, turn_yaw, turn_pitch):
         """The next planned push, the first tick it fits and can be saved (clutch.rs decides, in both the game and the
         simulator). A game without the mod's push gets none."""
@@ -746,14 +760,15 @@ class AutoEnv(SkillEnv):
             reward += self._points("blocks", -(BLOCK_COST if self.used <= self.par else WASTE_COST))
         if held > o["held_count"] and o.get("clicks"):
             c = o["clicks"][-1]
-            # As far as standing on it would leave: a block under the goal while still below it is no step closer.
-            reach = self._climb(math.hypot(self.goal_x - c[0], self.goal_z - c[2]), self.dy - c[1] + Y)
-            if reach < self.closest_block - 0.5:
-                self.closest_block = reach
-                reward += self._points("placed toward the goal", PLACE_BONUS)
+            reward += self._closer(c[0], c[1], c[2])
             for i in range(3):  # a block built outside the arena must also be cleared next time
                 self.dirty[i] = min(self.dirty[i], c[i])
                 self.dirty[i + 3] = max(self.dirty[i + 3], c[i])
+        if self.blocks_given > 0 and o["on_ground"]:
+            # The block it stands on counts the same as one it placed: jumping the last gap is worth as much as
+            # building it, and a block put on ground it already reached is worth nothing.
+            x, y, z = o["pos"]
+            reward += self._closer(math.floor(x), math.floor(y) - 1, math.floor(z))
         success = self.reached(o)
         fell = self.fell(o) and not success
         if success:

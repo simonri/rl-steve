@@ -400,11 +400,28 @@ placed = lambda x, held: {**state(), "held_count": held, "clicks": [[x, Y, 0, x 
 env.obs = {**state(), "held_count": 10}
 env.c.path = [placed(2, 9), placed(2, 8), placed(1, 7), placed(3, 6)]
 tick(env)
-assert abs(env.parts["placed toward the goal"] - PLACE_BONUS) < 1e-9
+assert abs(env.parts["closer than ever"] - PLACE_BONUS) < 1e-9
 tick(env), tick(env)
-assert abs(env.parts["placed toward the goal"] - PLACE_BONUS) < 1e-9
+assert abs(env.parts["closer than ever"] - PLACE_BONUS) < 1e-9
 tick(env)
-assert abs(env.parts["placed toward the goal"] - 2 * PLACE_BONUS) < 1e-9
+assert abs(env.parts["closer than ever"] - 2 * PLACE_BONUS) < 1e-9
+# Standing on a block closer than ever pays the same as placing it: a jump over the last gap is worth as much as
+# building it, and a block then put on ground already reached pays nothing.
+paid = {}
+for how in ("built", "jumped"):
+    env = make("bridge", gap=8, seed=10)
+    begin(env)
+    env.goal_x, env.goal_z = 12, 0
+    env.closest_block = 11.0
+    env.obs = {**state(), "held_count": 10}
+    env.c.path = [placed(6, 9)] if how == "built" else [state(x=6.5, ground=True)]
+    tick(env)
+    paid[how] = env.parts.get("closer than ever", 0.0)
+assert abs(paid["built"] - paid["jumped"]) < 1e-9 and paid["built"] > 0, paid
+env.c.path = [{**state(x=6.5), "held_count": 8, "clicks": [[5, Y, 0, 4, Y, 0]]}]
+before = env.parts.get("closer than ever", 0.0)
+tick(env)
+assert env.parts.get("closer than ever", 0.0) == before, "a block on ground already reached pays nothing"
 # One decision is one tick, and a click still only happens once per tick.
 env = make(count=2, takeoff="block", seed=12)
 begin(env)
@@ -575,3 +592,12 @@ for n in range(200):
         tops[(x, z)] = max(tops.get((x, z), y), y)
     assert min(tops.values()) + 1 > fall_line, "an island top under the fall line"
 print("bedwars maps ok")
+# A win is standing on the goal block itself: next to it on the goal platform is not enough.
+env = make("bridge", gap=8, seed=10)
+begin(env)
+gx, gz, gy = env.goal_x, env.goal_z, Y + 1 + env.dy
+assert env.reached(state(x=gx + 0.5, y=gy, z=gz + 0.5))
+assert env.reached(state(x=gx + 0.95, y=gy, z=gz + 0.05))
+assert not env.reached(state(x=gx + 1.5, y=gy, z=gz + 0.5))
+assert not env.reached(state(x=gx - 0.5, y=gy, z=gz + 0.5))
+print("goal block ok")

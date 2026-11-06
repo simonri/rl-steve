@@ -16,7 +16,7 @@ GROUND = ("minecraft:{team}_wool", "minecraft:{team}_terracotta", "minecraft:sto
 MID_GROUND = ("minecraft:grass_block[snowy=false]", "minecraft:stone_bricks", "minecraft:andesite", "minecraft:moss_block")
 UNDER = ("minecraft:stone", "minecraft:dirt", "minecraft:cobblestone", "minecraft:andesite")
 LOG = "minecraft:oak_log[axis=y]"
-LEAVES = "minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"
+LEAVES = "minecraft:oak_leaves[persistent=true]"  # only properties every version has: a state it cannot read is left out of the paste
 END_STONE = "minecraft:end_stone"
 DEEPEST = 3  # no island top lies more than this below the lower of start and goal: a fall counts from 6 below
 HIGHEST = 10  # nor more than this above the start
