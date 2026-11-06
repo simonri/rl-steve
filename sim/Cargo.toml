@@ -1,0 +1,24 @@
+[package]
+name = "mcsim"
+version = "0.1.0"
+edition = "2021"
+description = "Minecraft 26.3 player physics and training courses, batched for reinforcement learning"
+
+[lib]
+name = "mcsim"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py312", "multiple-pymethods"], optional = true }
+numpy = { version = "0.30", optional = true }
+rayon = "1.12"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

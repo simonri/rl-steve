@@ -1,5 +1,6 @@
 # Training output, recordings, game folders and logs: large and regenerated
 runs/
+runs
 *.log
 mod/logs/
 mod/run
@@ -16,3 +17,7 @@ __pycache__/
 
 # Local tool state
 .claude/
+
+# Rust build output and the built simulator module
+sim/target/
+python/mcsim*.so
