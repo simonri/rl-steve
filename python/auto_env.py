@@ -687,8 +687,14 @@ class AutoEnv(SkillEnv):
         import mcsim
         order = ("forward", "back", "left", "right", "jump", "sneak", "sprint")
         fall_line = min(Y + 1, Y + 1 + self.dy) - self.fall_margin
-        v = mcsim.push_for(o["solid"], list(o["feet"]), list(o["pos"]), list(o["vel"]), o["yaw"], o["pitch"], o["held_count"], [bool(before[k]) for k in order],
-                           [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5], fall_line, plan[self.next_push])
+        try:  # the game reports feet as decimals; whatever else differs, a push is never worth stopping the round for
+            v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(o["held_count"]),
+                               [bool(before[k]) for k in order], [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5],
+                               fall_line, plan[self.next_push])
+        except (TypeError, ValueError) as e:
+            print(f"no pushes: {e}", flush=True)
+            AutoEnv.can_push = False
+            return
         if v is None:
             return
         try:
