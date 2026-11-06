@@ -1,6 +1,6 @@
 """Bedwars maps made up fresh every round: from the own base, across one to three gaps of void, to a spot on another island.
 
-Islands sit at different heights and in different directions, with walls, pillars, trees, fences, beds and bed defences
+Islands sit at different heights and in different directions, with walls, pillars, trees, beds and bed defences
 on them, the way real maps look. Every round can be done: the goal is a flat 3 by 3 with room to stand, nothing walls in
 the start or the goal, the blocks handed out cover every gap and every climb on the cheapest way, and no island lies
 below the line where a fall counts as dying.
@@ -114,9 +114,9 @@ def _defence(isl, bed, team, cells):
 
 
 def _obstacle(isl, rng, cells, keep_out):
-    """One wall, pillar, tree or fence on the island top, never on or next to a spot that has to stay free.
+    """One wall, pillar or tree on the island top, never on or next to a spot that has to stay free.
     Returns the columns it stands in at walking height, or None when it did not fit."""
-    kind = ("wall", "pillar", "tree", "fence")[int(rng.integers(4))]
+    kind = ("wall", "pillar", "tree")[int(rng.integers(3))]  # fences left out for now
     for _ in range(12):
         x = int(rng.integers(isl.cx - isl.hx, isl.cx + isl.hx + 1))
         z = int(rng.integers(isl.cz - isl.hz, isl.cz + isl.hz + 1))
