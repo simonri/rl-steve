@@ -25,10 +25,11 @@ ROOT = Path(__file__).resolve().parent.parent
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--name", default="auto6")
-    p.add_argument("--envs", type=int, default=256, help="rounds played side by side")
+    p.add_argument("--envs", type=int, default=512, help="rounds played side by side")
     p.add_argument("--steps-per-env", type=int, default=64, help="ticks of each round per stretch of play before learning")
-    p.add_argument("--batch", type=int, default=2048, help="ticks per learning step: 2048 is as fast as 4096 here and leaves memory free")
-    p.add_argument("--epochs", type=int, default=8)
+    p.add_argument("--batch", type=int, default=1024,
+                   help="ticks per learning step. Bigger batches fill the card's memory, and then its library takes a far slower way: 2048 learned 3x slower than 1024 with the viewer's game open")
+    p.add_argument("--epochs", type=int, default=4, help="passes over each stretch; with cheap play, more play beats more passes")
     p.add_argument("--steps", type=int, default=2_000_000_000)
     p.add_argument("--resume", help="model to continue from (its layout may be older: every weight that fits is kept)")
     p.add_argument("--levels", help="levels.json to start from, when the run has none yet")

@@ -11,11 +11,11 @@ En AI som lär sig bridgea i riktiga Minecraft 26.3, från speltillstånd och ut
 `sim/` gör samma sak som spelet för spelaren: rörelse, kollision, hopp, sprint, shift vid kanten, sikte, placering och
 fallskada, följt rad för rad efter den dekompilerade 26.3-koden, och sedan `AutoEnv`:s regler, poäng och de 4681 talen.
 Banorna ritas av samma Python-kod som förut (`sim_env.CourseMaker`). 512 rundor körs sida vid sida på alla kärnor och
-modellen väljer drag åt alla på grafikkortet, ungefär 3 500 beslut per sekund mot 420 i spelet. Modellen den sparar spelar
+modellen väljer drag åt alla på grafikkortet, ungefär 5 000 beslut per sekund mot 420 i spelet. Modellen den sparar spelar
 det riktiga spelet utan ändringar.
 
     cd sim && PYO3_PYTHON=$(uv python find 3.12) cargo build --release && cp target/release/libmcsim.so ../python/mcsim.so
-    cd ../python && $U train_sim.py --name auto6 --envs 512 --epochs 4 --resume ../runs/models/auto5/latest.zip >> ../runs/auto6.log 2>&1 &
+    cd ../python && $U train_sim.py --name auto6 --resume ../runs/models/auto5/latest.zip >> ../runs/auto6.log 2>&1 &
     $U live_auto.py --name auto6 --port 25601 > ../runs/live.log 2>&1 &   # visning på riktig server, localhost:25701
 
 Utan `--resume` fortsätter den körningen från sin egen `latest.zip`. Kontroller:
