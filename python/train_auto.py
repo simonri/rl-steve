@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from sb3_contrib import RecurrentPPO
-from sb3_contrib.common.recurrent.type_aliases import RNNStates
+from sb3_contrib.common.recurrent.buffers import RecurrentRolloutBuffer
+from sb3_contrib.common.recurrent.type_aliases import RecurrentRolloutBufferSamples, RNNStates
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
@@ -52,6 +53,61 @@ def make_env(port, levels):
     return build
 
 
+# Learning follows the memory back at most this many ticks. It still starts each stretch from the memory the model
+# really had there while playing, so it remembers further than this, it just learns from shorter stretches.
+STRETCH = 32
+
+
+class ShortStretches(RecurrentRolloutBuffer):
+    """Hands the learner its batches as pieces of rounds, each padded to the longest piece.
+
+    The library cuts a batch only where a round starts, so one long round next to a few short ones made the network go
+    over many times more ticks than there were; this also cuts every STRETCH ticks. And it sent every piece to the
+    graphics card on its own, thousands of small copies that took most of the learning time; this sends the whole
+    stretch of play once and does the padding there."""
+
+    def reset(self):
+        super().reset()
+        self.on_card = {}
+
+    def _card(self, name):
+        if name not in self.on_card:
+            self.on_card[name] = torch.as_tensor(self.__dict__[name], device=self.device)
+        return self.on_card[name]
+
+    def _get_samples(self, batch_inds, env_change, env=None):
+        starts = np.logical_or(self.episode_starts[batch_inds].ravel() > 0, env_change[batch_inds].ravel() > 0)
+        starts[::STRETCH] = True
+        first = np.flatnonzero(starts)
+        piece = np.cumsum(starts) - 1
+        where = np.arange(len(batch_inds)) - first[piece]
+        pieces, longest = len(first), int(where.max()) + 1
+        picked = torch.as_tensor(batch_inds, device=self.device)
+        piece, where = torch.as_tensor(piece, device=self.device), torch.as_tensor(where, device=self.device)
+
+        def pad(data, fill=0.0):
+            out = data.new_full((pieces, longest, *data.shape[1:]), fill)
+            out[piece, where] = data
+            return out.reshape(pieces * longest, *data.shape[1:])
+
+        def column(name):
+            return pad(self._card(name)[picked]).flatten()
+
+        firsts = picked[torch.as_tensor(first, device=self.device)]
+        states = [self._card(name)[firsts].swapaxes(0, 1).contiguous() for name in ("hidden_states_pi", "cell_states_pi", "hidden_states_vf", "cell_states_vf")]
+        return RecurrentRolloutBufferSamples(
+            observations=pad(self._card("observations")[picked], float("nan")),  # MemoryPolicy skips these
+            actions=pad(self._card("actions")[picked]),
+            old_values=column("values"),
+            old_log_prob=column("log_probs"),
+            advantages=column("advantages"),
+            returns=column("returns"),
+            lstm_states=RNNStates((states[0], states[1]), (states[2], states[3])),
+            episode_starts=column("episode_starts"),
+            mask=pad(torch.ones(len(batch_inds), device=self.device)),
+        )
+
+
 class SplitPPO(RecurrentPPO):
     """Learns on the graphics card and plays on the processor. Learning works on big batches, which a graphics card is
     fast at. Playing picks one action at a time, where moving the data to the card costs more than it saves.
@@ -59,6 +115,12 @@ class SplitPPO(RecurrentPPO):
 
     def _excluded_save_params(self):
         return super()._excluded_save_params() + ["actor"]
+
+    def _setup_model(self):
+        super()._setup_model()
+        old = self.rollout_buffer
+        self.rollout_buffer = ShortStretches(self.n_steps, self.observation_space, self.action_space, old.hidden_state_shape, self.device,
+                                             gamma=self.gamma, gae_lambda=self.gae_lambda, n_envs=self.n_envs)
 
     @contextmanager
     def playing(self):
@@ -76,6 +138,16 @@ class SplitPPO(RecurrentPPO):
             yield
         finally:
             self.policy, self.device = learner, device
+
+    def train(self):
+        if not os.environ.get("PROFILE_LEARNING"):
+            return super().train()
+        import cProfile, pstats
+        profile = cProfile.Profile()
+        profile.runcall(super().train)
+        with open(os.environ["PROFILE_LEARNING"], "w") as f:
+            pstats.Stats(profile, stream=f).sort_stats("tottime").print_stats(30)
+        os.environ.pop("PROFILE_LEARNING")
 
     def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
         with self.playing():
@@ -278,7 +350,7 @@ def _whole_rounds(policy, rounds, device):
     Shorter rounds are padded at the end, which the memory never looks back on. Returns the action distribution and
     which ticks are real."""
     longest = max(len(o) for o, _ in rounds)
-    obs = np.zeros((len(rounds), longest, rounds[0][0].shape[1]), np.float32)
+    obs = np.zeros((len(rounds), longest, rounds[0][0].shape[1]), np.float32)  # zeros, not NaN: get_distribution goes past MemoryPolicy.extract_features
     actions = np.zeros((len(rounds), longest, rounds[0][1].shape[1]), np.int64)
     real = np.zeros((len(rounds), longest), np.float32)
     for i, (o, act) in enumerate(rounds):
@@ -367,6 +439,7 @@ if __name__ == "__main__":
     p.add_argument("--threads", type=int, default=2, help="for learning between rollouts: more measured slower here, 6 took 6.5 s and 2 took 5.5 s")
     a = p.parse_args()
     torch.set_num_threads(a.threads)
+    torch.backends.cudnn.benchmark = True  # the eyes always see 512 played ticks when learning, so the fastest way is found once
     Distribution.set_default_validate_args(False)  # the checks take a large part of each decision
     out = ROOT / "runs" / "models" / a.name
     out.mkdir(parents=True, exist_ok=True)

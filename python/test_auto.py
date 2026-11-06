@@ -413,3 +413,45 @@ ticks = len(env.c.steps)
 env.step([0, 0, 0, 1, 0, 0, NO_TURN, NO_TURN])
 assert len(env.c.steps) == ticks + 1
 print("auto ok")
+# Learning batches padded on the card hold exactly what the library's own padding gives, cut at the same places.
+from sb3_contrib.common.recurrent.buffers import RecurrentRolloutBuffer
+from sb3_contrib.common.recurrent.type_aliases import RNNStates
+import train_auto
+spaces_ = (gym.spaces.Box(-1, 1, (5,), np.float32), gym.spaces.MultiDiscrete([3, 2]))
+mine, theirs = (cls(64, *spaces_, (64, 1, 2, 3), "cpu", n_envs=2) for cls in (train_auto.ShortStretches, RecurrentRolloutBuffer))
+rng = np.random.default_rng(0)
+for t in range(64):
+    row = (rng.normal(size=(2, 5)).astype(np.float32), rng.integers(0, 2, (2, 2)), rng.normal(size=2).astype(np.float32), rng.random(2) < 0.1,
+           torch.randn(2), torch.randn(2))
+    states = RNNStates(*(tuple(torch.randn(1, 2, 3) for _ in range(2)) for _ in range(2)))
+    for b in (mine, theirs):
+        b.add(*row, lstm_states=states)
+for b in (mine, theirs):
+    b.compute_returns_and_advantage(torch.zeros(2), np.zeros(2))
+for b in (mine, theirs):
+    list(b.get(40))  # lays the stretch out round by round, as learning does
+inds = np.arange(128)[17:57]
+change = np.zeros((128, 1))  # shaped as the library lays it out
+change[[0, 64]] = 1.0
+cut = change.copy()
+cut[inds[:: train_auto.STRETCH]] = 1.0
+a, b = mine._get_samples(inds, change), theirs._get_samples(inds, cut)
+for name in a._fields:
+    x, y = getattr(a, name), getattr(b, name)
+    if name == "lstm_states":
+        assert all(torch.allclose(p, q) for p, q in zip([*x.pi, *x.vf], [*y.pi, *y.vf])), name
+    else:  # the padding of what it sees is marked as padding, where the library leaves zeros
+        assert x.shape == y.shape and torch.allclose(torch.nan_to_num(x.float()), y.float()), name
+assert torch.isnan(a.observations[:, 0]).sum() == (a.mask == 0).sum()
+# The eyes skip marked padding and give it nothing, and see the played ticks as they would alone.
+policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
+played = torch.rand(3, AutoEnv.N_OBS)
+padded = torch.cat([played, torch.full((2, AutoEnv.N_OBS), float("nan"))])
+with torch.no_grad():
+    both, alone = policy.extract_features(padded), policy.extract_features(played)
+assert torch.allclose(both[:3], alone, atol=1e-6) and (both[3:] == 0).all()
+# Copying recordings of different lengths gives a finite loss: their padding goes through the whole model.
+rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, 8), np.int64)) for n in (3, 7)]
+distribution, actions, real = train_auto._whole_rounds(policy, rounds, "cpu")
+assert torch.isfinite((distribution.log_prob(actions) * real).sum())
+print("batches ok")

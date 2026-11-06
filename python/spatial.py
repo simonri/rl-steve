@@ -104,7 +104,19 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
 
     The library steps through a stretch one tick at a time whenever a round starts inside it. Stretches here are
     always cut so a round can only start at their first tick, so that reset is done once up front and the whole
-    stretch runs in one go, which is many times faster when learning."""
+    stretch runs in one go, which is many times faster when learning.
+
+    Ticks that only pad a stretch out are marked with NaN as their first value. The eyes skip them and they get
+    nothing to see, which keeps the costly part of learning to the ticks that were really played."""
+
+    def extract_features(self, obs, features_extractor=None):
+        real = ~torch.isnan(obs[:, 0])
+        if bool(real.all()):
+            return super().extract_features(obs, features_extractor)
+        seen = super().extract_features(obs[real], features_extractor)
+        out = seen.new_zeros((len(obs), seen.shape[1]))
+        out[real] = seen
+        return out
 
     @staticmethod
     def _process_sequence(features, lstm_states, episode_starts, lstm):
