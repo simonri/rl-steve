@@ -37,7 +37,7 @@ const MAX_DEATHS: i32 = 2;
 const DAMAGE_SETTLE_TICKS: i32 = 3;
 const REWARD_SCALE: f64 = 0.1;
 
-const TICK_COST: f64 = 0.002;
+const TICK_COST: f64 = 0.006; // skill_env.TICK_COST
 const EMPTY_CLICK_COST: f64 = 0.05;
 const LOOK_UP_COST: f64 = 0.05;
 const LANDING_BONUS: f64 = 1.0;
