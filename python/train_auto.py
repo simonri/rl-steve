@@ -38,8 +38,10 @@ CALM_FROM, CALM_OVER = 500_000, 5_000_000  # decisions into a run: the old 16M w
 LEARNING_RATE, LEARNING_RATE_END = 3e-4, 3e-5
 ENTROPY, ENTROPY_END = 0.01, 0.002
 # Eyes, then a memory carried between ticks, then one layer each for choosing and for judging how it is going.
-# Judging reads the same memory as choosing instead of keeping its own, which would cost as much again every tick.
-POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_lstm=True, enable_critic_lstm=False,
+# Judging has no memory of its own, which would cost as much again every tick. It reads the eyes directly instead of
+# the memory, so what it learns about how a round is going also trains the eyes: with it reading the memory without
+# being able to train anything before it, auto5 never learned to bridge in 250k decisions, where auto4 did in 50k.
+POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_lstm=False, enable_critic_lstm=False,
               net_arch=dict(pi=[256], vf=[256]), activation_fn=torch.nn.SiLU)
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan"}
 
@@ -302,7 +304,9 @@ class Progress(BaseCallback):
             if len(self.timings) >= 6:
                 collect = np.mean([t for k, t in self.timings if k == "collect"])
                 learn = np.mean([t for k, t in self.timings if k == "learn"])
-                print(f"time per stretch of {self.model.n_steps * self.vec.num_envs} decisions: playing {collect:.2f} s, learning {learn:.2f} s", flush=True)
+                judged = self.model.logger.name_to_value.get("train/explained_variance", float("nan"))
+                print(f"time per stretch of {self.model.n_steps * self.vec.num_envs} decisions: playing {collect:.2f} s, learning {learn:.2f} s, "
+                      f"how well it judges what is coming {judged:.2f} (1 is perfect, 0 no better than guessing)", flush=True)
                 self.timings = []
         self.rollout_started = now
         torch.set_num_threads(1)  # one action at a time is too small to share out, and spare threads only spin
@@ -448,6 +452,14 @@ if __name__ == "__main__":
     vec = SubprocVecEnv([make_env(port, curriculum.levels) for port in a.ports])
     if a.resume:
         model = SplitPPO.load(a.resume, env=vec, device=a.device)
+        if model.policy_kwargs != POLICY:  # a changed layout: start the new one with every weight that still fits
+            old = model
+            model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=old.n_steps, batch_size=old.batch_size, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA,
+                             learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device, policy_kwargs=POLICY)
+            kept = model.policy.load_state_dict(old.policy.state_dict(), strict=False)
+            model.num_timesteps = old.num_timesteps
+            print(f"new layout: carried over every weight that fits, new {kept.missing_keys}, dropped {kept.unexpected_keys}", flush=True)
+            del old
         model.gamma, model.gae_lambda = GAMMA, GAE_LAMBDA
         model.n_epochs = a.epochs
         model.rollout_buffer.gamma, model.rollout_buffer.gae_lambda = GAMMA, GAE_LAMBDA
