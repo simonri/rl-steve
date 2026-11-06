@@ -37,6 +37,9 @@ GAMMA, GAE_LAMBDA = 0.995, 0.975
 CALM_FROM, CALM_OVER = 500_000, 5_000_000  # decisions into a run: the old 16M was meant for one run and left new ones wild
 LEARNING_RATE, LEARNING_RATE_END = 3e-4, 3e-5
 ENTROPY, ENTROPY_END = 0.01, 0.002
+# Learning stops going over a stretch again once the way it plays has moved this far. With the memory, 8 passes moved
+# it about 0.28 each time (clipping 56 % of everything), so far that what it had learned fell apart.
+TARGET_KL = 0.02
 # Eyes, then a memory carried between ticks, then one layer each for choosing and for judging how it is going.
 # Judging has no memory of its own, which would cost as much again every tick. It reads the eyes directly instead of
 # the memory, so what it learns about how a round is going also trains the eyes: with it reading the memory without
@@ -307,6 +310,8 @@ class Progress(BaseCallback):
                 judged = self.model.logger.name_to_value.get("train/explained_variance", float("nan"))
                 print(f"time per stretch of {self.model.n_steps * self.vec.num_envs} decisions: playing {collect:.2f} s, learning {learn:.2f} s, "
                       f"how well it judges what is coming {judged:.2f} (1 is perfect, 0 no better than guessing)", flush=True)
+                logged = self.model.logger.name_to_value
+                print("learning numbers:", {k.split("/")[1]: round(float(v), 4) for k, v in logged.items() if k.startswith("train/")}, flush=True)
                 self.timings = []
         self.rollout_started = now
         torch.set_num_threads(1)  # one action at a time is too small to share out, and spare threads only spin
@@ -455,17 +460,18 @@ if __name__ == "__main__":
         if model.policy_kwargs != POLICY:  # a changed layout: start the new one with every weight that still fits
             old = model
             model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=old.n_steps, batch_size=old.batch_size, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA,
-                             learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device, policy_kwargs=POLICY)
+                             learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device, target_kl=TARGET_KL, policy_kwargs=POLICY)
             kept = model.policy.load_state_dict(old.policy.state_dict(), strict=False)
             model.num_timesteps = old.num_timesteps
             print(f"new layout: carried over every weight that fits, new {kept.missing_keys}, dropped {kept.unexpected_keys}", flush=True)
             del old
         model.gamma, model.gae_lambda = GAMMA, GAE_LAMBDA
         model.n_epochs = a.epochs
+        model.target_kl = TARGET_KL
         model.rollout_buffer.gamma, model.rollout_buffer.gae_lambda = GAMMA, GAE_LAMBDA
     else:
         model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=4096 // len(a.ports), batch_size=512, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA, learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device,
-                         policy_kwargs=POLICY)
+                         target_kl=TARGET_KL, policy_kwargs=POLICY)
         # Start with rare jumps and sprints and a mostly steady view, so random inputs do not throw the
         # agent off the platform before it has learned anything. It can still learn to use them freely.
         bias = model.policy.action_net.bias.data
