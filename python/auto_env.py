@@ -161,6 +161,7 @@ class AutoEnv(SkillEnv):
             self.map_gaps = (10, t["gap"])
             self.map_rise = t.get("height", 0)
             self.map_start = t.get("start", "bed")
+            self.map_spots = t.get("spots", "grass")
 
     def _spec(self):
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()

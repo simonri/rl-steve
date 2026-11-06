@@ -172,7 +172,7 @@ for _ in range(30):
 assert top.mastered() == ["path"]
 for _ in range(60):
     moved = top.record("path", "longer", False) or moved
-assert moved == ("longer", 0) and "path" not in top.mastered()
+assert moved == ("longer", len(FAMILIES["path"]["longer"]) - 2) and "path" not in top.mastered()
 assert sum(curriculum.pick_family(Curriculum().levels, rng2, ["hop"]) == "hop" for _ in range(600)) < 150
 # The map: height and blocks from the game, turned with the round's frame, and what it has walked on is remembered.
 from auto_env import MAP_CHANNELS, MAP_RADIUS, MAP_SIDE, MAP_START

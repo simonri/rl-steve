@@ -21,6 +21,7 @@ YAW = (15, 45, 90, 180)  # degrees the start can be turned away from the way to 
 ISLAND, PILLAR, WALL, SLALOM = "island", "pillar", "wall", "slalom"
 FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-8, -6, -4, -3, -1, 0, 1, 3)
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
+EXACT = (1.25, 3)  # a quarter over a walkable bridge's need: little room for a wasted block
 PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
 
 FAMILIES = {
@@ -43,12 +44,12 @@ FAMILIES = {
         length=(4, 6, 8, 11, 14, 17, 20),
         holes=(False, True),
         yaw=YAW,
-        ticks=(40, 30, 20),
+        ticks=(40, 30, 20, 15, 12),  # 12 ticks a block is 1.7 blocks/s: walking pace, with room for the jumps
         wind=("gentle", "tight", "around"),  # how often it turns, and if it can double back
         slope=("flat", "some steps", "stairs", "stairs and drops"),
         # Harder, and only open once all of the above is at its limit.
         wide_holes=(False, True),  # holes up to 3 blocks long
-        longer=(1, 2),
+        longer=(1, 2, 3),
         shapes=(False, True),  # slabs as on real maps: half steps up, and blocks sunk half a block
     ),
     "bridge": dict(
@@ -57,7 +58,7 @@ FAMILIES = {
         start=("edge", "center"),
         directions=("axis", "eight", "any"),
         heights=(FLAT, SMALL_STEPS, HILLS, DROPS),
-        budget=(ROOMY, NORMAL, TIGHT, STRICT),
+        budget=(ROOMY, NORMAL, TIGHT, STRICT, EXACT),
         obstacle=(None, ISLAND, PILLAR, WALL, SLALOM),
         ticks=(40, 30, 20, 15, 10, 7),
         # Harder, and only open once all of the above is at its limit.
@@ -71,11 +72,12 @@ FAMILIES = {
         ticks=(40, 30, 20, 15, 10, 7),
         height=(0, 2, 4, 6, 8),  # the other island moved up or down by up to this many blocks
         start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
+        spots=("grass", "any top"),  # the goal on any flat top of the other island, up to 3 higher, not only its grass
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
     # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
     "stairs": dict(
-        rise=(3, 5, 8, 12, 16),
+        rise=(3, 5, 8, 12, 16, 20),  # when a climb this high would need more than a stack, the stairs get steeper
         yaw=YAW,
         start=("edge", "center"),
         directions=("axis", "eight"),
@@ -102,10 +104,10 @@ FAMILIES = {
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
 EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push"), "stairs": ("steep", "way", "push"),
-          "treenan": ("push",), "bedwars": ("push",)}  # dials that wait for the rest of the course kind
+          "treenan": ("push", "spots"), "bedwars": ("push",)}  # dials that wait for the rest of the course kind
 # When rounds with every dial at its limit almost never win, these come down first, hardest first.
 STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("push", "longer", "faster"), "stairs": ("push", "way", "steep"),
-             "treenan": ("push",), "bedwars": ("push",)}
+             "treenan": ("spots", "push"), "bedwars": ("push",)}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2)), "bedwars": ("treenan", dict(gap=1))}

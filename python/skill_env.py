@@ -250,13 +250,14 @@ class SkillEnv(gym.Env):
             most = getattr(self, "map_rise", 0)
             rise = int(r.integers(-most, most + 1)) if most else 0  # the other island moved up or down
             start = data.homes[int(r.integers(len(data.homes)))] if getattr(self, "map_start", "bed") == "anywhere" else None
-            placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
+            any_top = getattr(self, "map_spots", "grass") == "any top"
+            placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start, any_top)
             # Climbing costs blocks beyond the width of the gap. One stack of 64 is all it holds, so a round that
             # would need more gets a shorter gap instead of too few blocks.
             fits = int((64 - self.budget[1] - getattr(self, "push_spare", 0)) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0)
             if self.budget[0] and gap > max(fits, MIN_GAP):
                 gap = max(fits, MIN_GAP)
-                placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
+                placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start, any_top)
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
             other = data.last_other
             self.blocked = {(x, z) for (x, y, z) in placed if ((gy + 2 <= y <= gy + 3) if (x, y, z) in other else (Y + 2 <= y <= Y + 3))}
