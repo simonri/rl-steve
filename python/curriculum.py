@@ -20,6 +20,7 @@ YAW = (15, 45, 90, 180)  # degrees the start can be turned away from the way to 
 
 ISLAND, PILLAR, WALL, SLALOM = "island", "pillar", "wall", "slalom"
 FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-8, -6, -4, -3, -1, 0, 1, 3)
+CLIFFS = (-12, -8, -4, 0, 2, 4, 6)  # far down or well up: a way down to build, or a climb, inside a stack
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
 EXACT = (1.25, 3)  # a quarter over a walkable bridge's need: little room for a wasted block
 PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
@@ -57,7 +58,7 @@ FAMILIES = {
         yaw=YAW,
         start=("edge", "center"),
         directions=("axis", "eight", "any"),
-        heights=(FLAT, SMALL_STEPS, HILLS, DROPS),
+        heights=(FLAT, SMALL_STEPS, HILLS, DROPS, CLIFFS),
         budget=(ROOMY, NORMAL, TIGHT, STRICT, EXACT),
         obstacle=(None, ISLAND, PILLAR, WALL, SLALOM),
         ticks=(40, 30, 20, 15, 10, 7),
@@ -78,11 +79,11 @@ FAMILIES = {
     ),
     # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
     "stairs": dict(
-        rise=(3, 5, 8, 12, 16, 20),  # when a climb this high would need more than a stack, the stairs get steeper
+        rise=(3, 5, 8, 12, 16, 20, 24),  # when a climb this high would need more than a stack, the stairs get steeper
         yaw=YAW,
         start=("edge", "center"),
         directions=("axis", "eight"),
-        budget=(ROOMY, NORMAL, TIGHT),
+        budget=(ROOMY, NORMAL, TIGHT, STRICT, EXACT),
         ticks=(60, 40, 30, 20),
         # Harder, and only open once all of the above is at its limit.
         steep=(1.0, 1.5, 2.0, 3.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
