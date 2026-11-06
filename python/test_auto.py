@@ -492,6 +492,38 @@ for fam in ("hop", "path"):
     m.set_exam(fam)
     found = [m.draw(seed=s)[0] for s in range(15)]
     assert any(sp["settle"] and sp["cells"] is not None and len(sp["cells"]) for sp in found), fam
+# Every parkour jump from a slab is half a block higher, and must still pass the jump math.
+lv = Curriculum().levels
+for d, v in FAMILIES["hop"].items():
+    lv["hop"][d] = len(v) - 1 if d != "longer" else 0
+m = CourseMaker(lv)
+m.set_exam("hop")
+slabbed = 0
+for s in range(400):
+    m.draw(seed=20_000 + s)
+    for a, b in zip(m.course, m.course[1:]):
+        if a in m.shape_cells:
+            slabbed += 1
+            dx, dz = abs(a[0] - b[0]), abs(a[2] - b[2])
+            assert jump_possible(max(dx, dz), min(dx, dz), b[1] - a[1] + 0.5, run_up_ticks=2), (s, a, b)
+assert slabbed > 100, slabbed
+# Every path with slabs can be done: never more than a block up between neighbours (a half step from below was 1.5).
+lv = Curriculum().levels
+for d, v in FAMILIES["path"].items():
+    lv["path"][d] = len(v) - 1
+m = CourseMaker(lv)
+m.set_exam("path")
+shaped = 0
+for s in range(600):
+    sp, _ = m.draw(seed=10_000 + s)
+    sunk = {c for c in m.course if c in m.shape_cells}
+    assert m._path_possible(sunk), s
+    shaped += bool(m.shape_cells)
+    for c in m.course:  # the case that was wrong: a half step on a block one higher than the one before
+        i = m.course.index(c)
+        if i and (c[0], c[1] + 1, c[2]) in m.shape_cells:
+            assert m.course[i - 1][1] >= c[1], (s, c)
+assert shaped > 300, shaped
 # Treenan from anywhere on the bed island, and never more blocks than one stack when it climbs.
 lv = Curriculum().levels
 lv["treenan"].update(start=1, height=4, gap=4, budget=0)

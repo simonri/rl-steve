@@ -336,12 +336,36 @@ class AutoEnv(SkillEnv):
             p, c, n = course[i - 1], course[i], course[i + 1]
             if not (near(p, c) and near(c, n)):
                 continue
-            if n[1] == c[1] + 1 and r.random() < 0.6:
+            # A half step only where it comes from the same height or from above: from below it would be 1.5 up.
+            if n[1] == c[1] + 1 and p[1] >= c[1] and r.random() < 0.6:
                 self.shape_cells[(c[0], c[1] + 1, c[2])] = SLAB
             elif p[1] == c[1] == n[1] and (p not in sunk) and r.random() < 0.25:
                 sunk.add(c)
                 self.shape_cells[c] = SLAB
+        if not self._path_possible(sunk):  # never a course that cannot be done: then no slabs at all
+            self.shape_cells.clear()
+            sunk = set()
         return sunk
+
+    def _path_possible(self, sunk):
+        """Every step of the path, with its slabs, can be walked or jumped: up at most one block between blocks next
+        to each other, and every jump over a hole within the jump math."""
+        def top(cell):
+            x, h, z = cell
+            if cell in sunk:
+                return h + 0.5
+            return h + 1.5 if (x, h + 1, z) in self.shape_cells else h + 1.0
+
+        way = [(0, Y, 0)] + list(self.course)  # from the start platform's middle onward
+        for a, b in zip(way, way[1:]):
+            dx, dz = abs(a[0] - b[0]), abs(a[2] - b[2])
+            rise = top(b) - (Y + 1.0 if a == (0, Y, 0) else top(a))
+            if max(dx, dz) <= 1 or a == (0, Y, 0):
+                if rise > 1.0:
+                    return False
+            elif not jump_possible(max(dx, dz), min(dx, dz), rise, run_up_ticks=2):
+                return False
+        return True
 
     def _safe_poles(self, poles):
         """Poles never stand in the way of a real jump, or on a block of the course."""
