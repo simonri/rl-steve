@@ -1,4 +1,4 @@
-"""The watchers' camera: never inside a block, always a clear line to the player, never far away.
+"""The watchers' camera: still shots, few cuts, never inside a block, the player mostly in clear view.
 
 Plays rounds on the simulator (AutoEnv on FakeClient) with inputs that wander, and checks the camera every tick
 against every block of the course (pasted maps with their trees, platforms, and what the player placed).
@@ -13,7 +13,7 @@ import numpy as np
 import curriculum
 import skill_env
 from auto_env import AutoEnv
-from camera import FAR, Follow
+from camera import FAR, HOLD, Shots
 from sim_env import FakeClient
 
 
@@ -22,8 +22,8 @@ def main():
     skill_env.McClient = FakeClient
     rng = np.random.default_rng(3)
     env = AutoEnv(0)
-    cam = Follow()
-    ticks = inside = hidden = far = 0
+    cam = Shots()
+    ticks = inside = hidden = far = cuts = quick = 0
     for n in range(rounds):
         family = ("treenan", "bedwars", "bridge", "hop")[n % 4]
         levels = curriculum.Curriculum().levels
@@ -35,11 +35,18 @@ def main():
         cam.new_round(env)
         world = set(cam.solid)  # everything the course has, before the player builds
         a = np.array([1, 0, 0, 0, 0, 1, 5, 5])
+        since = 0
         for t in range(600):
             if rng.random() < 0.1:
                 a = np.array([rng.integers(3), rng.integers(3), rng.random() < 0.3, rng.random() < 0.3, rng.random() < 0.2, rng.random() < 0.5, rng.integers(11), rng.integers(11)])
             _, _, term, trunc, _ = env.step(a)
-            at = cam.update(env)
+            new = cam.update(env)
+            if new is not None and t > 0:
+                cuts += 1
+                quick += since < HOLD
+                since = 0
+            since = since + 1 if t > 0 else 0
+            at = cam.shot
             ticks += 1
             o = env.obs
             for c in o.get("clicks") or []:
@@ -52,9 +59,10 @@ def main():
             far += math.dist(at[:3], head) > FAR * 1.6
             if term or trunc:
                 break
-    print(f"{rounds} rounds, {ticks} ticks: camera inside a block {inside}, view blocked {hidden}, too far {far}")
+    print(f"{rounds} rounds, {ticks} ticks: camera inside a block {inside}, view blocked {hidden}, too far {far}, cuts {cuts} ({quick} before {HOLD} ticks)")
     assert inside == 0, "the camera sat inside a block"
-    assert hidden <= ticks * 0.02, "the view to the player was blocked too often"
+    assert hidden <= ticks * 0.1, "the view to the player was blocked too often"
+    assert cuts <= ticks / 40, "the camera cut too often: more than one cut every two seconds"
     assert far <= ticks * 0.02, "the camera was too far away too often"
     print("camera ok")
 
