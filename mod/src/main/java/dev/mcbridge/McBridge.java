@@ -158,6 +158,7 @@ public final class McBridge implements ClientModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
         ServerLifecycleEvents.SERVER_STOPPING.register(s -> lockstep.disable());
         ServerTickEvents.START_SERVER_TICK.register(lockstep::serverStartTick);
+        ServerTickEvents.START_SERVER_TICK.register(Fight18::serverTick); // opponents act, 1.8 resistance and healing
         testMenu = System.getenv("MCBRIDGE_TEST_MENU") != null;
         humanMode = System.getenv("MCBRIDGE_HUMAN") != null;
         ServerTickEvents.END_SERVER_TICK.register(s -> {
@@ -668,7 +669,12 @@ public final class McBridge implements ClientModInitializer {
         if (!sprinting) startLockstep();
         switch (op) {
             case "step" -> {
-                applyAction(mc, cmd.getAsJsonObject("action"));
+                JsonObject act = cmd.getAsJsonObject("action");
+                if (act != null && act.has("opponents")) {
+                    JsonArray actions = act.getAsJsonArray("opponents");
+                    lockstep.onServer(() -> Fight18.setActions(actions));
+                }
+                applyAction(mc, act);
                 ticksLeft = cmd.has("ticks") ? Math.max(1, cmd.get("ticks").getAsInt()) : 1;
                 pendingReply = cmd;
                 return true;
@@ -717,6 +723,26 @@ public final class McBridge implements ClientModInitializer {
                     }
                 });
                 lastCamera = at;
+                ok(cmd);
+                return false;
+            }
+            case "gear" -> {
+                // The player's gear and the rules for this round (Fight18): sword in slot 1, Bedwars armor, Knockback.
+                float damage = cmd.get("damage").getAsFloat();
+                int armor = cmd.get("armor").getAsInt(), kb = cmd.get("kb").getAsInt(), slot = cmd.get("slot").getAsInt();
+                boolean rules18 = cmd.get("rules18").getAsBoolean();
+                var id = mc.getGameProfile().id();
+                lockstep.onServer(() -> {
+                    ServerPlayer p = server.getPlayerList().getPlayer(id);
+                    if (p != null) Fight18.gear(p, damage, armor, kb, rules18);
+                });
+                mc.player.getInventory().setSelectedSlot(slot);
+                ok(cmd);
+                return false;
+            }
+            case "opponent" -> {
+                // A scripted opponent (Fight18.Bot), only on the server; Python sends its inputs with every step.
+                lockstep.onServer(() -> Fight18.spawn(server, cmd));
                 ok(cmd);
                 return false;
             }
@@ -841,6 +867,7 @@ public final class McBridge implements ClientModInitializer {
         ServerPlayer player = server.getPlayerList().getPlayer(mc.getGameProfile().id());
         if (player == null) return;
 
+        if (!spec.has("keep_arena")) Fight18.clear(server); // a new round: last round's opponents go
         if (spec.has("keep_arena")) {
             // A respawn: the player goes back to the start, and everything built stays where it is.
             JsonArray at = spec.getAsJsonArray("pos");
@@ -957,7 +984,7 @@ public final class McBridge implements ClientModInitializer {
 
     // ---- State: read from the real client objects ----
 
-    private static JsonArray vec(double x, double y, double z) {
+    static JsonArray vec(double x, double y, double z) {
         JsonArray a = new JsonArray();
         a.add(x);
         a.add(y);
@@ -980,7 +1007,21 @@ public final class McBridge implements ClientModInitializer {
         o.addProperty("collision", pl.horizontalCollision);
         o.addProperty("fall_distance", pl.fallDistance);
         o.addProperty("eye_height", pl.getEyeHeight());
-        o.addProperty("held_count", pl.getMainHandItem().getCount());
+        o.addProperty("held_count", pl.getInventory().getItem(0).getCount()); // the blocks, whatever is in hand
+        o.addProperty("slot", pl.getInventory().getSelectedSlot());
+        o.addProperty("miss_lock", mc.missTime);
+        o.addProperty("crouch_pose", pl.isCrouching());
+        ServerPlayer sp = server == null ? null : server.getPlayerList().getPlayer(mc.getGameProfile().id());
+        if (sp != null) {
+            Fight18.State s = Fight18.of(sp);
+            o.addProperty("resist", s.resist);
+            o.addProperty("attack_damage", s.damage);
+            o.addProperty("armor", s.armor);
+            o.addProperty("server_sprinting", sp.isSprinting());
+            o.addProperty("since_hit", s.sinceHit);
+            o.addProperty("since_hurt", s.sinceHurt);
+        }
+        o.add("players", Fight18.players());
         o.addProperty("health", pl.getHealth());
         o.add("clicks", clicks);
         clicks = new JsonArray();

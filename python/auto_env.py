@@ -716,11 +716,15 @@ class AutoEnv(SkillEnv):
         """The reset builds courses from plain blocks. Slabs go in afterwards, and one tick lets the game show them.
         Every round sets the player's gear and 1.8 rules; a fight also brings its opponents in."""
         d = self.duel if self.family == "duel" else None
-        self.obs = self.c.call(op="gear", damage=d["damage"] if d else 1.0, armor=d["armor"] if d else 0, kb=d["kb"] if d else 0, slot=1 if d else 0, rules18=RULES18)
+        reply = self.c.call(op="gear", damage=d["damage"] if d else 1.0, armor=d["armor"] if d else 0, kb=d["kb"] if d else 0, slot=1 if d else 0, rules18=RULES18)
+        if "pos" in reply:  # the simulator answers with the state; the game with "ok", and shows the gear next tick
+            self.obs = reply
         if d:
             fall_line = Y + 1 - self.fall_margin
             for bot, pos, yaw, damage, armor, kb in d["opponents"]:
-                self.obs = self.c.call(op="opponent", bot=bot, pos=pos, yaw=yaw, damage=damage, armor=armor, kb=kb, rules18=RULES18, centre=d["centre"], fall_line=fall_line)
+                reply = self.c.call(op="opponent", bot=bot, pos=pos, yaw=yaw, damage=damage, armor=armor, kb=kb, rules18=RULES18, centre=d["centre"], fall_line=fall_line)
+                if "pos" in reply:
+                    self.obs = reply
         if not self.shape_cells:
             return
         palette = sorted(set(self.shape_cells.values()))
@@ -835,6 +839,8 @@ class AutoEnv(SkillEnv):
         before = [p["health"] for p in self.obs.get("players", [])]
         mine = self.obs["health"]
         extra = dict(attack=True) if attack else {}
+        if not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
+            extra["opponents"] = self._bot_actions()
         if slot:
             extra["hotbar"] = slot - 1
         self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
@@ -862,6 +868,20 @@ class AutoEnv(SkillEnv):
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "landed": 0, "pushes": 0, "shift_share": 0.0,
                 "parts": dict(self.parts)}
         return float(reward) * self.reward_scale, term, False, info
+
+    def _bot_actions(self):
+        """duel.rs Bot.action for every opponent, from what the game shows now: the same bots as in the simulator."""
+        o = self.obs
+        view = lambda p, health: (list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), float(health), int(p.get("armor", 0)), float(p.get("damage", 1.0)),
+                                   int(p.get("hurt_time", 0)), bool(p["on_ground"]), bool(p.get("sprinting", False)), bool(p.get("crouching", p.get("crouch_pose", False))))
+        me = view(o, o["health"])
+        actions = []
+        for i, p in enumerate(o.get("players", [])):
+            if i < len(self.out) and self.out[i]:
+                actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
+                continue
+            actions.append(list(mcsim.bot_action(int(p.get("bot", self.duel["opponents"][i][0])), view(p, p["health"]), me, list(self.duel["centre"]), self.t, int(p.get("since_hit", 99)))))
+        return actions
 
     def time_limit(self):
         if self.family == "duel":

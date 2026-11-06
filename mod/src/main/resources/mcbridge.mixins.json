@@ -4,6 +4,6 @@
   "package": "dev.mcbridge.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": ["MinecraftMixin", "MinecraftInvoker", "MouseHandlerMixin", "RenderSystemMixin"],
-  "mixins": ["ServerTickRateManagerAccessor", "EventLoopInvoker"],
+  "mixins": ["ServerTickRateManagerAccessor", "EventLoopInvoker", "PlayerAttackMixin"],
   "injectors": { "defaultRequire": 1 }
 }
