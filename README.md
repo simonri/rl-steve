@@ -20,14 +20,14 @@ Spelinstanserna öppnas på workspace 19:
     python3 launch.py bot3 --port 25606                      # träning
     python3 launch.py bot4 --port 25607                      # träning
 
-    U="uv run --no-project --python 3.12 --with torch --with stable-baselines3 --with gymnasium python"
+    U="uv run --no-project --python 3.12 --with torch --with stable-baselines3 --with sb3-contrib --with gymnasium python"
 
 Träningen lär sig på grafikkortet om det finns ett (torch från PyPI har stöd för det) och spelar på processorn.
-    $U train_auto.py --name auto3 >> ../runs/auto3.log 2>&1 &
-    $U live_auto.py --name auto3 --port 25601 > ../runs/live.log 2>&1 &
+    $U train_auto.py --name auto5 --start-from-recordings 3000 --recordings ../runs/demos ../runs/demos_teacher >> ../runs/auto5.log 2>&1 &
+    $U live_auto.py --name auto5 --port 25601 > ../runs/live.log 2>&1 &
     python3 dashboard.py --port 8791 > ../runs/dashboard.log 2>&1 &
 
-Fortsätt en träning med `--resume ../runs/models/auto3/latest.zip`. Nivåerna läses från `levels.json` i samma mapp.
+Fortsätt en träning med `--resume ../runs/models/auto5/latest.zip`. Nivåerna läses från `levels.json` i samma mapp.
 Stoppa en spelinstans med `./stop_client.sh bot0`.
 
 ## Så väljs banorna

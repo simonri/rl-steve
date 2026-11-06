@@ -292,14 +292,28 @@ def _whole_rounds(policy, rounds, device):
     return distribution, actions, torch.as_tensor(real, device=device).flatten()
 
 
-def start_from_recordings(model, steps, folders, per_step=16):
+def _groups(rounds, order, ticks):
+    """Splits rounds into batches that stay within a number of ticks once padded to their longest round, so a few
+    long rounds do not fill the graphics card."""
+    group, longest = [], 0
+    for i in order:
+        if group and (len(group) + 1) * max(longest, len(rounds[i][0])) > ticks:
+            yield group
+            group, longest = [], 0
+        group.append(rounds[i])
+        longest = max(longest, len(rounds[i][0]))
+    if group:
+        yield group
+
+
+def start_from_recordings(model, steps, folders, ticks=1024):
     """A new model first learns to play like the recordings, then learns by itself from there. With a memory it
     copies whole rounds, so it also learns what to keep in mind from one tick to the next."""
     files = sorted(path for folder in folders for path in Path(folder).glob("**/round*.jsonl.gz"))
     np.random.default_rng(0).shuffle(files)
     held = max(1, len(files) // 10)
     rounds = [demo_data.replay(path)[:2] for path in files]
-    rounds = [(o.astype(np.float32), np.asarray(act, np.int64)) for o, act in rounds if len(o)]
+    rounds = [(o[:ticks].astype(np.float32), np.asarray(act[:ticks], np.int64)) for o, act in rounds if len(o)]
     val, train = rounds[:held], rounds[held:]
     print(f"recordings: {len(files)} rounds, {sum(len(o) for o, _ in train)} ticks to learn from, {sum(len(o) for o, _ in val)} held back", flush=True)
     device, policy = model.device, model.policy
@@ -307,28 +321,33 @@ def start_from_recordings(model, steps, folders, per_step=16):
     opt = torch.optim.Adam(params, lr=1e-3)
     rng = np.random.default_rng(1)
     best, best_state = float("inf"), None
+    batches = iter(())
     for step in range(steps):
         for group in opt.param_groups:
             group["lr"] = 1e-3 * (0.1 ** (step / steps))
-        distribution, actions, real = _whole_rounds(policy, [train[i] for i in rng.choice(len(train), per_step, replace=False)], device)
+        batch = next(batches, None)
+        if batch is None:
+            batches = _groups(train, rng.permutation(len(train)), ticks)
+            batch = next(batches)
+        distribution, actions, real = _whole_rounds(policy, batch, device)
         loss = -(distribution.log_prob(actions) * real).sum() / real.sum()
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 0.5)
         opt.step()
         if step % 250 == 0 or step == steps - 1:
-            total, ticks, same = 0.0, 0.0, 0.0
+            total, seen, same = 0.0, 0.0, 0.0
             with torch.no_grad():
-                for i in range(0, len(val), 32):
-                    distribution, actions, real = _whole_rounds(policy, val[i : i + 32], device)
+                for batch in _groups(val, sorted(range(len(val)), key=lambda i: len(val[i][0])), 2 * ticks):
+                    distribution, actions, real = _whole_rounds(policy, batch, device)
                     total += -(distribution.log_prob(actions) * real).sum().item()
-                    ticks += real.sum().item()
+                    seen += real.sum().item()
                     chosen = torch.stack([d.probs.argmax(1) for d in distribution.distribution], 1)
                     same = same + ((chosen == actions).float() * real[:, None]).sum(0)
-            held_loss = total / ticks
+            held_loss = total / seen
             if held_loss < best:  # it stops copying details that only fit the rounds it has seen
                 best, best_state = held_loss, {k: v.clone() for k, v in policy.state_dict().items()}
-            match = (same / ticks).cpu().numpy().round(2).tolist()
+            match = (same / seen).cpu().numpy().round(2).tolist()
             print(f"copying step {step}: loss {loss.item():.3f}, on held back {held_loss:.3f}, matches {match}", flush=True)
     policy.load_state_dict(best_state)
     print(f"copying: kept the model that did best on held back rounds, {best:.3f}", flush=True)
