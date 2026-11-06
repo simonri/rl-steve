@@ -15,6 +15,7 @@ import time
 import gymnasium as gym
 import numpy as np
 
+import bedwars_map
 import curriculum
 from jump_physics import hits_pole, jump_possible
 from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, LANDING_BONUS, MAX_DEATHS,
@@ -114,6 +115,7 @@ class AutoEnv(SkillEnv):
         self.family, self.task, self.tested = picked
         t = self.task
         self.shape_cells = {}  # blocks of other shapes than a full block, put in after the reset built the course
+        self.map_kind = "treenan"
         self.kind, self.blocked, self.detour, self.field = None, set(), 0, None
         self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 2, 6, 1.5, 0
         self.ticks_per_block, self.budget = t.get("faster") or t["ticks"], t.get("budget", (0.0, 0))
@@ -134,6 +136,11 @@ class AutoEnv(SkillEnv):
             down = t.get("way") == "up or down" and self.np_random.random() < 0.5
             self.gap = max(2, round(t["rise"] / t.get("steep", 1.0)))
             self.heights, self.directions, self.start = (-t["rise"] if down else t["rise"],), t["directions"], t["start"]
+        elif self.family == "bedwars":
+            # Played like the Treenan map: blocks pasted in before the round, a way around what stands in it.
+            self.extras = TREENAN
+            self.map_kind = "bedwars"
+            self.goal_half, self.field_margin, self.fall_margin = 1, 24, 6.0
         else:
             self.extras = TREENAN
             self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
@@ -367,6 +374,27 @@ class AutoEnv(SkillEnv):
             elif not jump_possible(max(dx, dz), min(dx, dz), rise, run_up_ticks=2):
                 return False
         return True
+
+    def _bedwars_spec(self):
+        """A fresh Bedwars map (bedwars_map.py), played like the Treenan map: pasted in, then from the start to the goal."""
+        r = self.np_random
+        for _ in range(20):
+            m = bedwars_map.layout(self.task, r, Y)
+            gx, gy, gz = m.goal
+            self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
+            self.blocked = set(m.blocked) - {(x, z) for x in range(-1, 2) for z in range(-1, 2)}
+            self._build_field()
+            if self.field is None or self._next_cell(0.5, 0.5)[1] is not None and self._walk(0.5, 0.5) < self.field.max() - 1.0:
+                break  # the goal can be reached on foot and by building, around everything in the way
+        else:
+            raise RuntimeError("no reachable bedwars map found")
+        self.par = m.par
+        self.walk_par = int(self._walk(0.5, 0.5))
+        self.blocks_given = min(64, math.ceil(self.par * self.budget[0]) + self.budget[1])
+        self.next_cells = m.cells
+        return dict(clear=[0, 0, 0, -1, -1, -1], platforms=[], skip_block_check=True, camera=self.camera_for(gx, gz, gy), camera_every=self.camera_every,
+                    beam=[gx + 0.5, gy + 1.2, gz + 0.5], pos=[0.5 + float(r.uniform(-0.3, 0.3)), Y + 1, 0.5 + float(r.uniform(-0.3, 0.3))],
+                    yaw=float(r.uniform(0, 360)), pitch=float(r.uniform(-30, 89)), blocks=self.blocks_given, block_radius=RADIUS)
 
     def _safe_poles(self, poles):
         """Poles never stand in the way of a real jump, or on a block of the course."""

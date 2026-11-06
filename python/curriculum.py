@@ -82,6 +82,18 @@ FAMILIES = {
         steep=(1.0, 1.5, 2.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
         way=("up", "up or down"),  # down too: building a way down without falling off it
     ),
+    # Fresh Bedwars maps every round (bedwars_map.py): from the own base across void to another island.
+    "bedwars": dict(
+        legs=(1, 2, 3),  # gaps to cross: straight over, or by way of one or two small islands
+        gap=(4, 6, 8, 10, 12),  # the most void between two islands
+        height=(0, 1, 2, 4, 6),  # the most one island can lie above or below the last
+        clutter=("none", "some", "many"),  # walls, pillars, trees and fences on the islands
+        target=("diamond", "enemy", "mid"),  # a diamond island, beside a defended bed, or a middle island that can be raised
+        turns=("axis", "any"),  # islands only along the grid, or in any direction
+        start=("spawn", "anywhere"),  # by the own bed, or anywhere on the base
+        budget=(ROOMY, NORMAL, TIGHT, STRICT),
+        ticks=(40, 30, 20, 15),
+    ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
 EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster"), "stairs": ("steep", "way")}  # dials that wait for the rest of the course kind
@@ -89,7 +101,7 @@ EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_hole
 STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("longer", "faster"), "stairs": ("way", "steep")}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
-FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2))}
+FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2)), "bedwars": ("treenan", dict(gap=1))}
 
 
 class Curriculum:

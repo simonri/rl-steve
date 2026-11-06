@@ -553,3 +553,25 @@ assert c.levels["hop"]["count"] == len(FAMILIES["hop"]["count"]) - 1
 c = Curriculum(top)
 assert not any(c.record("hop", "all", i % 2 == 0) for i in range(3 * curriculum.WINDOW)), "half won: stays"
 print("step back ok")
+# Bedwars maps can always be done: room to stand at the start and the goal, blocks for every gap and climb, and no
+# island under the line where a fall counts.
+from sim_env import CourseMaker
+rng = np.random.default_rng(3)
+for n in range(200):
+    lv = Curriculum().levels
+    for d, v in FAMILIES["bedwars"].items():
+        lv["bedwars"][d] = int(rng.integers(len(v)))
+    m = CourseMaker(lv, seed=n)
+    m.set_exam("bedwars")
+    spec, _ = m.draw(seed=n)
+    cells, gy = m.next_cells, Y + m.dy
+    assert (0, Y, 0) in cells and (0, Y + 1, 0) not in cells and (0, Y + 2, 0) not in cells
+    assert all((m.goal_x + dx, gy, m.goal_z + dz) in cells and (m.goal_x + dx, gy + h, m.goal_z + dz) not in cells for dx in (-1, 0, 1) for dz in (-1, 0, 1) for h in (1, 2))
+    assert m.par <= spec["blocks"] <= 64, (m.par, spec["blocks"])
+    assert m.field is None or m._walk(0.5, 0.5) < m.field.max() - 1.0
+    fall_line = min(Y + 1, gy + 1) - m.fall_margin
+    tops = {}
+    for (x, y, z) in cells:
+        tops[(x, z)] = max(tops.get((x, z), y), y)
+    assert min(tops.values()) + 1 > fall_line, "an island top under the fall line"
+print("bedwars maps ok")

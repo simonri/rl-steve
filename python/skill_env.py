@@ -239,6 +239,8 @@ class SkillEnv(gym.Env):
     def _treenan_spec(self):
         """One round on the real map. Blocks that would be in the way of walking steer the route around them."""
         r = self.np_random
+        if getattr(self, "map_kind", "treenan") == "bedwars":
+            return self._bedwars_spec()
         if SkillEnv.map_data is None:
             SkillEnv.map_data = Treenan()
         data = SkillEnv.map_data
