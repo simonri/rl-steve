@@ -13,8 +13,9 @@ import math
 V_FOV = 90.0  # vertical field of view, as Minecraft's setting counts it
 ASPECT = 16 / 9
 H_HALF = math.degrees(math.atan(math.tan(math.radians(V_FOV / 2)) * ASPECT))  # about 60.6 degrees
-FIT = 0.85  # share of the half-angles the framed area may fill
-ELEVATIONS = (35.0, 50.0, 25.0, 65.0)  # degrees above the framed area, best first
+FIT = 0.92  # share of the half-angles the framed area may fill
+ELEVATIONS = (58.0, 66.0, 52.0, 75.0)  # degrees above the framed area, best first. Looking down this steeply, even the
+# top edge of the picture (pitch minus half the field of view) stays below the horizon: no sky, the course fills it
 TURNS = (0, 20, -20, 40, -40, 70, -70, 100, -100, 140, -140, 180)
 MIN_DIST, MAX_DIST = 8.0, 60.0  # the far end stays inside what a watcher's game shows
 LOST_FOR = 30  # ticks out of the picture before a cut
@@ -42,7 +43,9 @@ class Shots:
         if getattr(env, "extras", None) == "treenan":
             cells = [c for c, s in getattr(env, "next_cells", {}).items() if s != "minecraft:air"]
             self.solid |= set(cells)
-            points += cells
+            # Only ground at the heights it plays on: tree tops and the undersides of islands would shrink the course.
+            low, high = min(100, 100 + env.dy) - 2, max(100, 100 + env.dy) + 2
+            points += [c for c in cells if low <= c[1] <= high]
         points += [tuple(c) for c in getattr(env, "landing_order", [])]
         lo = [min(p[i] for p in points) for i in range(3)]
         hi = [max(p[i] for p in points) + 1 for i in range(3)]
@@ -114,7 +117,7 @@ class Shots:
                         if all(h <= H_HALF * FIT and v <= V_FOV / 2 * FIT for h, v in (self._angles(shot, c) for c in corners)):
                             break
                     if self._clear(at, head, local) and self._clear(at, tuple(centre), local):
-                        score = d + abs(turn) * 0.05 + (elev_deg - 35) ** 2 * 0.01
+                        score = d + abs(turn) * 0.05 + abs(elev_deg - ELEVATIONS[0]) * 0.05
                         if best is None or score < best[0]:
                             best = (score, shot)
             if best:

@@ -23,7 +23,7 @@ def main():
     rng = np.random.default_rng(3)
     env = AutoEnv(0)
     cam = Shots()
-    ticks = inside = hidden = far = cuts = framed = 0
+    ticks = inside = hidden = far = cuts = framed = skyless = 0
     for n in range(rounds):
         family = ("treenan", "bedwars", "bridge", "hop")[n % 4]
         levels = curriculum.Curriculum().levels
@@ -42,6 +42,7 @@ def main():
             new = cam.update(env)
             if t == 0:  # the opening shot holds the start and the goal
                 goal = (env.goal_x + 0.5, 101 + env.dy, env.goal_z + 0.5)
+                skyless += cam.shot[4] - V_FOV / 2 >= 0  # the top edge of the picture looks down: no sky in it
                 framed += all(h <= H_HALF and v <= V_FOV / 2 for h, v in (cam._angles(cam.shot, p) for p in ((0.5, 101.0, 0.5), goal)))
             elif new is not None:
                 cuts += 1
@@ -58,9 +59,10 @@ def main():
             far += math.dist(at[:3], head) > MAX_DIST * 1.2
             if term or trunc:
                 break
-    print(f"{rounds} rounds, {ticks} ticks: start and goal in the opening shot {framed}/{rounds}, cuts after it {cuts}, camera inside a block {inside}, view blocked {hidden}, too far {far}")
+    print(f"{rounds} rounds, {ticks} ticks: start and goal in the opening shot {framed}/{rounds}, no sky {skyless}/{rounds}, cuts after it {cuts}, camera inside a block {inside}, view blocked {hidden}, too far {far}")
     assert inside == 0, "the camera sat inside a block"
     assert framed == rounds, "an opening shot left out the start or the goal"
+    assert skyless >= rounds * 0.9, "opening shots that show sky"
     assert hidden <= ticks * 0.1, "the view to the player was blocked too often"
     assert cuts <= rounds, "the camera cut more than once a round on average"
     assert far <= ticks * 0.02, "the camera was too far away too often"
