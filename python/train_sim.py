@@ -66,8 +66,8 @@ def main():
         # Loaded on the processor: a second model left on the card takes the scratch memory the fast convolutions need,
         # and learning then runs several times slower.
         old = ta.SplitPPO.load(a.resume, device="cpu")
-        kept = model.policy.load_state_dict(old.policy.state_dict(), strict=False)
-        print(f"continuing from {a.resume}: new {kept.missing_keys}, dropped {kept.unexpected_keys}", flush=True)
+        grew = ta.transfer(model.policy, old.policy.state_dict())  # the eyes and hands may have grown: what was there is kept exactly
+        print(f"continuing from {a.resume}: grown {grew}", flush=True)
         del old
         torch.cuda.empty_cache()
     elif a.start_from_recordings:

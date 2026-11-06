@@ -50,6 +50,56 @@ POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan", "stairs": "Stairs", "bedwars": "Bedwars", "duel": "Duel"}
 
 
+NEW_ACTION_BIAS = {2: (1.0, -1.0), 3: (2.0, 0.0, 0.0)}  # a new left click starts at about one in nine, a new hotbar input at mostly "keep"
+
+
+def transfer(policy, old_state):
+    """An older model's weights in a model whose inputs or actions grew. Same shapes are copied. A layer that takes more
+    inputs keeps the old columns and starts the new ones at 0, so the old inputs give exactly the old result. More
+    actions keep the old rows; the new ones start at 0 with a bias toward not attacking and keeping the hotbar slot.
+    Returns the names of what grew."""
+    new = policy.state_dict()
+    grew = []
+    for name, old in old_state.items():
+        if name not in new:
+            continue
+        t = new[name]
+        if t.shape == old.shape:
+            new[name] = old.clone()
+            continue
+        if name.endswith("action_net.weight") and t.shape[1] == old.shape[1] and t.shape[0] > old.shape[0]:
+            w = torch.zeros_like(t)
+            w[: old.shape[0]] = old
+        elif name.endswith("action_net.bias") and t.shape[0] > old.shape[0]:
+            w = torch.zeros_like(t)
+            w[: old.shape[0]] = old
+            sizes = list(policy.action_space.nvec)[len(sizes_of(old.shape[0], policy)):]
+            i = old.shape[0]
+            for n in sizes:
+                w[i : i + n] = torch.tensor(NEW_ACTION_BIAS.get(int(n), (0.0,) * int(n)))
+                i += int(n)
+        elif t.dim() == 2 and t.shape[0] == old.shape[0] and t.shape[1] > old.shape[1]:
+            w = torch.zeros_like(t)
+            w[:, : old.shape[1]] = old
+        else:
+            raise ValueError(f"{name}: {tuple(old.shape)} does not fit {tuple(t.shape)}")
+        new[name] = w
+        grew.append(name)
+    policy.load_state_dict(new)
+    return grew
+
+
+def sizes_of(total, policy):
+    """The leading action sizes whose choices add up to `total` (the older model's actions)."""
+    out, s = [], 0
+    for n in policy.action_space.nvec:
+        if s >= total:
+            break
+        out.append(int(n))
+        s += int(n)
+    return out
+
+
 def fast_convolutions():
     """Stable-Baselines3 turns on cuDNN's deterministic mode when given a seed. That leaves only slow ways through the
     convolutions' backward pass: a learning step took 500 ms instead of 120. Call after the model is made."""
