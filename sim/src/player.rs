@@ -52,6 +52,8 @@ pub const FACE_STEP: [[i32; 3]; 6] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 
 pub struct Input {
     pub keys: Keys,
     pub click: bool,
+    pub attack: bool,     // left click: hit the player in the crosshair (combat.rs works out whom)
+    pub slot: Option<u8>, // a hotbar key: 0 blocks, 1 sword
     pub turn_yaw: f64,   // degrees, sent to Entity.turn as yaw / 0.15
     pub turn_pitch: f64, // degrees
 }
@@ -87,6 +89,19 @@ pub struct Player {
     pub health: f32,
     pub hurt_time: i32,
     pub age: i64, // the server's tickCount for the player: Peaceful heals on every 20th
+    pub rules18: bool, // 1.8 healing (one point every 80 ticks) instead of Peaceful's
+    pub heal_timer: i32,
+    // Combat (combat.rs).
+    pub slot: u8,             // selected hotbar slot: 0 blocks, 1 sword
+    pub miss_lock: i32,       // Minecraft.missTime: ticks before a left click does anything again
+    pub resist: i32,          // hurtResistantTime
+    pub last_damage: f32,     // lastDamage, for hits inside the resistance
+    pub attack_damage: f32,   // the attack attribute: 1, plus the sword
+    pub armor: i32,           // armor points
+    pub kb_enchant: i32,      // Knockback level of the held item
+    pub sent_sprinting: bool, // the sprint state the client last told the server
+    pub server_sprinting: bool, // the server's own idea of it: a sprinting hit clears it until the client starts again
+    pub pending_knock: Option<[f64; 3]>, // a hit's motion, applied before the next tick as the packet is
     pub held: i32,
     pub server_motion: [f64; 3], // the server's deltaMovement for the player, sent back when it is hurt
     scratch: Vec<Aabb>,
@@ -116,6 +131,18 @@ impl Player {
             health: MAX_HEALTH,
             hurt_time: 0,
             age: 0,
+            rules18: false,
+            heal_timer: 0,
+            slot: 0,
+            miss_lock: 0,
+            resist: 0,
+            last_damage: 0.0,
+            attack_damage: 1.0,
+            armor: 0,
+            kb_enchant: 0,
+            sent_sprinting: false,
+            server_sprinting: false,
+            pending_knock: None,
             held,
             server_motion: [0.0; 3],
             scratch: Vec::with_capacity(64),
@@ -196,7 +223,7 @@ impl Player {
     /// BlockItem.place through a right click: the spot next to the side aimed at, or the aimed block itself when it
     /// can be replaced, if that spot is free and the player is not in the way.
     fn place(&mut self, world: &mut World, hit: &Hit) -> Option<([i32; 3], [i32; 3])> {
-        if self.held <= 0 {
+        if self.held <= 0 || self.slot != 0 {
             return None;
         }
         let all = kinds();
@@ -223,8 +250,18 @@ impl Player {
     /// One whole tick. Returns what happened along the way.
     pub fn tick(&mut self, world: &mut World, input: &Input) -> Events {
         let mut ev = Events::default();
+        // 0. A hit's motion packet from the last server tick, handled before this tick.
+        if let Some(v) = self.pending_knock.take() {
+            self.dm = v;
+        }
         // 1. The mod sets the keys and turns the view before the tick.
         self.turn(input.turn_yaw, input.turn_pitch);
+        if let Some(s) = input.slot {
+            self.slot = s;
+        }
+        if self.miss_lock > 0 {
+            self.miss_lock -= 1;
+        }
         let next_keys = input.keys;
         // 2. Minecraft.tick: pick, then the click.
         if input.click {
@@ -244,6 +281,11 @@ impl Player {
             self.crouch_pose = want_crouch;
         } else if self.can_fit(world, true) {
             self.crouch_pose = true;
+        }
+        // LocalPlayer.sendIsSprintingIfNeeded: the server hears of a change in sprinting, and only of a change.
+        if self.sprinting != self.sent_sprinting {
+            self.sent_sprinting = self.sprinting;
+            self.server_sprinting = self.sprinting;
         }
         // 5. The server: fall damage from the reported landing, sent back with its own motion for the player.
         ev.damage = self.server_tick();
@@ -266,9 +308,23 @@ impl Player {
         } else if self.on_ground {
             self.server_fall = 0.0;
         }
-        // ServerPlayer.tickRegeneration: on Peaceful, one health point every 20 ticks.
         self.age += 1;
-        if self.age % 20 == 0 && self.health < MAX_HEALTH {
+        if self.resist > 0 {
+            self.resist -= 1; // EntityPlayerMP.onUpdate
+        }
+        if self.rules18 {
+            // FoodStats with full food: one health point every 80 ticks while hurt.
+            if self.health < MAX_HEALTH && self.health > 0.0 {
+                self.heal_timer += 1;
+                if self.heal_timer >= 80 {
+                    self.health = (self.health + 1.0).min(MAX_HEALTH);
+                    self.heal_timer = 0;
+                }
+            } else {
+                self.heal_timer = 0;
+            }
+        } else if self.age % 20 == 0 && self.health < MAX_HEALTH {
+            // ServerPlayer.tickRegeneration: on Peaceful, one health point every 20 ticks.
             self.health = (self.health + 1.0).min(MAX_HEALTH);
         }
         damage
@@ -748,7 +804,7 @@ fn clip_block(world: &World, from: [f64; 3], to: [f64; 3], pos: [i32; 3]) -> Opt
 }
 
 /// AABB.clip: where the line enters the box, and through which side.
-fn clip_box(b: &Aabb, from: [f64; 3], d: [f64; 3], max_t: f64) -> Option<(f64, u8)> {
+pub(crate) fn clip_box(b: &Aabb, from: [f64; 3], d: [f64; 3], max_t: f64) -> Option<(f64, u8)> {
     let mut t_best = max_t;
     let mut face = None;
     // (axis, plane, side), checked in the game's order: x, y, z.

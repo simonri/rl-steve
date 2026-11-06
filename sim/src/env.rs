@@ -387,7 +387,7 @@ impl Env {
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
-        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch] };
+        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], ..Input::default() };
         self.maybe_push(before, &input);
         let ev = self.game_tick(&input);
         self.t += 1;

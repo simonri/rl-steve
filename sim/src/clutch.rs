@@ -241,7 +241,7 @@ fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, 
             turned.turn(ty, tp);
             let on_face = turned.pick(&w).is_some_and(|h| h.block == against && h.face == face);
             let k = from_list(keys);
-            Input { keys: k, click: t >= 2 && k.shift && !placed && on_face, turn_yaw: ty, turn_pitch: tp }
+            Input { keys: k, click: t >= 2 && k.shift && !placed && on_face, turn_yaw: ty, turn_pitch: tp, ..Input::default() }
         };
         p.tick(&mut w, &input);
         if p.pos[1] < fall_line {

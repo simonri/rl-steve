@@ -54,7 +54,7 @@ impl Single {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before), sprinting: p.sprinting };
-        clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch }, fall_line)
+        clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch, ..Input::default() }, fall_line)
     }
 
     fn set_block(&mut self, x: i32, y: i32, z: i32, name: &str) {
@@ -93,7 +93,7 @@ impl Single {
 
     /// One tick: keys (forward, back, left, right, jump, sneak, sprint), a click, and the turn in degrees.
     fn tick<'py>(&mut self, py: Python<'py>, keys: [bool; 7], click: bool, yaw: f64, pitch: f64) -> PyResult<Bound<'py, PyDict>> {
-        let ev = self.player.tick(&mut self.world, &Input { keys: to_keys(keys), click, turn_yaw: yaw, turn_pitch: pitch });
+        let ev = self.player.tick(&mut self.world, &Input { keys: to_keys(keys), click, turn_yaw: yaw, turn_pitch: pitch, ..Input::default() });
         let d = self.state(py)?;
         if let Some((t, s)) = ev.placed {
             d.set_item("placed", (t, s))?;
@@ -352,7 +352,7 @@ fn push_for(solid: &str, feet: [i32; 3], pos: [f64; 3], vel: [f64; 3], yaw: f32,
             turn_pitch: f64, goal: [f64; 2], fall_line: f64, push: (i32, i32, usize, f64, f64), sprinting: bool) -> Option<[f64; 3]> {
     let cube = Cube::from_text(feet, solid);
     let state = clutch::State { pos, vel, yaw, pitch, held, keys: to_keys(before), sprinting };
-    let first = Input { keys: to_keys(keys), click, turn_yaw, turn_pitch };
+    let first = Input { keys: to_keys(keys), click, turn_yaw, turn_pitch, ..Input::default() };
     clutch::decide(&cube, &state, &first, goal, fall_line, &to_push(push))
 }
 
