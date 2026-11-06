@@ -1,4 +1,4 @@
-# RL Steve: Steve lär sig Minecraft med reinforcement learning
+# Self-Taught Steve: Steve lär sig Minecraft själv med reinforcement learning
 
 Parkour, bridging och snart Bedwars, i riktiga Minecraft 26.3 från speltillstånd och utan pixlar. Steve tränar i en egen simulator skriven i Rust.
 

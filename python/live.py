@@ -42,7 +42,7 @@ def overlay():
     s = status()
     stages = s.get("stages", env.stage + 1)
     rate = wins / games if games else 0.0
-    env.sidebar([["RL STEVE ", "white", True], ["LIVE", "gold", True]], [
+    env.sidebar([["SELF-TAUGHT STEVE", "gold", True]], [
         sb.stage_bar(env.stage + 1, stages),
         [["Gap ", sb.LABEL], [str(env.gap), sb.VALUE], ["  Height ", sb.LABEL], [f"{env.dy:+d}", sb.VALUE]],
         [["Task ", sb.LABEL], [sb.extras_text(env.kind or env.extras) or "plain bridge", "light_purple" if env.kind or env.extras else sb.VALUE]],
