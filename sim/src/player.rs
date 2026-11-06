@@ -86,6 +86,7 @@ pub struct Player {
     pub sprint_trigger: i32,
     pub health: f32,
     pub hurt_time: i32,
+    pub age: i64, // the server's tickCount for the player: Peaceful heals on every 20th
     pub held: i32,
     pub server_motion: [f64; 3], // the server's deltaMovement for the player, sent back when it is hurt
     scratch: Vec<Aabb>,
@@ -114,6 +115,7 @@ impl Player {
             sprint_trigger: 0,
             health: MAX_HEALTH,
             hurt_time: 0,
+            age: 0,
             held,
             server_motion: [0.0; 3],
             scratch: Vec::with_capacity(64),
@@ -263,6 +265,11 @@ impl Player {
             self.server_fall = 0.0;
         } else if self.on_ground {
             self.server_fall = 0.0;
+        }
+        // ServerPlayer.tickRegeneration: on Peaceful, one health point every 20 ticks.
+        self.age += 1;
+        if self.age % 20 == 0 && self.health < MAX_HEALTH {
+            self.health = (self.health + 1.0).min(MAX_HEALTH);
         }
         damage
     }

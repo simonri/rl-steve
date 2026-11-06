@@ -50,6 +50,7 @@ const SPEED_BONUS: f64 = 3.0;
 const DEATH_COST: f64 = 4.0;
 const STUCK_COST: f64 = 4.0;
 const STAYED_HOME_COST: f64 = 2.0;
+const DEATH_HEALTH: f32 = 4.0; // auto_env.DEATH_HEALTH
 const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
@@ -463,7 +464,7 @@ impl Env {
             reward += self.closer([p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32]);
         }
         let success = self.reached();
-        let fell = (self.fell() || self.player.health <= 0.0) && !success; // fall damage that kills is a death too
+        let fell = (self.fell() || self.player.health <= DEATH_HEALTH) && !success; // a fall that (nearly) kills is a death too
         if success {
             // The landing's damage arrives a moment later; the keys are let go meanwhile.
             for _ in 0..DAMAGE_SETTLE_TICKS {

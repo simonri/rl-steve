@@ -52,6 +52,7 @@ FAR_JUMP = (4, 3)  # just inside what the jump math allows from a block
 SLAB = "minecraft:stone_slab[type=bottom,waterlogged=false]"
 MOVED_ON = 1.5  # blocks from where it last was to count as going somewhere
 DETOUR_TICKS = 200  # longest it may go around something without getting closer: 10 s
+DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
 PUSH_FALL_MARGIN = 4.0  # with pushes a clutch lands below the bridge, so a fall counts a little further down
@@ -793,7 +794,7 @@ class AutoEnv(SkillEnv):
             x, y, z = o["pos"]
             reward += self._closer(math.floor(x), math.floor(y) - 1, math.floor(z))
         success = self.reached(o)
-        fell = (self.fell(o) or o["health"] <= 0) and not success  # fall damage that kills is a death too, as in the game
+        fell = (self.fell(o) or o["health"] <= DEATH_HEALTH) and not success  # a fall that (nearly) kills is a death too
         if success:
             for _ in range(DAMAGE_SETTLE_TICKS):  # damage from this landing arrives a moment later
                 o = self.c.step()

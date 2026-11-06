@@ -1,7 +1,8 @@
-"""A camera for people watching in the real game, like a TV director: it holds still and cuts to a new shot only when
-it has to. A watcher's view is moved by teleporting, and teleports are not smoothed, so a camera that follows smoothly
-is a camera that jerks. Each shot never sits inside a block, starts with a clear line to the player, frames the player
-and the way just ahead for a field of view of 90 degrees, and is set ahead of the player so it walks into the picture.
+"""A camera for people watching in the real game. The round opens on one shot with the whole course in it, start to
+goal, and that shot stays: it only cuts when it must (the player has been out of the picture or hidden for a while,
+or a block now sits where the camera is). After such a cut the new shot frames the player and the rest of the way.
+
+A watcher's view is moved by teleporting, which the game does not smooth, so every move is a jump; fewer is better.
 
     cam = Shots()
     cam.new_round(env)                      # after env.reset()
@@ -9,36 +10,46 @@ and the way just ahead for a field of view of 90 degrees, and is set ahead of th
 """
 import math
 
-FOV = 90.0  # vertical, as Minecraft counts it; the screen is wider than it is high, so this is the tighter one
-NEAR, FAR = 6.0, 13.0  # blocks from the player: closer is cramped, further makes the player a speck
-AHEAD = 7.0  # blocks ahead along the way that the shot is aimed toward, so the player moves into it
-ELEVATION = 28.0  # degrees above the player
-HOLD = 60  # ticks a shot stays at least: three seconds
-BLOCKED_FOR = 20  # ticks the view may be blocked before cutting: a second, so a passing block does not cause a cut
-OUT_OF_FRAME = 38.0  # degrees off the middle of the picture before the player counts as leaving it
-TURNS = (0, 25, -25, 50, -50, 80, -80, 115, -115, 150, -150, 180)  # degrees tried around the preferred side
+V_FOV = 90.0  # vertical field of view, as Minecraft's setting counts it
+ASPECT = 16 / 9
+H_HALF = math.degrees(math.atan(math.tan(math.radians(V_FOV / 2)) * ASPECT))  # about 60.6 degrees
+FIT = 0.85  # share of the half-angles the framed area may fill
+ELEVATIONS = (35.0, 50.0, 25.0, 65.0)  # degrees above the framed area, best first
+TURNS = (0, 20, -20, 40, -40, 70, -70, 100, -100, 140, -140, 180)
+MIN_DIST, MAX_DIST = 8.0, 60.0  # the far end stays inside what a watcher's game shows
+LOST_FOR = 30  # ticks out of the picture before a cut
+HIDDEN_FOR = 60  # ticks with the view to the player blocked before a cut
 
 
 class Shots:
     def __init__(self):
         self.shot = None  # (x, y, z, yaw, pitch)
-        self.age = 0
-        self.blocked = 0
-        self.side = 1.0
+        self.lost = self.hidden = 0
         self.solid = set()
+        self.extent = None  # (min corner, max corner) of the course
 
     def new_round(self, env):
-        """Everything known to be built: the course's boxes, a pasted map, and nothing yet placed by the player."""
+        """Everything known to be built (the course's boxes, a pasted map), and the area the opening shot frames."""
         self.solid = set()
         spec = getattr(env, "spec", {}) or {}
+        points = [(0, 100, 0), (env.goal_x, 100 + 1 + env.dy, env.goal_z)]
         for b in spec.get("platforms", []):
             for x in range(int(b[0]), int(b[3]) + 1):
                 for y in range(int(b[1]), int(b[4]) + 1):
                     for z in range(int(b[2]), int(b[5]) + 1):
                         self.solid.add((x, y, z))
+            points += [tuple(b[:3]), tuple(b[3:])]
         if getattr(env, "extras", None) == "treenan":
-            self.solid |= {c for c, s in getattr(env, "next_cells", {}).items() if s != "minecraft:air"}
+            cells = [c for c, s in getattr(env, "next_cells", {}).items() if s != "minecraft:air"]
+            self.solid |= set(cells)
+            points += cells
+        points += [tuple(c) for c in getattr(env, "landing_order", [])]
+        lo = [min(p[i] for p in points) for i in range(3)]
+        hi = [max(p[i] for p in points) + 1 for i in range(3)]
+        hi[1] += 2  # room to stand on top
+        self.extent = (lo, hi)
         self.shot = None
+        self.lost = self.hidden = 0
 
     @staticmethod
     def _local(o):
@@ -64,45 +75,56 @@ class Shots:
         cx, cy, cz = math.floor(ax), math.floor(ay), math.floor(az)
         if blocked((cx, cy, cz)) or blocked((cx, cy + 1, cz)) or blocked((cx, cy - 1, cz)):
             return False
-        n = max(2, int(math.dist(a, b) * 4))
+        n = max(2, int(math.dist(a, b) * 3))
         return not any(blocked((math.floor(ax + (b[0] - ax) * i / n), math.floor(ay + (b[1] - ay) * i / n), math.floor(az + (b[2] - az) * i / n)))
                        for i in range(1, n))
 
-    def _new_shot(self, env, head, local):
-        o = env.obs
-        x, y, z = o["pos"]
-        try:
-            rx, rz = env._route(x, z)
-        except Exception:
-            rx, rz = 1.0, 0.0
-        # Aimed between the player and the way a few blocks ahead: the player starts on one side and walks across.
-        look = (x + rx * AHEAD * 0.45, y + 1.0, z + rz * AHEAD * 0.45)
-        half = math.radians(FOV / 2) * 0.75
-        dist = min(FAR, max(NEAR, (AHEAD * 0.6 + 1.5) / math.tan(half) + 2.0))
-        elev = math.radians(ELEVATION)
-        for d in (dist, dist * 0.75, NEAR):
-            for sign in (self.side, -self.side):
+    @staticmethod
+    def _angles(shot, p):
+        """Horizontal and vertical degrees between the middle of the picture and point p."""
+        x, y, z, yaw, pitch = shot
+        ry, rp = math.radians(yaw), math.radians(pitch)
+        fwd = (-math.sin(ry) * math.cos(rp), -math.sin(rp), math.cos(ry) * math.cos(rp))
+        right = (-math.cos(ry), 0.0, -math.sin(ry))
+        up = (fwd[1] * right[2] - fwd[2] * right[1], fwd[2] * right[0] - fwd[0] * right[2], fwd[0] * right[1] - fwd[1] * right[0])
+        d = (p[0] - x, p[1] - y, p[2] - z)
+        f = sum(a * b for a, b in zip(d, fwd))
+        if f <= 0:
+            return 180.0, 180.0
+        return math.degrees(math.atan2(abs(sum(a * b for a, b in zip(d, right))), f)), math.degrees(math.atan2(abs(sum(a * b for a, b in zip(d, up))), f))
+
+    def _frame(self, lo, hi, axis, head, local):
+        """A shot that holds the box lo..hi, from the side of `axis` (the way through it), clear of every block."""
+        centre = [(a + b) / 2 for a, b in zip(lo, hi)]
+        corners = [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+        base = math.atan2(axis[1], axis[0]) + math.pi / 2
+        best = None
+        for elev_deg in ELEVATIONS:
+            for side in (1, -1):
                 for turn in TURNS:
-                    ang = math.atan2(rz, rx) + sign * (math.pi / 2 + math.radians(turn))
-                    at = (look[0] + math.cos(ang) * d * math.cos(elev), look[1] + d * math.sin(elev), look[2] + math.sin(ang) * d * math.cos(elev))
-                    if self._clear(at, head, local) and self._clear(at, look, local):
-                        self.side = sign
-                        return self._aim(at, look)
-        return self._aim((look[0], look[1] + NEAR, look[2] + 0.01), look)  # nothing clear: from straight above
+                    ang = base + math.radians(turn) + (0 if side == 1 else math.pi)
+                    elev = math.radians(elev_deg)
+                    back = (math.cos(ang) * math.cos(elev), math.sin(elev), math.sin(ang) * math.cos(elev))
+                    # The nearest distance at which every corner is inside the picture.
+                    for d in [MIN_DIST * 1.25 ** k for k in range(20)]:
+                        if d > MAX_DIST:
+                            break
+                        at = (centre[0] + back[0] * d, centre[1] + back[1] * d, centre[2] + back[2] * d)
+                        shot = self._aim(at, centre)
+                        if all(h <= H_HALF * FIT and v <= V_FOV / 2 * FIT for h, v in (self._angles(shot, c) for c in corners)):
+                            break
+                    if self._clear(at, head, local) and self._clear(at, tuple(centre), local):
+                        score = d + abs(turn) * 0.05 + (elev_deg - 35) ** 2 * 0.01
+                        if best is None or score < best[0]:
+                            best = (score, shot)
+            if best:
+                return best[1]
+        return self._aim((centre[0], hi[1] + MIN_DIST * 2, centre[2] + 0.01), centre)  # nothing clear: straight above
 
     @staticmethod
     def _aim(at, look):
         dx, dy, dz = look[0] - at[0], look[1] - at[1], look[2] - at[2]
         return (at[0], at[1], at[2], math.degrees(math.atan2(-dx, dz)), math.degrees(-math.atan2(dy, math.hypot(dx, dz))))
-
-    def _off_middle(self, head):
-        """Degrees between the middle of the picture and the player's head."""
-        x, y, z, yaw, pitch = self.shot
-        ry, rp = math.radians(yaw), math.radians(pitch)
-        fwd = (-math.sin(ry) * math.cos(rp), -math.sin(rp), math.cos(ry) * math.cos(rp))
-        to = (head[0] - x, head[1] - y, head[2] - z)
-        n = math.sqrt(sum(v * v for v in to)) or 1.0
-        return math.degrees(math.acos(max(-1.0, min(1.0, sum(f * t for f, t in zip(fwd, to)) / n))))
 
     def update(self, env):
         o = env.obs
@@ -111,15 +133,20 @@ class Shots:
         x, y, z = o["pos"]
         head = (x, y + 1.6, z)
         local = self._local(o)
-        if self.shot is None:
-            self.shot, self.age, self.blocked = self._new_shot(env, head, local), 0, 0
+        if self.shot is None:  # the opening shot: the whole course
+            lo, hi = self.extent
+            self.shot = self._frame(lo, hi, (env.goal_x, env.goal_z), head, local)
             return list(self.shot)
-        self.age += 1
-        self.blocked = self.blocked + 1 if not self._clear(self.shot[:3], head, local) else 0
+        h, v = self._angles(self.shot, head)
+        self.lost = self.lost + 1 if (h > H_HALF * 0.95 or v > V_FOV / 2 * 0.95) else 0
+        self.hidden = self.hidden + 1 if not self._clear(self.shot[:3], head, local) else 0
         inside = not self._clear(self.shot[:3], self.shot[:3], local)  # a block was placed where the camera is
-        dist = math.dist(self.shot[:3], head)
-        leaving = self._off_middle(head) > OUT_OF_FRAME or dist > FAR * 1.4
-        if inside or self.blocked >= BLOCKED_FOR or (self.age >= HOLD and leaving) or dist > FAR * 2.5:
-            self.shot, self.age, self.blocked = self._new_shot(env, head, local), 0, 0
+        if inside or self.lost >= LOST_FOR or self.hidden >= HIDDEN_FOR or math.dist(self.shot[:3], head) > MAX_DIST * 1.2:
+            # The rest of the way: from the player to the goal.
+            gx, gy, gz = env.goal_x + 0.5, 100 + 1 + env.dy, env.goal_z + 0.5
+            lo = [min(x, gx) - 2, min(y, gy) - 1, min(z, gz) - 2]
+            hi = [max(x, gx) + 2, max(y, gy) + 3, max(z, gz) + 2]
+            self.shot = self._frame(lo, hi, (gx - x, gz - z), head, local)
+            self.lost = self.hidden = 0
             return list(self.shot)
         return None
