@@ -1,0 +1,222 @@
+<title>Bedwars-agentens arkitektur</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column, wide tables and diagrams scroll in their own boxes; layer colours mark strategist, body, tools. */
+:root {
+  --bg: #f6f7f4; --panel: #ffffff; --fg: #17201b; --muted: #56615a; --line: #d9ddd6;
+  --wool: #b8322a;       /* accent: red team wool */
+  --strat: #2f5fb3; --body: #1f8a5b; --tool: #9a6a12;
+  --strat-bg: #e9eff9; --body-bg: #e6f4ec; --tool-bg: #f7efdf;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --text: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --panel: #1a201d; --fg: #e8ece8; --muted: #a2ada6; --line: #2e3632;
+  --wool: #e2605a; --strat: #7ea3ea; --body: #55c08e; --tool: #d7a64a;
+  --strat-bg: #1b2433; --body-bg: #16271f; --tool-bg: #2a2416; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a201d; --fg: #e8ece8; --muted: #a2ada6; --line: #2e3632;
+  --wool: #e2605a; --strat: #7ea3ea; --body: #55c08e; --tool: #d7a64a;
+  --strat-bg: #1b2433; --body-bg: #16271f; --tool-bg: #2a2416; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--text); }
+main { max-width: 860px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 8px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(30px, 6vw, 44px); font-weight: 750; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 750; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); }
+h3 { font-size: 18px; font-weight: 600; margin-top: 18px; }
+p, li { max-width: 68ch; }
+p { margin: 8px 0; }
+ul, ol { margin: 6px 0; padding-left: 22px; }
+li { margin: 3px 0; }
+.lede { font-size: 18px; color: var(--muted); margin-top: 10px; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--wool); }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+.layers { display: grid; gap: 10px; margin: 14px 0; }
+.layer { border-radius: 10px; padding: 14px 16px; border-left: 4px solid; min-width: 0; }
+.layer h3 { margin: 0 0 4px; }
+.layer.strat { background: var(--strat-bg); border-color: var(--strat); }
+.layer.body { background: var(--body-bg); border-color: var(--body); }
+.layer.tool { background: var(--tool-bg); border-color: var(--tool); }
+.tag { font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.wrap { overflow-x: auto; margin: 12px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font: 600 12px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.st { font: 600 12px/1 var(--mono); white-space: nowrap; }
+.st.ok { color: var(--body); } .st.part { color: var(--tool); } .st.no { color: var(--wool); }
+pre.mermaid { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; margin: 12px 0; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.phase { display: grid; grid-template-columns: 56px 1fr; gap: 4px 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.phase:last-child { border-bottom: 0; }
+.phase .n { font: 750 30px/1 var(--display); color: var(--wool); }
+.phase > div { min-width: 0; }
+.done-when { font-size: 14.5px; color: var(--muted); }
+a { color: var(--strat); }
+@media (max-width: 480px) { .phase { grid-template-columns: 40px 1fr; } .phase .n { font-size: 24px; } }
+</style>
+
+<main>
+  <div class="eyebrow">Plan · november 2026</div>
+  <h1>Bedwars-agentens arkitektur</h1>
+  <p class="lede">Hur förflyttningsmodellen vi har i dag blir en del av en spelare som kan vinna hela Bedwars-matcher: vilka modeller som behövs, hur de styrs, vad simulatorn måste kunna och i vilken ordning vi bygger det.</p>
+
+  <h2>Målet</h2>
+  <p>Agenten ska vinna Bedwars mot dig på vår egen server, med samma tangenter, mus och skärminformation som en människa har, utan fusk. Först i solo (1 mot 1, två lag), sedan mot fler lag. "Alla matcher" är målbilden; det vi mäter är andelen vunna matcher mot dig och mot tidigare versioner av sig själv.</p>
+  <p>En Bedwars-match består av fem saker som pågår om vartannat: <strong>ekonomi</strong> (samla järn, guld, diamanter och smaragder, handla), <strong>försvar</strong> (bygga skydd runt sängen och stanna kvar när någon kommer), <strong>anfall</strong> (bygga bro, bryta sig igenom skyddet, förstöra sängen), <strong>strid</strong> (närstrid, pil och båge, eldklot, knuffar ut i tomrummet) och <strong>överlevnad</strong> (inte falla, clutcha, äta guldäpple, fly).</p>
+
+  <h2>Var vi står</h2>
+  <p>Vi har en förflyttningsmodell (PPO med LSTM-minne) som tränas i vår Rust-simulator, ungefär 4 000 beslut i sekunden. Den får ett mål ("stå på det här blocket") och tar sig dit med bro, trappa, torn, parkour och clutch. Den ser blocken 5 runt sig, en höjdkarta 16 runt sig, sin egen fart och blick, och väljer tangenter, klick och vridning varje tick (20 gånger i sekunden).</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Förmåga</th><th>Behövs till</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Ta sig till en punkt, bygga bro, trappa, torn</td><td>Allt</td><td><span class="st ok">finns</span></td></tr>
+      <tr><td>Parkour, slabs, hinder, öar på olika höjd</td><td>Mitten, fiendens bas</td><td><span class="st ok">finns</span></td></tr>
+      <tr><td>Clutch efter knuff</td><td>Överleva strid på bro</td><td><span class="st ok">finns</span></td></tr>
+      <tr><td>Se andra spelare, slå, sikta, undvika slag</td><td>Strid</td><td><span class="st no">saknas</span></td></tr>
+      <tr><td>Hotbar, byta föremål, äta, båge, eldklot</td><td>Strid, anfall, överlevnad</td><td><span class="st no">saknas</span></td></tr>
+      <tr><td>Bryta block med rätt verktyg</td><td>Anfall mot säng</td><td><span class="st no">saknas</span></td></tr>
+      <tr><td>Bygga ett skydd efter mall</td><td>Försvar</td><td><span class="st part">delvis</span> (kan placera, inte efter mall)</td></tr>
+      <tr><td>Handla i butiken, uppgraderingar</td><td>Ekonomi</td><td><span class="st no">saknas</span></td></tr>
+      <tr><td>Välja vad som ska göras när</td><td>Hela matchen</td><td><span class="st no">saknas</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Arkitekturen: tre lager</h2>
+  <p>En människa tänker inte på varje tangent när hen bestämmer sig för att rusha. Hon väljer ett uppdrag och låter händerna sköta resten, men händerna reagerar själva när någon slår. Samma uppdelning här:</p>
+  <div class="layers">
+    <div class="layer strat"><span class="tag">Lager 1 · 2 gånger i sekunden</span><h3>Strategen</h3>
+      <p>Läser matchläget (resurser, sängarnas skick, var alla spelare är, hälsa, utrustning) och väljer ett <em>uppdrag</em> med parametrar. Den skickar ett nytt uppdrag när läget ändras, till exempel när en fiende syns på bron mot vår bas.</p></div>
+    <div class="layer body"><span class="tag">Lager 2 · 20 gånger i sekunden</span><h3>Kroppen</h3>
+      <p>En enda inlärd modell som utför uppdraget: går, bygger, slåss, bryter, clutchar. Den får uppdraget som en del av det den ser, och den ser alltid fienderna nära sig, så den kan slåss och navigera samtidigt utan att någon växlar mellan modeller.</p></div>
+    <div class="layer tool"><span class="tag">Lager 3 · vid behov</span><h3>Verktygen</h3>
+      <p>Det som har ett rätt svar och inte behöver läras: handla i butikens meny, sortera inventariet, välja vilken plats i hotbaren som har vilket föremål. Skriptat, men bara med samma klick en människa gör.</p></div>
+  </div>
+
+<pre class="mermaid">
+flowchart TB
+  subgraph S["Strategen, 2 Hz"]
+    ST["Matchläge: resurser, sängar,<br/>spelare, hälsa, utrustning"] --> PICK["Väljer uppdrag"]
+  end
+  PICK -- "uppdrag + parametrar" --> CMD["GÅ TILL · STRID · BRYT IN<br/>FÖRSVARA · SAMLA · HANDLA"]
+  CMD --> BODY
+  subgraph K["Kroppen, 20 Hz, en modell"]
+    OBS["Block, karta, egen fart,<br/>fiender nära, inventarie, hälsa"] --> BODY["Gemensam modell med minne"]
+    BODY --> ACT["Tangenter, klick, vridning,<br/>hotbar"]
+  end
+  CMD -- "HANDLA, sortera" --> TOOLS["Verktyg: butik, inventarie<br/>(skriptat)"]
+  ACT --> GAME["Spelet (mod) eller simulatorn"]
+  TOOLS --> GAME
+  GAME --> OBS
+  GAME --> ST
+</pre>
+
+  <h3>Uppdragen kroppen förstår</h3>
+  <div class="wrap"><table>
+    <thead><tr><th>Uppdrag</th><th>Parametrar</th><th>Vad kroppen gör</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">GÅ TILL</td><td>punkt, hur bråttom, hur många block den får använda</td><td>Det den gör i dag. Slåss bara om någon kommer emellan.</td></tr>
+      <tr><td class="mono">STRID</td><td>vilken spelare, få ner den eller knuffa ut den</td><td>Närmar sig, slår i rätt takt, strafar, håller sig från kanten, clutchar.</td></tr>
+      <tr><td class="mono">BRYT IN</td><td>vilken säng</td><td>Tar sig dit, väljer verktyg, bryter genom skyddet där det är svagast, slår sängen.</td></tr>
+      <tr><td class="mono">FÖRSVARA</td><td>vår säng, en mall för skyddet</td><td>Bygger skyddet efter mallen, lagar hål, möter den som kommer.</td></tr>
+      <tr><td class="mono">SAMLA</td><td>vilken generator, hur länge</td><td>Står vid generatorn och plockar, flyttar sig om någon anfaller.</td></tr>
+      <tr><td class="mono">HANDLA</td><td>en inköpslista</td><td>Går till butiken; verktygen sköter menyn.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Strid och navigering samtidigt</h2>
+  <p>Det svåra i Bedwars är att strid och förflyttning inte går att dela upp i tid. Du blir slagen mitt på bron, mitt i ett torn, när du bryter skyddet. Därför är kroppen <strong>en</strong> modell och inte separata modeller för strid och navigering med en växel mellan dem:</p>
+  <ul>
+    <li><strong>Den ser alltid de närmaste fienderna</strong>, oavsett uppdrag: läge och fart relativt den själv, hälsa, vad de håller i, om de nyss slog. Ett slag kommer aldrig som en överraskning den inte har information om.</li>
+    <li><strong>Uppdraget säger vad som är viktigast</strong>, inte vad den får göra. Under GÅ TILL lönar det sig fortfarande att slå tillbaka den som står i vägen, men målet ger mest poäng. Under STRID ger fienden mest.</li>
+    <li><strong>Reflexer ligger i samma modell</strong>: clutch efter knuff, backa från kanten, äta när hälsan är låg. De tränas in med samma knuffar och slag i alla bantyper, så de fungerar oavsett uppdrag.</li>
+    <li><strong>Minnet</strong> (LSTM) håller reda på det den inte ser just nu: att någon slog bakifrån för en sekund sedan, hur länge sedan den åt, var bron den byggde ligger.</li>
+  </ul>
+  <p>Exempel: agenten bygger bro mot mitten (GÅ TILL), en fiende kommer emot på samma bro. Kroppen ser fienden, vänder, slår i takt med svärdets återhämtning, och när fienden knuffar den bakåt placerar den ett block under sig och fortsätter slåss. Strategen märker att fienden är nere och skickar GÅ TILL igen. Ingen växling, ingen paus.</p>
+  <div class="note"><p><strong>Varför inte separata expertmodeller?</strong> De är lättare att träna var för sig, och det är så vi börjar: en stridsmodell tränas på egen hand först. Men en växlare mellan modeller missar exakt de lägen som avgör matcher, och två modeller lär sig fysiken två gånger. När varje förmåga fungerar slår vi ihop dem till en modell (destillering: den gemensamma modellen lär sig härma experterna och tränas sedan vidare på blandade banor).</p></div>
+
+  <h2>Vad modellen behöver se och kunna göra</h2>
+  <h3>Nytt i det den ser</h3>
+  <ul>
+    <li><strong>Spelare:</strong> de 3 närmaste fienderna och lagkamraterna: läge, fart, blickriktning, hälsa och rustning, vad de håller i, tid sedan de slog.</li>
+    <li><strong>Projektiler:</strong> pilar, eldklot och TNT nära: läge, fart, tid kvar.</li>
+    <li><strong>Blocktyper i kuben:</strong> i dag bara "något eller inget". Behövs: ull, trä, end stone, glas, obsidian, säng (egen eller fiendens). Det avgör vad som går att bryta och hur fort.</li>
+    <li><strong>Inventarie och hotbar:</strong> vad som ligger på varje plats och hur många, resurser, svärd och verktyg, rustning.</li>
+    <li><strong>Egen kropp:</strong> hälsa (finns), mättnad, effekter, svärdets återhämtning (26.3 har en laddningstid mellan slag).</li>
+    <li><strong>Uppdraget:</strong> typ, målpunkt eller målspelare, parametrar.</li>
+  </ul>
+  <h3>Nytt i det den kan göra</h3>
+  <ul>
+    <li>Vänsterklick (slå) och hålla vänster (bryta).</li>
+    <li>Välja plats i hotbaren (1–9).</li>
+    <li>Hålla höger (spänna båge, äta, dricka).</li>
+  </ul>
+  <p>Den nuvarande modellen kan inte ta emot fler indata utan att byggas om. Vi gör som förra gången nätet byttes: en ny version där alla vikter som passar flyttas över, så förflyttningen inte behöver läras om från början.</p>
+
+  <h2>Simulatorn</h2>
+  <p>Allt tränas i Rust-simulatorn, och varje ny del kontrolleras mot det riktiga spelet på samma sätt som rörelserna: vi spelar in riktiga ticks och kräver att simulatorn ger samma resultat.</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Del</th><th>Vad som ska in</th><th>Svårighet</th></tr></thead>
+    <tbody>
+      <tr><td>Spelare som entiteter</td><td>Flera spelare i samma värld, kollision mellan dem, synlighet</td><td>Medel</td></tr>
+      <tr><td>Närstrid</td><td>Räckvidd och träff, laddningstid, kritiska träffar, sprintknuff, skada, rustning, odödlighetstid efter slag</td><td>Medel, måste stämma exakt</td></tr>
+      <tr><td>Bryta block</td><td>Hårdhet per material, verktyg, effektivitet, tid</td><td>Lätt</td></tr>
+      <tr><td>Föremål och inventarie</td><td>Hotbar, plocka upp, äta, guldäpple</td><td>Lätt</td></tr>
+      <tr><td>Projektiler</td><td>Pilar, eldklot med explosionsknuff, TNT</td><td>Medel</td></tr>
+      <tr><td>Ekonomi</td><td>Generatorer, butik, uppgraderingar, Bedwars-regler</td><td>Lätt, ren logik</td></tr>
+      <tr><td>Motståndare</td><td>Skriptade botar först, sedan tidigare versioner av modellen</td><td>Medel</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Hur det tränas</h2>
+  <ul>
+    <li><strong>Varje förmåga får egna banor och en egen svårighetstrappa</strong>, som i dag. Strid börjar mot en stillastående dummy, sedan en bot som går och slår, sedan en som strafar och träffar bra.</li>
+    <li><strong>Självspel:</strong> när den slår botarna spelar den mot sig själv. Vi sparar äldre versioner och låter den möta en blandning av dem, så den inte lär sig en enda trick som bara fungerar mot den senaste versionen och glömmer resten.</li>
+    <li><strong>Strategen</strong> börjar som handskrivna regler: köp ull och svärd först, skydda sängen med ull, rusha när du har järnrustning. Det ger en fungerande spelare tidigt. Sedan tränas den med förstärkningsinlärning på hela matcher i simulatorn, där en match tar sekunder i stället för 10 minuter.</li>
+    <li><strong>Poäng</strong> i hela matcher: vinst och förlust, egen säng kvar, fiendens säng förstörd. Färre hjälppoäng än i banorna, så den inte lär sig att jaga dem.</li>
+  </ul>
+
+  <h2>Ordningen</h2>
+  <div class="phase"><div class="n">1</div><div><h3>Duell</h3>
+    <p>Spelare, närstrid, hotbar och svärd i simulatorn, kontrollerade mot riktiga spelet. Stridsmodell tränas på platta öar mot botar.</p>
+    <p class="done-when">Klar när den vinner 9 av 10 dueller mot den bästa boten och klarar sig mot dig i en ren svärdsduell.</p></div></div>
+  <div class="phase"><div class="n">2</div><div><h3>Strid på bro</h3>
+    <p>Strid och förflyttning i samma modell. Banor där fienden möter den på bron, knuffar mot tomrummet, torn under anfall.</p>
+    <p class="done-when">Klar när den tar sig över en bro mot en bot som försvarar, oftare än den faller.</p></div></div>
+  <div class="phase"><div class="n">3</div><div><h3>Säng</h3>
+    <p>Blocktyper, bryta med verktyg, bygga skydd efter mall. Banor: bryt in genom olika skydd, försvara mot en bot som bryter.</p>
+    <p class="done-when">Klar när den bryter igenom ett skydd av ull, trä och end stone på under 15 sekunder och lagar sitt eget skydd.</p></div></div>
+  <div class="phase"><div class="n">4</div><div><h3>Hel match mot botar</h3>
+    <p>Generatorer, butik och verktyg. Regelbaserad strateg. Hela solomatcher på genererade kartor (bygger vidare på Bedwars-banorna vi redan har).</p>
+    <p class="done-when">Klar när den vinner de flesta matcher mot botarna och spelar en hel match mot dig utan att fastna.</p></div></div>
+  <div class="phase"><div class="n">5</div><div><h3>Självspel och du</h3>
+    <p>Inlärd strateg, matcher mot äldre versioner av sig själv, båge och eldklot, fler lag.</p>
+    <p class="done-when">Målet: vinner de flesta matcher mot dig.</p></div></div>
+
+  <h2>Beslut jag behöver från dig</h2>
+  <ul>
+    <li><strong>Stridsregler:</strong> 26.3 som det är (laddningstid mellan slag) eller 1.8-stil utan laddningstid som på Hypixel? Det ändrar hur strid fungerar mest av allt, så det behöver bestämmas innan fas 1.</li>
+    <li><strong>Läge:</strong> solo först (1 mot 1), eller direkt med fler lag?</li>
+    <li><strong>Kartor:</strong> bara genererade, eller också Treenan och andra riktiga kartor i matchträningen?</li>
+  </ul>
+
+  <h2>Det som kan gå fel</h2>
+  <ul>
+    <li><strong>Strid i simulatorn stämmer inte med servern.</strong> Träffar avgörs på servern med fördröjning. Samma motmedel som för rörelserna: spela in, jämför, rätta tills det stämmer.</li>
+    <li><strong>Självspel som går i cirklar.</strong> Version B slår A, C slår B, A slår C. Därför tränar den mot en blandning av äldre versioner, och vi mäter alltid mot samma fasta botar.</li>
+    <li><strong>En modell som ska kunna allt blir sämre på allt.</strong> Om det händer håller vi kvar separata experter för det som blir sämre och slår ihop dem senare.</li>
+    <li><strong>Grafikkortet.</strong> Kroppen behöver bli större med fiender och föremål. Inferensen är liten nog för 20 beslut i sekunden, men träningen tar längre tid per steg.</li>
+  </ul>
+
+  <h2>Första stegen</h2>
+  <ol>
+    <li>Bestäm stridsreglerna (ovan).</li>
+    <li>Spelare och närstrid i Rust-simulatorn, plus inspelning av riktiga slag från spelet för att jämföra.</li>
+    <li>Moden rapporterar närliggande spelare, inventarie och hotbar, och tar emot slag och hotbarval.</li>
+    <li>Ny modellversion med fiender, inventarie och nya handlingar; vikterna från dagens modell förs över.</li>
+    <li>En duellbantyp med svårighetstrappa mot skriptade botar.</li>
+  </ol>
+</main>
