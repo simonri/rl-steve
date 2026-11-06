@@ -2,9 +2,13 @@
 import argparse
 import json
 import time
+import zipfile
 from pathlib import Path
 
+import numpy as np
+
 import torch
+from sb3_contrib import RecurrentPPO
 from stable_baselines3 import PPO
 from torch.distributions import Distribution
 
@@ -15,7 +19,7 @@ from skill_env import pace
 
 ROOT = Path(__file__).resolve().parent.parent
 p = argparse.ArgumentParser()
-p.add_argument("--name", default="auto4")
+p.add_argument("--name", default="auto5")
 p.add_argument("--port", type=int, default=25601)
 a = p.parse_args()
 out = ROOT / "runs" / "models" / a.name
@@ -60,8 +64,10 @@ def episode(s):
     overlay(s)
     next_t = time.perf_counter()
     done, decisions, info = False, 0, {}
+    memory, start = None, True  # newer models carry a memory through the round
     while not done:
-        act, _ = model.predict(obs, deterministic=True)
+        act, memory = model.predict(obs, state=memory, episode_start=np.array([start]), deterministic=True)
+        start = False
         obs, _, term, trunc, info = env.step(act)
         done = term or trunc
         decisions += 1
@@ -71,6 +77,13 @@ def episode(s):
             overlay(s)
         next_t = pace(next_t, 0.05)
     return info
+
+
+def load(path):
+    """Newer runs have a memory and older ones do not, and each loads only with its own kind."""
+    with zipfile.ZipFile(path) as z:
+        memory = "lstm" in z.read("data").decode()
+    return (RecurrentPPO if memory else PPO).load(path, device="cpu")
 
 
 playing = False
@@ -88,7 +101,7 @@ while True:
     playing = True
     m = (out / "latest.zip").stat().st_mtime
     if m != mtime:
-        model = PPO.load(out / "latest.zip", device="cpu")
+        model = load(out / "latest.zip")
         mtime = m
     s = status()
     levels = Curriculum(s.get("levels")).levels

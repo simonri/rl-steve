@@ -197,6 +197,27 @@ import gymnasium as gym, torch
 from spatial import SpatialExtractor
 net = SpatialExtractor(gym.spaces.Box(-5.0, 5.0, (AutoEnv.N_OBS,), np.float32))
 assert net(torch.zeros(3, AutoEnv.N_OBS)).shape == (3, 384)
+# The newer eyes see a single block: moving one block in the cube changes what comes out.
+from spatial import MemoryPolicy, SpatialNet
+from auto_env import CUBE_START
+space = gym.spaces.Box(-5.0, 5.0, (AutoEnv.N_OBS,), np.float32)
+net = SpatialNet(space)
+a, b = torch.zeros(2, AutoEnv.N_OBS), torch.zeros(2, AutoEnv.N_OBS)
+a[:, CUBE_START + 600], b[:, CUBE_START + 601] = 1.0, 1.0
+with torch.no_grad():
+    assert net(a).shape == (2, 256) and not torch.allclose(net(a), net(b))
+# The memory runs a whole stretch in one go, and gives exactly what stepping tick by tick gives, rounds starting
+# only at the first tick of a stretch as the rollout buffer cuts them.
+from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy
+lstm = torch.nn.LSTM(8, 16)
+feats, state0 = torch.randn(3 * 5, 8), (torch.randn(1, 3, 16), torch.randn(1, 3, 16))
+starts = torch.zeros(3, 5)
+starts[1, 0] = 1.0
+with torch.no_grad():
+    fast, (h1, _) = MemoryPolicy._process_sequence(feats, state0, starts.flatten(), lstm)
+    starts[0, 2] = 1e-9  # forces the library onto its tick by tick path with the same numbers
+    slow, (h2, _) = RecurrentActorCriticPolicy._process_sequence(feats, state0, starts.flatten(), lstm)
+assert torch.allclose(fast, slow, atol=1e-5) and torch.allclose(h1, h2, atol=1e-5)
 # It knows when a click would put a block down: a free spot in reach, with a block in hand, and not inside itself.
 hit = lambda face, block: {**state(), "held_count": 5, "hit": dict(type="block", block=list(block), face=face, loc=[0, 0, 0])}
 assert AutoEnv._can_place(hit("east", (1, Y, 0)))

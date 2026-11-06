@@ -6,11 +6,13 @@ import json
 import os
 import time
 from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 import torch
-from stable_baselines3 import PPO
+from sb3_contrib import RecurrentPPO
+from sb3_contrib.common.recurrent.type_aliases import RNNStates
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
@@ -21,7 +23,7 @@ from torch.distributions import Distribution
 import demo_data
 import scoreboard as sb
 from auto_env import NO_TURN, TURN_STEPS, AutoEnv
-from spatial import SpatialExtractor
+from spatial import MemoryPolicy, SpatialNet
 from curriculum import FAMILIES, Curriculum, finished, is_open
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +36,10 @@ GAMMA, GAE_LAMBDA = 0.995, 0.975
 CALM_FROM, CALM_OVER = 500_000, 5_000_000  # decisions into a run: the old 16M was meant for one run and left new ones wild
 LEARNING_RATE, LEARNING_RATE_END = 3e-4, 3e-5
 ENTROPY, ENTROPY_END = 0.01, 0.002
+# Eyes, then a memory carried between ticks, then one layer each for choosing and for judging how it is going.
+# Judging reads the same memory as choosing instead of keeping its own, which would cost as much again every tick.
+POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_lstm=True, enable_critic_lstm=False,
+              net_arch=dict(pi=[256], vf=[256]), activation_fn=torch.nn.SiLU)
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan"}
 
 
@@ -46,25 +52,34 @@ def make_env(port, levels):
     return build
 
 
-class SplitPPO(PPO):
+class SplitPPO(RecurrentPPO):
     """Learns on the graphics card and plays on the processor. Learning works on big batches, which a graphics card is
-    fast at. Playing picks one action at a time, where moving the data to the card costs more than it saves."""
+    fast at. Playing picks one action at a time, where moving the data to the card costs more than it saves.
+    The memory it carries between ticks stays on the processor too, since that is where it plays."""
 
     def _excluded_save_params(self):
         return super()._excluded_save_params() + ["actor"]
 
-    def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
+    @contextmanager
+    def playing(self):
         if self.device.type == "cpu":
-            return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+            yield
+            return
         learner, device = self.policy, self.device
         if getattr(self, "actor", None) is None:
             self.actor = copy.deepcopy(learner).to("cpu")
         self.actor.load_state_dict({k: v.to("cpu") for k, v in learner.state_dict().items()})
+        self.actor.set_training_mode(False)
         self.policy, self.device = self.actor, torch.device("cpu")
+        self._last_lstm_states = RNNStates(*(tuple(t.cpu() for t in part) for part in self._last_lstm_states))
         try:
-            return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+            yield
         finally:
             self.policy, self.device = learner, device
+
+    def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
+        with self.playing():
+            return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
 
 
 class Progress(BaseCallback):
@@ -258,46 +273,63 @@ class Progress(BaseCallback):
         self.publish()
 
 
-def start_from_recordings(model, steps, folders):
-    """A new model first learns to play like the recordings, then learns by itself from there."""
+def _whole_rounds(policy, rounds, device):
+    """Runs a few whole rounds through the model from their first tick, memory and all, the way it plays them.
+    Shorter rounds are padded at the end, which the memory never looks back on. Returns the action distribution and
+    which ticks are real."""
+    longest = max(len(o) for o, _ in rounds)
+    obs = np.zeros((len(rounds), longest, rounds[0][0].shape[1]), np.float32)
+    actions = np.zeros((len(rounds), longest, rounds[0][1].shape[1]), np.int64)
+    real = np.zeros((len(rounds), longest), np.float32)
+    for i, (o, act) in enumerate(rounds):
+        obs[i, : len(o)], actions[i, : len(o)], real[i, : len(o)] = o, act, 1.0
+    obs = torch.as_tensor(obs, device=device).flatten(0, 1)  # round by round, as the memory expects them
+    actions = torch.as_tensor(actions, device=device).flatten(0, 1)
+    lstm = policy.lstm_actor
+    fresh = torch.zeros(lstm.num_layers, len(rounds), lstm.hidden_size, device=device)
+    starts = torch.zeros(len(obs), device=device)  # the fresh memory already is the start of each round
+    distribution, _ = policy.get_distribution(obs, (fresh, fresh), starts)
+    return distribution, actions, torch.as_tensor(real, device=device).flatten()
+
+
+def start_from_recordings(model, steps, folders, per_step=16):
+    """A new model first learns to play like the recordings, then learns by itself from there. With a memory it
+    copies whole rounds, so it also learns what to keep in mind from one tick to the next."""
     files = sorted(path for folder in folders for path in Path(folder).glob("**/round*.jsonl.gz"))
     np.random.default_rng(0).shuffle(files)
     held = max(1, len(files) // 10)
-    pairs = [demo_data.replay(path)[:2] for path in files]
-    device = model.device  # the recordings stay in normal memory, and go to the graphics card a batch at a time
-    val_o = torch.as_tensor(np.concatenate([p[0] for p in pairs[:held]]))
-    val_a = torch.as_tensor(np.concatenate([p[1] for p in pairs[:held]]))
-    obs = torch.as_tensor(np.concatenate([p[0] for p in pairs[held:]]))
-    actions = torch.as_tensor(np.concatenate([p[1] for p in pairs[held:]]))
-    print(f"recordings: {len(files)} rounds, {len(obs)} ticks to learn from, {len(val_o)} held back", flush=True)
-    policy = model.policy
-    params = [p for name, p in policy.named_parameters() if "value" not in name and "vf_" not in name]
+    rounds = [demo_data.replay(path)[:2] for path in files]
+    rounds = [(o.astype(np.float32), np.asarray(act, np.int64)) for o, act in rounds if len(o)]
+    val, train = rounds[:held], rounds[held:]
+    print(f"recordings: {len(files)} rounds, {sum(len(o) for o, _ in train)} ticks to learn from, {sum(len(o) for o, _ in val)} held back", flush=True)
+    device, policy = model.device, model.policy
+    params = [p for name, p in policy.named_parameters() if "value" not in name and "vf_" not in name and "critic" not in name]
     opt = torch.optim.Adam(params, lr=1e-3)
+    rng = np.random.default_rng(1)
     best, best_state = float("inf"), None
     for step in range(steps):
         for group in opt.param_groups:
             group["lr"] = 1e-3 * (0.1 ** (step / steps))
-        picked = torch.randint(0, len(obs), (512,))
-        _, log_prob, _ = policy.evaluate_actions(obs[picked].to(device), actions[picked].to(device))
-        loss = -log_prob.mean()
+        distribution, actions, real = _whole_rounds(policy, [train[i] for i in rng.choice(len(train), per_step, replace=False)], device)
+        loss = -(distribution.log_prob(actions) * real).sum() / real.sum()
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 0.5)
         opt.step()
         if step % 250 == 0 or step == steps - 1:
+            total, ticks, same = 0.0, 0.0, 0.0
             with torch.no_grad():
-                total, chosen = 0.0, []
-                for i in range(0, len(val_o), 1024):
-                    o, a = val_o[i : i + 1024].to(device), val_a[i : i + 1024].to(device)
-                    _, part, _ = policy.evaluate_actions(o, a)
-                    total += part.sum().item()
-                    chosen.append(torch.stack([d.probs.argmax(1) for d in policy.get_distribution(o).distribution], 1).cpu())
-                chosen = torch.cat(chosen)
-            held = -total / len(val_o)
-            if held < best:  # it stops copying details that only fit the rounds it has seen
-                best, best_state = held, {k: v.clone() for k, v in policy.state_dict().items()}
-            match = (chosen == val_a).float().mean(0).numpy().round(2).tolist()
-            print(f"copying step {step}: loss {loss.item():.3f}, on held back {held:.3f}, matches {match}", flush=True)
+                for i in range(0, len(val), 32):
+                    distribution, actions, real = _whole_rounds(policy, val[i : i + 32], device)
+                    total += -(distribution.log_prob(actions) * real).sum().item()
+                    ticks += real.sum().item()
+                    chosen = torch.stack([d.probs.argmax(1) for d in distribution.distribution], 1)
+                    same = same + ((chosen == actions).float() * real[:, None]).sum(0)
+            held_loss = total / ticks
+            if held_loss < best:  # it stops copying details that only fit the rounds it has seen
+                best, best_state = held_loss, {k: v.clone() for k, v in policy.state_dict().items()}
+            match = (same / ticks).cpu().numpy().round(2).tolist()
+            print(f"copying step {step}: loss {loss.item():.3f}, on held back {held_loss:.3f}, matches {match}", flush=True)
     policy.load_state_dict(best_state)
     print(f"copying: kept the model that did best on held back rounds, {best:.3f}", flush=True)
 
@@ -307,7 +339,7 @@ if __name__ == "__main__":
     p.add_argument("--ports", type=int, nargs="+", default=[25602, 25603, 25606, 25607])
     p.add_argument("--steps", type=int, default=30_000_000)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--name", default="auto4")
+    p.add_argument("--name", default="auto5")
     p.add_argument("--resume", help="model to continue from")
     p.add_argument("--recordings", nargs="+", default=[str(ROOT / "runs" / "demos")], help="folders of recorded rounds to copy first")
     p.add_argument("--start-from-recordings", type=int, default=0, help="steps of copying the recordings before a new model starts")
@@ -328,8 +360,8 @@ if __name__ == "__main__":
         model.n_epochs = a.epochs
         model.rollout_buffer.gamma, model.rollout_buffer.gae_lambda = GAMMA, GAE_LAMBDA
     else:
-        model = SplitPPO("MlpPolicy", vec, seed=a.seed, n_steps=4096 // len(a.ports), batch_size=512, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA, learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device,
-                    policy_kwargs=dict(features_extractor_class=SpatialExtractor, net_arch=dict(pi=[256, 256], vf=[256, 256])))
+        model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=4096 // len(a.ports), batch_size=512, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA, learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device,
+                         policy_kwargs=POLICY)
         # Start with rare jumps and sprints and a mostly steady view, so random inputs do not throw the
         # agent off the platform before it has learned anything. It can still learn to use them freely.
         bias = model.policy.action_net.bias.data
