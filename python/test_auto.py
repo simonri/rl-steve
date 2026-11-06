@@ -651,6 +651,8 @@ for family in ("bridge", "stairs", "bedwars", "hop", "path"):
         spec, _ = m.draw(seed=s)
         if spec["blocks"]:
             assert m.par + m.push_spare <= spec["blocks"] <= 64, (family, s, m.par, m.push_spare, spec["blocks"])
+            # A goal far below can be reached without a drop over 3: the blocks for the landings are counted in.
+            assert m.par >= m.descent_blocks(m.dy), (family, s, m.par, m.dy)
         if family == "hop":
             way = [(0, Y, 0)] + list(m.course)
             for i, (a, b) in enumerate(zip(way, way[1:])):

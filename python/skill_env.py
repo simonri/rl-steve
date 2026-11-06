@@ -255,7 +255,7 @@ class SkillEnv(gym.Env):
             placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start, any_top)
             # Climbing costs blocks beyond the width of the gap. One stack of 64 is all it holds, so a round that
             # would need more gets a shorter gap instead of too few blocks.
-            fits = int((64 - self.budget[1] - getattr(self, "push_spare", 0)) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0)
+            fits = int((64 - self.budget[1] - getattr(self, "push_spare", 0)) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0) - self.descent_blocks(gy - Y)
             if self.budget[0] and gap > max(fits, MIN_GAP):
                 gap = max(fits, MIN_GAP)
                 placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start, any_top)
@@ -271,7 +271,7 @@ class SkillEnv(gym.Env):
             raise RuntimeError("no reachable grass spot found")
         self.map_target, self.map_gap = target, gap
         # Up costs about two blocks a step: a pillar to stand on and the way on from it.
-        self.par = gap + 2 * max(self.dy, 0)
+        self.par = gap + 2 * max(self.dy, 0) + self.descent_blocks(self.dy)
         self.walk_par = int(self._walk(0.5, 0.5))
         self.blocks_given = min(64, math.ceil(self.par * self.budget[0]) + self.budget[1])
         self.next_cells = placed
@@ -316,7 +316,8 @@ class SkillEnv(gym.Env):
             scale = reach / max(abs(ux), abs(uz))
             self.goal_x = int(round(ux * scale))
             self.goal_z = int(round(uz * scale))
-            worst = self.blocks_needed(self.goal_x, self.goal_z, max(max(self.heights), 0)) + detour + self._single_extra(self.goal_x, self.goal_z)
+            worst = max(self.blocks_needed(self.goal_x, self.goal_z, max(max(self.heights), 0)),
+                        self.blocks_needed(self.goal_x, self.goal_z, 0) + self.descent_blocks(min(self.heights))) + detour + self._single_extra(self.goal_x, self.goal_z)
             if not building or not self.budget[0] or reach <= 9 or math.ceil(worst * self.budget[0]) + self.budget[1] + getattr(self, "push_spare", 0) <= 64:
                 break
             reach -= 1
@@ -352,7 +353,7 @@ class SkillEnv(gym.Env):
                 extra_boxes += [[x, Y - 1, z, x, Y + POLE_HEIGHT, z] for x, z in self.poles]
             self.blocked = self._off_path(path, holes)
         self._build_field()
-        self.par = len(path) if path is not None else max(1, self.blocks_needed(gx, gz, self.dy) + self.detour + self._single_extra(gx, gz))
+        self.par = len(path) if path is not None else max(1, self.blocks_needed(gx, gz, self.dy) + self.descent_blocks(self.dy) + self.detour + self._single_extra(gx, gz))
         self.blocks_given = min(64, math.ceil(self.par * self.budget[0]) + self.budget[1])
         m = 8
         box = [min(-1, gx - 2) - m, min(Y, gy) - m, min(-1, gz - 2) - m, max(1, gx + 2) + m, max(Y, gy) + m, max(1, gz + 2) + m]
@@ -615,6 +616,11 @@ class SkillEnv(gym.Env):
     def _single_extra(self, gx, gz):
         """A lone goal block covers 2 less on each side than the 5x5 platform blocks_needed counts on."""
         return (2 * (gx != 0) + 2 * (gz != 0)) if self.goal_size == "single block" else 0
+
+    @staticmethod
+    def descent_blocks(dy):
+        """Blocks for a way down with no drop over 3, which costs no health: one landing every 3 blocks."""
+        return math.ceil((-dy - 3) / 3) if dy < -3 else 0
 
     @staticmethod
     def blocks_needed(goal_x, goal_z, dy):

@@ -590,6 +590,12 @@ public final class McBridge implements ClientModInitializer {
         if (mc.player == null || server == null) return;
         if (mc.player.isDeadOrDying()) {
             mc.player.respawn();
+            // Between commands nothing else steps the server, and the respawn only happens on a server tick: without
+            // this step it never comes, no command is read again, and the game hangs for good.
+            if (lockstep.enabled() && ticksLeft <= 0 && !resetting) {
+                lockstep.stepServer();
+                ((dev.mcbridge.mixin.EventLoopInvoker) (Object) mc).mcbridge$runAllTasks();
+            }
             return;
         }
         if (mc.gui.screen() != null) {

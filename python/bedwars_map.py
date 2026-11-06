@@ -185,7 +185,8 @@ def _par(islands, cells, start, goal, blocked=frozenset()):
                 continue
             if (nx, nz) in top:
                 nh = top[(nx, nz)]
-                step = 2 * max(nh - h, 0)
+                # Up: two blocks a step. Down: a landing every 3, so no drop costs health.
+                step = 2 * max(nh - h, 0) + (math.ceil((h - nh - 3) / 3) if h - nh > 3 else 0)
             else:
                 nh, step = h, 1  # a bridge block at the height it came from
             c = cost + step
