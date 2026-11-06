@@ -258,8 +258,8 @@ class SkillEnv(gym.Env):
                 gap = max(fits, MIN_GAP)
                 placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
-            low, high = min(Y, gy) + 2, max(Y, gy) + 3
-            self.blocked = {(x, z) for (x, y, z) in placed if low <= y <= high}
+            other = data.last_other
+            self.blocked = {(x, z) for (x, y, z) in placed if ((gy + 2 <= y <= gy + 3) if (x, y, z) in other else (Y + 2 <= y <= Y + 3))}
             self.blocked -= {(x, z) for x in range(-1, 2) for z in range(-1, 2)}
             self.blocked -= {(x, z) for x in range(gx - 1, gx + 2) for z in range(gz - 1, gz + 2)}
             self._build_field()
@@ -305,10 +305,19 @@ class SkillEnv(gym.Env):
         self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 0, 6, 1.5, 0
         r = self.np_random
         ux, uz = self._direction()
+        # The blocks have to cover this way at its highest step up, around an obstacle, plus any spare for pushes,
+        # inside one stack of 64. A diagonal that would need more gets shorter; a straight one keeps its length.
+        building = self.extras not in NO_BLOCKS
+        detour = 4 if building and self.extras is not None else 0
         reach = self.gap + 4
-        scale = reach / max(abs(ux), abs(uz))
-        self.goal_x = int(round(ux * scale))
-        self.goal_z = int(round(uz * scale))
+        while True:
+            scale = reach / max(abs(ux), abs(uz))
+            self.goal_x = int(round(ux * scale))
+            self.goal_z = int(round(uz * scale))
+            worst = self.blocks_needed(self.goal_x, self.goal_z, max(max(self.heights), 0)) + detour
+            if not building or not self.budget[0] or reach <= 9 or math.ceil(worst * self.budget[0]) + self.budget[1] + getattr(self, "push_spare", 0) <= 64:
+                break
+            reach -= 1
         self.dy = int(r.choice(self.heights))
         path = None
         course = None
@@ -605,7 +614,8 @@ class SkillEnv(gym.Env):
     def blocks_needed(goal_x, goal_z, dy):
         """Estimate of the blocks for a walkable bridge on the grid. Jumping can legitimately beat it."""
         # Platforms cover -1..1 and goal-2..goal+2, so 4 of the distance is already solid ground.
-        across = max(abs(goal_x) - 4, 0) + max(abs(goal_z) - 4, 0)
+        sx, sz = max(abs(goal_x) - 4, 0), max(abs(goal_z) - 4, 0)
+        across = sx + sz + (1 if sx and sz else 0)  # a walkable bridge that goes both ways turns a corner: one more
         return max(1, across + max(dy, 0))
 
     def _touched(self, o):

@@ -4,7 +4,8 @@
 //! beside it in the direction of the push, the push never goes toward the goal, and a scripted clutch with the same
 //! inputs the model has (keys at most every second tick, a click only with shift down, turns from TURN_STEPS) lands
 //! on a block above the fall line. If the strongest push cannot be saved, a weaker one is tried; if none can, there is
-//! no push this tick.
+//! no push this tick. A push is also only given when doing nothing after it would be a fall: one that lands safely by
+//! itself teaches nothing about clutching.
 //!
 //! Everything here sees only what the model sees, the cube of blocks 5 around the feet, so Python (the real game) and
 //! the Rust rounds decide the same.
@@ -89,6 +90,7 @@ pub struct State {
     pub pitch: f32,
     pub held: i32,
     pub keys: Keys,
+    pub sprinting: bool,
 }
 
 /// One planned push: from this tick on, the first moment it fits.
@@ -129,7 +131,7 @@ pub fn decide(cube: &Cube, s: &State, first: &Input, goal: [f64; 2], fall_line: 
     let world = cube.world();
     for level in (0..=push.level.min(STRENGTHS.len() - 1)).rev() {
         let v = [dx * STRENGTHS[level], UP, dz * STRENGTHS[level]];
-        if can_save(&world, cube.feet, s, v, first, fall_line) {
+        if falls(&world, s, v, first, fall_line) && can_save(&world, cube.feet, s, v, first, fall_line) {
             return Some(v);
         }
     }
@@ -171,12 +173,41 @@ pub fn can_save(world: &World, feet: [i32; 3], s: &State, v: [f64; 3], first: &I
     targets.iter().any(|&(_, cell, against, face)| rescue(world, s, v, first, fall_line, cell, against, face))
 }
 
-fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, cell: [i32; 3], against: [i32; 3], face: u8) -> bool {
-    let mut w = world.clone();
+/// The player as it is when the push comes, with the push on it.
+fn pushed(s: &State, v: [f64; 3]) -> Player {
     let mut p = Player::new(s.pos, s.yaw, s.pitch, s.held);
     p.on_ground = true;
     p.keys = s.keys;
+    p.sprinting = s.sprinting;
+    p.crouch_pose = s.keys.shift;
     apply(&mut p, v);
+    p
+}
+
+/// Whether the push is a danger: with the model's input for this tick and then nothing, it ends below the fall line.
+fn falls(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64) -> bool {
+    let mut w = world.clone();
+    let mut p = pushed(s, v);
+    let rest = Input { keys: first.keys, ..Input::default() };
+    for t in 0..RESCUE_TICKS {
+        p.tick(&mut w, if t == 0 { first } else { &rest });
+        if p.pos[1] < fall_line {
+            return true;
+        }
+        if t > 0 && p.on_ground {
+            return false;
+        }
+    }
+    false
+}
+
+fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, cell: [i32; 3], against: [i32; 3], face: u8) -> bool {
+    let mut w = world.clone();
+    let mut p = pushed(s, v);
+    // The keys as the model holds them: one that changed waits MIN_KEY_TICKS before it can change again (env.press).
+    let mut keys = key_list(first.keys);
+    let before = key_list(s.keys);
+    let mut age: [i32; 7] = std::array::from_fn(|i| if keys[i] != before[i] { 0 } else { MIN_KEY_TICKS });
     let aim = [
         against[0] as f64 + 0.5 + FACE_STEP[face as usize][0] as f64 * 0.5,
         against[1] as f64 + 0.5 + FACE_STEP[face as usize][1] as f64 * 0.5,
@@ -195,10 +226,22 @@ fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, 
             let want_pitch = (-ay).atan2(ax.hypot(az)).to_degrees();
             let dyaw = (want_yaw - p.yaw as f64 + 540.0).rem_euclid(360.0) - 180.0;
             let dpitch = want_pitch - p.pitch as f64;
-            let keys = if t == 1 { first.keys } else { toward(&p, cell) };
+            let want = if t == 1 { keys } else { key_list(toward(&p, cell)) };
+            for i in 0..7 {
+                age[i] += 1;
+                if want[i] != keys[i] && age[i] >= MIN_KEY_TICKS {
+                    keys[i] = want[i];
+                    age[i] = 0;
+                }
+            }
+            let (ty, tp) = (step(dyaw), step(dpitch));
             let placed = w.present(cell[0], cell[1], cell[2]);
-            let on_face = p.pick(&w).is_some_and(|h| h.block == against && h.face == face);
-            Input { keys, click: t >= 2 && !placed && on_face, turn_yaw: step(dyaw), turn_pitch: step(dpitch) }
+            // The game turns first and then picks for the click, so aim is judged after this tick's turn.
+            let mut turned = p.clone();
+            turned.turn(ty, tp);
+            let on_face = turned.pick(&w).is_some_and(|h| h.block == against && h.face == face);
+            let k = from_list(keys);
+            Input { keys: k, click: t >= 2 && k.shift && !placed && on_face, turn_yaw: ty, turn_pitch: tp }
         };
         p.tick(&mut w, &input);
         if p.pos[1] < fall_line {
@@ -211,6 +254,16 @@ fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, 
         }
     }
     false
+}
+
+const MIN_KEY_TICKS: i32 = 2; // env.rs: a key changes at most every second tick
+
+fn key_list(k: Keys) -> [bool; 7] {
+    [k.forward, k.back, k.left, k.right, k.jump, k.shift, k.sprint]
+}
+
+fn from_list(k: [bool; 7]) -> Keys {
+    Keys { forward: k[0], back: k[1], left: k[2], right: k[3], jump: k[4], shift: k[5], sprint: k[6] }
 }
 
 /// Keys toward the middle of the spot, shift down: the best the model could press.

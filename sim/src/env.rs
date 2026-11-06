@@ -565,7 +565,7 @@ impl Env {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
-        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: before };
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: before, sprinting: p.sprinting };
         let goal = [self.course.goal[0] as f64 + 0.5, self.course.goal[1] as f64 + 0.5];
         if let Some(v) = clutch::decide(&cube, &state, input, goal, self.fall_line(), &pushes[self.next_push]) {
             clutch::apply(&mut self.player, v);

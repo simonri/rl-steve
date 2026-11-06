@@ -62,7 +62,7 @@ FAMILIES = {
         ticks=(40, 30, 20, 15, 10, 7),
         # Harder, and only open once all of the above is at its limit.
         longer=(1.0, 1.5),
-        faster=(None, 6, 5, 4, 3),  # ticks per block with almost no spare time: chasing the record. The game itself sets the ceiling.
+        faster=(None, 6, 5, 4),  # ticks per block with almost no spare time: chasing the record. 3 is faster than bridging can go.
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
     "treenan": dict(
@@ -173,6 +173,13 @@ class Curriculum:
             if self.levels[family][dial] > 0:
                 self.lowered.add((family, dial))
                 return self._move(family, dial, self.levels[family][dial] - 1)
+        # No expert dial left to lower: the base dial that wins least on its own comes down, so the kind is never
+        # stuck where nothing can go up (the whole course fails) and nothing comes down (each dial alone passes).
+        rated = [(sum(r) / len(r), d) for d, r in self.limit_rounds[family].items() if self.levels[family][d] > 0 and len(r) >= ALL_DIALS_MIN_ROUNDS]
+        if rated:
+            dial = min(rated)[1]
+            self.lowered.add((family, dial))
+            return self._move(family, dial, self.levels[family][dial] - 1)
         rounds.clear()
         return None
 
@@ -185,7 +192,29 @@ class Curriculum:
         self.levels[family][dial] = level
         self.limit_rounds[family][dial].clear()
         self.all_rounds[family].clear()
+        self.failed_once.discard((family, "all"))  # a bad window before the move says nothing about the new level
         return dial, level
+
+    def state(self):
+        """What it remembers besides the levels, to carry over a restart."""
+        return dict(limit_rounds={f: {d: list(r) for d, r in dials.items()} for f, dials in self.limit_rounds.items()},
+                    all_rounds={f: list(r) for f, r in self.all_rounds.items()}, lowered=sorted(self.lowered), failed_once=sorted(self.failed_once))
+
+    def load_state(self, state):
+        for f, dials in state.get("limit_rounds", {}).items():
+            for d, r in dials.items():
+                if f in self.limit_rounds and d in self.limit_rounds[f]:
+                    self.limit_rounds[f][d].extend(bool(x) for x in r)
+        for f, r in state.get("all_rounds", {}).items():
+            if f in self.all_rounds:
+                self.all_rounds[f].extend(bool(x) for x in r)
+        known = lambda f, d: f in FAMILIES and (d == "all" or d in FAMILIES[f])
+        self.lowered = {(f, d) for f, d in state.get("lowered", []) if known(f, d)}
+        self.failed_once = {(f, d) for f, d in state.get("failed_once", []) if known(f, d)}
+
+    def at(self, family):
+        """The levels of a kind, as a round drawn now remembers them."""
+        return [self.levels[family][d] for d in FAMILIES[family]]
 
     def practice(self):
         """How much each course kind is played: more the less often it wins with every dial at its limit, which is

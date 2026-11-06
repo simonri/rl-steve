@@ -41,8 +41,15 @@ class CourseMaker(AutoEnv):
         """One round: what Batch.set_course needs, and what the round's info should say."""
         if seed is not None:
             gym.Env.reset(self, seed=seed)
-        self._use_task(self._pick_stage())
-        spec = self._spec()
+        for attempt in range(8):
+            self._use_task(self._pick_stage())
+            try:
+                spec = self._spec()
+                break
+            except RuntimeError as e:  # a generator found nothing that fits: another round instead
+                if attempt == 7:
+                    raise
+                print(f"round redrawn: {e}", flush=True)
         self.limit = self.time_limit()
         self._plan_pushes()
         boxes = [list(map(int, b)) for b in spec["platforms"]]
@@ -68,7 +75,7 @@ class CourseMaker(AutoEnv):
             home=[float(v) for v in spec["pos"]], yaw=float(spec["yaw"]), pitch=float(spec["pitch"]), blocks=int(spec["blocks"]), boxes=boxes, cells=cells, lo=lo, hi=hi,
             settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
             pushes=[(int(a), int(b), int(c), float(d), float(e)) for a, b, c, d, e in self.pushes],
-        ), dict(family=self.family, tested=self.tested)
+        ), dict(family=self.family, tested=self.tested, at=[self.levels[self.family][d] for d in curriculum.FAMILIES[self.family]])
 
 
 class SimVecEnv(VecEnv):

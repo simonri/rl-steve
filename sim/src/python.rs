@@ -53,7 +53,7 @@ impl Single {
     fn can_save(&self, vel: [f64; 3], before: [bool; 7], keys: [bool; 7], click: bool, turn_yaw: f64, turn_pitch: f64, fall_line: f64) -> bool {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
-        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before) };
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before), sprinting: p.sprinting };
         clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch }, fall_line)
     }
 
@@ -346,12 +346,12 @@ fn to_push(p: (i32, i32, usize, f64, f64)) -> Push {
 /// clutch.decide for the real game: the push to give now, from what the mod reports, or None.
 /// keys are (forward, back, left, right, jump, sneak, sprint): `before` as held last tick, `keys` for this one.
 #[pyfunction]
-#[pyo3(signature = (solid, feet, pos, vel, yaw, pitch, held, before, keys, click, turn_yaw, turn_pitch, goal, fall_line, push))]
+#[pyo3(signature = (solid, feet, pos, vel, yaw, pitch, held, before, keys, click, turn_yaw, turn_pitch, goal, fall_line, push, sprinting=false))]
 #[allow(clippy::too_many_arguments)]
 fn push_for(solid: &str, feet: [i32; 3], pos: [f64; 3], vel: [f64; 3], yaw: f32, pitch: f32, held: i32, before: [bool; 7], keys: [bool; 7], click: bool, turn_yaw: f64,
-            turn_pitch: f64, goal: [f64; 2], fall_line: f64, push: (i32, i32, usize, f64, f64)) -> Option<[f64; 3]> {
+            turn_pitch: f64, goal: [f64; 2], fall_line: f64, push: (i32, i32, usize, f64, f64), sprinting: bool) -> Option<[f64; 3]> {
     let cube = Cube::from_text(feet, solid);
-    let state = clutch::State { pos, vel, yaw, pitch, held, keys: to_keys(before) };
+    let state = clutch::State { pos, vel, yaw, pitch, held, keys: to_keys(before), sprinting };
     let first = Input { keys: to_keys(keys), click, turn_yaw, turn_pitch };
     clutch::decide(&cube, &state, &first, goal, fall_line, &to_push(push))
 }

@@ -20,16 +20,24 @@ from skill_env import pace
 
 ROOT = Path(__file__).resolve().parent.parent
 p = argparse.ArgumentParser()
-p.add_argument("--name", default="auto5")
+p.add_argument("--name", default="auto6")
 p.add_argument("--port", type=int, default=25601)
 a = p.parse_args()
 out = ROOT / "runs" / "models" / a.name
 torch.set_num_threads(1)
 Distribution.set_default_validate_args(False)
 
-env = AutoEnv(a.port)
-env.realtime = True  # watchers see the full 4 seconds when it dies
-env.c.call(op="release")
+MAX_ROWS = 15  # what the game's sidebar shows
+
+
+def connect():
+    e = AutoEnv(a.port)
+    e.realtime = True  # watchers see the full 4 seconds when it dies
+    e.c.call(op="release")
+    return e
+
+
+env = connect()
 model, mtime = None, 0.0
 score = defaultdict(lambda: [0, 0])  # course kinds added to a run later count from zero instead of stopping the viewer
 
@@ -58,14 +66,16 @@ def overlay(s):
         lines.append(sb.stat("Blocks", f"{env.obs['held_count']} left"))
     lines += [sb.BLANK, [["Curriculum", head, True]]]
     for f, row in families.items():
-        if row["open"]:
+        if row.get("open") and "level" in row and "most" in row:
             done = row["level"] >= row["most"]
             lines.append(sb.stat(row["name"], "max" if done else f"{row['level']}/{row['most']}", "green" if done else sb.VALUE))
     lines += [sb.BLANK, sb.stat("Trained", sb.compact(s.get("steps", 0)), sb.VALUE, "steps")]
     won, played = sum(v[0] for v in score.values()), sum(v[1] for v in score.values())
     if played:  # all rounds shown since the viewer started, so it only ever grows
         lines.append(sb.stat("Solved", f"{won}/{played}", sb.VALUE, "rounds shown"))
-    env.sidebar([["Minecraft RL Agent", "gold", True]], lines)
+    while len(lines) > MAX_ROWS and sb.BLANK in lines:  # gaps go first, the numbers stay
+        lines.remove(sb.BLANK)
+    env.sidebar([["Minecraft RL Agent", "gold", True]], lines[:MAX_ROWS])
 
 
 def episode(s):
@@ -96,18 +106,18 @@ def load(path):
     return (RecurrentPPO if memory else PPO).load(path, device="cpu")
 
 
-playing = False
-turn = 0
-while True:
+def turn_once():
+    """One round while someone watches, or a short wait while nobody does."""
+    global playing, turn, model, mtime
     if not watched():
         if playing:
             env.c.call(op="release")
             playing = False
         time.sleep(1.0)
-        continue
+        return
     if not (out / "latest.zip").exists():
         time.sleep(1.0)
-        continue
+        return
     playing = True
     m = (out / "latest.zip").stat().st_mtime
     if m != mtime:
@@ -121,8 +131,32 @@ while True:
     turn += 1
     info = episode(s)
     if info is None:
-        continue
+        return
     score[info["family"]][1] += 1
     score[info["family"]][0] += bool(info["clean"])
     print(info["family"], "clean" if info["clean"] else "miss", score[info["family"]], flush=True)
     time.sleep(0.7)
+
+
+playing = False
+turn = 0
+while True:
+    try:
+        turn_once()
+    except Exception as e:  # a failed round, or the game went away: watchers get the next round, never a dead viewer
+        import traceback
+        traceback.print_exc()
+        print(f"round failed: {e!r}; going on in 5 s", flush=True)
+        time.sleep(5.0)
+        if not isinstance(e, (KeyError, ValueError, TypeError)):  # the link may be out of step: start it over
+            try:
+                env.c.close()
+            except Exception:
+                pass
+            while True:
+                try:
+                    env = connect()
+                    break
+                except Exception as again:
+                    print(f"no game yet: {again!r}", flush=True)
+                    time.sleep(10.0)

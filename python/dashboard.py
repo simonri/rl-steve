@@ -38,14 +38,14 @@ def describe(task):
 
 def newest_run():
     runs = [p for p in MODELS.glob("*/status.json")]
-    return max(runs, key=lambda p: p.stat().st_mtime).parent.name
+    return max(runs, key=lambda p: p.stat().st_mtime).parent.name if runs else None
 
 
 def current_timeline(rows):
     """A resume from an older model steps back in time. Only the newest pass over those steps still counts."""
     kept, before = [], float("inf")
     for row in reversed(rows):
-        if row["steps"] < before:
+        if row.get("steps") is not None and row["steps"] < before:  # a row cut short by a crash has no steps
             kept.append(row)
             before = row["steps"]
     return kept[::-1]

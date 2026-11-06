@@ -106,7 +106,7 @@ class AutoEnv(SkillEnv):
             try:
                 return super().reset(seed=seed, options=options)
             except RuntimeError as e:
-                if "did not settle" not in str(e):
+                if not any(k in str(e) for k in ("did not settle", "no bedwars map", "no reachable")):
                     raise
                 print(f"round skipped: {e}", flush=True)
                 seed = None
@@ -240,7 +240,22 @@ class AutoEnv(SkillEnv):
         nx, nz = x + heading[0] * ahead + side[0] * sideways, z + heading[1] * ahead + side[1] * sideways
         if max(abs(nx), abs(nz)) <= start_size:
             return False
-        return all(max(abs(nx - b[0]), abs(nz - b[2])) > 1 for b in blocks)
+        if not all(max(abs(nx - b[0]), abs(nz - b[2])) > 1 for b in blocks):
+            return False
+        # The jump itself: a block near its line, at any height, could catch the head or the feet on the way over.
+        others = [b for b in blocks if (b[0], b[2]) != (x, z)]
+        for i in range(1, 10):
+            px, pz = x + (nx - x) * i / 10, z + (nz - z) * i / 10
+            if any(abs(px - b[0]) < 1.1 and abs(pz - b[2]) < 1.1 for b in others):
+                return False
+        # Nor does the new block stand in the way of a jump made before it.
+        way = [(0, 0)] + [(b[0], b[2]) for b in blocks]
+        for (ax, az), (bx, bz) in zip(way[:-1], way[1:]):
+            for i in range(1, 10):
+                px, pz = ax + (bx - ax) * i / 10, az + (bz - az) * i / 10
+                if abs(px - nx) < 1.1 and abs(pz - nz) < 1.1:
+                    return False
+        return True
 
     def _course_spec(self, boxes, on_platform):
         """The round's start, arena box and camera, for courses built from single blocks."""
@@ -280,7 +295,7 @@ class AutoEnv(SkillEnv):
             def free(a, s):
                 if a < 2 or abs(s) > 5:
                     return False
-                if a == 2 and abs(s) <= 1:
+                if a == 2 and abs(s) <= 2:
                     return False
                 return all(max(abs(a - c[0]), abs(s - c[1])) > 1 for c in cells[:-2]) and (a, s) not in {c[:2] for c in cells[-2:]} and (a, s) not in holes
 
@@ -344,7 +359,7 @@ class AutoEnv(SkillEnv):
         self.dy = last_h - Y
         edge_x, edge_z = world(last_a + 1, last_s)
         sunk = self._path_shapes() if self.task.get("shapes") else set()
-        self.landing_order = [(x, y if (x, y, z) in sunk else y + 1, z) for x, y, z in self.course] + [(edge_x, last_h + 1, edge_z)]
+        self.landing_order = [(x, y if (x, y, z) in sunk else y + 1, z) for x, y, z in self.course] + [(edge_x, last_h + 1, edge_z), (self.goal_x, last_h + 1, self.goal_z)]
         self.par, self.blocks_given = len(cells), 0
         boxes = [[x, y, z, x, y, z] for x, y, z in self.course if (x, y, z) not in sunk]
         boxes.append([self.goal_x - 2, last_h, self.goal_z - 2, self.goal_x + 2, last_h, self.goal_z + 2])
@@ -690,7 +705,7 @@ class AutoEnv(SkillEnv):
         try:  # the game reports feet as decimals; whatever else differs, a push is never worth stopping the round for
             v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(o["held_count"]),
                                [bool(before[k]) for k in order], [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5],
-                               fall_line, plan[self.next_push])
+                               fall_line, plan[self.next_push], sprinting=bool(o.get("sprinting", False)))
         except (TypeError, ValueError) as e:
             print(f"no pushes: {e}", flush=True)
             AutoEnv.can_push = False

@@ -49,6 +49,14 @@ def main():
     saved = out / "levels.json"
     start_levels = json.loads(saved.read_text()) if saved.exists() else json.loads(Path(a.levels).read_text()) if a.levels else None
     curriculum = Curriculum(start_levels)
+    latest = out / "latest.json"
+    saved_state = json.loads(latest.read_text()) if latest.exists() else {}
+    curriculum.load_state(saved_state.get("curriculum", {}))
+    # A run that already has its own model always continues from it: --resume only starts a new run.
+    continuing = (out / "latest.zip").exists()
+    if continuing and a.resume:
+        print(f"{out / 'latest.zip'} exists: continuing this run, not {a.resume}", flush=True)
+        a.resume = None
     vec = SimVecEnv(a.envs, curriculum.levels, seed=a.seed)
     kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=ta.GAMMA, gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.POLICY, seed=a.seed)
@@ -67,9 +75,10 @@ def main():
         model.save(out / "copied_recordings")
     model.play_on_card = True
     resumed_steps = 0
-    if (out / "latest.zip").exists() and not a.resume:
+    if continuing:
         model.set_parameters(str(out / "latest.zip"), device="cuda")
-        resumed_steps = json.loads((out / "status.json").read_text()).get("steps", 0) if (out / "status.json").exists() else 0
+        # The steps saved with these weights; older runs only have status.json, which can be a little ahead of them.
+        resumed_steps = saved_state.get("steps") or (json.loads((out / "status.json").read_text()).get("steps", 0) if (out / "status.json").exists() else 0)
         model.num_timesteps = resumed_steps
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     model.learn(a.steps, callback=ta.Progress(vec, out, curriculum, 2), reset_num_timesteps=resumed_steps == 0)

@@ -277,6 +277,10 @@ class Progress(BaseCallback):
         tmp = self.out / "levels.tmp"
         tmp.write_text(json.dumps(self.cur.levels))
         os.replace(tmp, self.out / "levels.json")
+        # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
+        tmp = self.out / "latest.tmp"
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state())))
+        os.replace(tmp, self.out / "latest.json")
 
     def show(self, title="TRAINING"):
         if time.time() - self.last_text < 1.0:
@@ -320,7 +324,10 @@ class Progress(BaseCallback):
                     self.bridge_record = info["blocks_per_s"]
                     if self.cur.levels["bridge"]["faster"]:
                         print(f"bridge record {self.bridge_record:.2f} blocks/s at {self.num_timesteps}", flush=True)
-            change = self.cur.record(family, info["tested"], bool(info["clean"]))
+            # A round drawn before a dial moved says nothing about the new level: up to a few hundred are still
+            # being played when one moves.
+            stale = info.get("at") is not None and list(info["at"]) != self.cur.at(family)
+            change = None if stale else self.cur.record(family, info["tested"], bool(info["clean"]))
             if change:
                 moved = True
                 dial, level = change

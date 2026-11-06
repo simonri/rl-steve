@@ -158,7 +158,7 @@ def _obstacle(isl, rng, cells, keep_out):
     return None
 
 
-def _par(islands, cells, start, goal):
+def _par(islands, cells, start, goal, blocked=frozenset()):
     """Blocks for the cheapest way from start to goal: one per void column crossed (sideways steps only, never a
     corner), and two per block climbed from one island to the next higher one."""
     top = {}
@@ -181,7 +181,7 @@ def _par(islands, cells, start, goal):
             continue
         for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, nz = x + dx, z + dz
-            if not (lo_x <= nx <= hi_x and lo_z <= nz <= hi_z):
+            if not (lo_x <= nx <= hi_x and lo_z <= nz <= hi_z) or (nx, nz) in blocked:
                 continue
             if (nx, nz) in top:
                 nh = top[(nx, nz)]
@@ -298,7 +298,10 @@ def layout(task, rng, base_y, most_blocks=64):
                     blocked.update(cols)
         if any((goal[0] + dx, goal[1] + h, goal[2] + dz) in cells for dx in (-1, 0, 1) for dz in (-1, 0, 1) for h in (1, 2)):
             continue
-        par = _par(islands, cells, start, goal)
+        try:
+            par = _par(islands, cells, start, goal, frozenset(blocked))
+        except RuntimeError:
+            continue  # walled in: another map
         if par * budget[0] + budget[1] > most_blocks:
             continue  # more blocks than it can hold: a shorter map instead
         # Everything moved so the start is at (0, base_y, 0), as on every other course.

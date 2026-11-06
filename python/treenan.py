@@ -83,8 +83,11 @@ class Treenan:
             near = (start_edge[0] + step + 1, start_edge[1] + step + 1)
         other = (near[0] - goal_edge[0], base_y - sy + rise, near[1] - goal_edge[1])
         placed = {(c[0] + move[0], c[1] + move[1], c[2] + move[2]): s for c, s in self.parts["start"].items()}
+        self.last_other = set()  # the cells of the other island, for telling the two apart
         for c, s in self.parts[name].items():
-            placed[(c[0] + other[0], c[1] + other[1], c[2] + other[2])] = s
+            moved = (c[0] + other[0], c[1] + other[1], c[2] + other[2])
+            placed[moved] = s
+            self.last_other.add(moved)
         choices = self.spots[name]
         spot = choices[int(rng.integers(len(choices)))]
         goal = (spot[0] + other[0], spot[1] + other[1], spot[2] + other[2])

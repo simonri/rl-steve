@@ -1,4 +1,5 @@
 """Checks the generator, the dials, the view and the point rules with a fake game. No game needed."""
+import json
 import math
 
 import numpy as np
@@ -570,6 +571,29 @@ assert c.levels["hop"]["count"] == len(FAMILIES["hop"]["count"]) - 1
 c = Curriculum(top)
 assert not any(c.record("hop", "all", i % 2 == 0) for i in range(3 * curriculum.WINDOW)), "half won: stays"
 print("step back ok")
+# With no expert dial left to lower, two bad whole-course windows bring down the base dial that wins least alone.
+lv = Curriculum().levels
+lv["bridge"].update(gap=3, ticks=3)
+c = Curriculum(lv)
+for _ in range(curriculum.WINDOW):
+    c.record("bridge", "gap", True)  # gap alone: always won (and the window stays full: it cannot go up without the whole course)
+for i in range(curriculum.WINDOW - 1):
+    c.record("bridge", "ticks", i % 2 == 0)  # ticks alone: half
+changes = [c.record("bridge", "all", False) for _ in range(2 * curriculum.WINDOW)]
+assert [x for x in changes if x] == [("ticks", 2)], [x for x in changes if x]
+# A bad window before a move does not count toward two in a row after it.
+c = Curriculum(top)
+for _ in range(curriculum.WINDOW):
+    c.record("hop", "all", False)
+assert ("hop", "all") in c.failed_once
+c._move("hop", "count", c.levels["hop"]["count"] - 1)
+assert ("hop", "all") not in c.failed_once
+# What the curriculum remembers comes back after a restart.
+c2 = Curriculum(c.levels)
+c2.load_state(json.loads(json.dumps(c.state())))
+assert c2.state() == c.state()
+assert c.at("hop") == [c.levels["hop"][d] for d in FAMILIES["hop"]]
+print("curriculum memory ok")
 # Bedwars maps can always be done: room to stand at the start and the goal, blocks for every gap and climb, and no
 # island under the line where a fall counts.
 from sim_env import CourseMaker
@@ -601,3 +625,39 @@ assert env.reached(state(x=gx + 0.95, y=gy, z=gz + 0.05))
 assert not env.reached(state(x=gx + 1.5, y=gy, z=gz + 0.5))
 assert not env.reached(state(x=gx - 0.5, y=gy, z=gz + 0.5))
 print("goal block ok")
+# A finished simulator round reports everything the training callback reads.
+from sim_env import SimVecEnv
+vec = SimVecEnv(16, Curriculum().levels, seed=4)
+vec.reset()
+rng = np.random.default_rng(0)
+seen = []
+for _ in range(3000):
+    vec.step_async(np.stack([rng.integers(0, h, 16) for h in vec.action_space.nvec], -1))
+    _, _, dones, infos = vec.step_wait()
+    seen += [infos[i] for i in np.flatnonzero(dones)]
+    if seen:
+        break
+need = {"family", "tested", "at", "success", "clean", "fell", "stalled", "damage", "shift_share", "parts", "blocks_needed", "pushes", "terminal_observation", "episode"}
+assert seen and need <= set(seen[0]), need - set(seen[0] if seen else {})
+assert seen[0]["at"] == Curriculum().at(seen[0]["family"])
+print("round info ok")
+# Every kind at its hardest: blocks cover the need and the push spare inside one stack, hop jumps never pass their own
+# blocks, and a path's last target is the goal block itself.
+top_all = {f: {d: len(v) - 1 for d, v in dials.items()} for f, dials in FAMILIES.items()}
+for family in ("bridge", "stairs", "bedwars", "hop", "path"):
+    m = CourseMaker(Curriculum(top_all).levels, seed=0)
+    m.set_exam(family)
+    for s in range(150):
+        spec, _ = m.draw(seed=s)
+        if spec["blocks"]:
+            assert m.par + m.push_spare <= spec["blocks"] <= 64, (family, s, m.par, m.push_spare, spec["blocks"])
+        if family == "hop":
+            way = [(0, Y, 0)] + list(m.course)
+            for i, (a, b) in enumerate(zip(way, way[1:])):
+                others = [c for j, c in enumerate(m.course) if j not in (i - 1, i)]
+                for k in range(1, 10):
+                    px, pz = a[0] + (b[0] - a[0]) * k / 10, a[2] + (b[2] - a[2]) * k / 10
+                    assert not any(abs(px - c[0]) < 1.1 and abs(pz - c[2]) < 1.1 for c in others), (s, a, b)
+        if family == "path":
+            assert m.landing_order[-1][::2] == (m.goal_x, m.goal_z), (s, m.landing_order[-1], m.goal_x, m.goal_z)
+print("hardest courses ok")
