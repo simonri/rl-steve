@@ -16,6 +16,7 @@ RENAMED = {"minecraft:grass": "minecraft:short_grass"}
 GRASS = "minecraft:grass_block"
 MAX_DROP, MAX_CLIMB = 8, 3
 MIN_GAP, MAX_GAP = 10, 30
+LOBBY_FROM = 115  # map height where the spawn lobby starts; the islands stay below about 114
 
 
 def load_rows():
@@ -67,7 +68,8 @@ def flat_spots(cells, box, any_top=False):
 
 class Treenan:
     def __init__(self):
-        self.cells = {(x, y, z): state for x, y, z, state in load_rows()}
+        # The map's lobby floats high above the middle island: it is not part of the game, so it is left out.
+        self.cells = {(x, y, z): state for x, y, z, state in load_rows() if y < LOBBY_FROM}
         self.boxes = {"start": WEST, "center": CENTER, "side": SIDE}
         self.parts = {name: {c: s for c, s in self.cells.items() if in_box(c[0], c[2], box)} for name, box in self.boxes.items()}
         home = flat_spots(self.cells, WEST)

@@ -10,12 +10,11 @@ A watcher's view is moved by teleporting, which the game does not smooth, so eve
 """
 import math
 
-V_FOV = 90.0  # vertical field of view, as Minecraft's setting counts it
-ASPECT = 16 / 9
+V_FOV = 90.0 * 1.1  # vertical field of view: FOV 90, widened by a tenth while flying, as spectators always are
+ASPECT = 16 / 10  # the watcher's window
 H_HALF = math.degrees(math.atan(math.tan(math.radians(V_FOV / 2)) * ASPECT))  # about 60.6 degrees
-FIT = 0.92  # share of the half-angles the framed area may fill
-ELEVATIONS = (58.0, 66.0, 52.0, 75.0)  # degrees above the framed area, best first. Looking down this steeply, even the
-# top edge of the picture (pitch minus half the field of view) stays below the horizon: no sky, the course fills it
+FIT = 0.95  # share of the half-angles the framed area may fill
+ELEVATIONS = (35.0, 30.0, 40.0, 45.0, 55.0)  # degrees down at the course: 30 to 40 as people watch, steeper only when blocked
 TURNS = (0, 20, -20, 40, -40, 70, -70, 100, -100, 140, -140, 180)
 MIN_DIST, MAX_DIST = 8.0, 60.0  # the far end stays inside what a watcher's game shows
 LOST_FOR = 30  # ticks out of the picture before a cut
@@ -27,7 +26,7 @@ class Shots:
         self.shot = None  # (x, y, z, yaw, pitch)
         self.lost = self.hidden = 0
         self.solid = set()
-        self.extent = None  # (min corner, max corner) of the course
+        self.points = []  # what the opening shot has to hold: the ground of the course and the way across it
 
     def new_round(self, env):
         """Everything known to be built (the course's boxes, a pasted map), and the area the opening shot frames."""
@@ -47,10 +46,12 @@ class Shots:
             low, high = min(100, 100 + env.dy) - 2, max(100, 100 + env.dy) + 2
             points += [c for c in cells if low <= c[1] <= high]
         points += [tuple(c) for c in getattr(env, "landing_order", [])]
-        lo = [min(p[i] for p in points) for i in range(3)]
-        hi = [max(p[i] for p in points) + 1 for i in range(3)]
-        hi[1] += 2  # room to stand on top
-        self.extent = (lo, hi)
+        # The way straight across, where a bridge will go, standing height included.
+        gx, gy, gz = env.goal_x, 100 + env.dy, env.goal_z
+        n = max(2, int(math.hypot(gx, gz)))
+        points += [(gx * i / n, 100 + (gy - 100) * i / n + 2, gz * i / n) for i in range(n + 1)]
+        step = max(1, len(points) // 400)  # a few hundred points frame as well as thousands
+        self.points = [(p[0] + 0.5, p[1] + 1.0, p[2] + 0.5) for p in points[::step]] + [(0.5, 101.0, 0.5), (gx + 0.5, gy + 1.0, gz + 0.5)]
         self.shot = None
         self.lost = self.hidden = 0
 
@@ -96,33 +97,40 @@ class Shots:
             return 180.0, 180.0
         return math.degrees(math.atan2(abs(sum(a * b for a, b in zip(d, right))), f)), math.degrees(math.atan2(abs(sum(a * b for a, b in zip(d, up))), f))
 
-    def _frame(self, lo, hi, axis, head, local):
-        """A shot that holds the box lo..hi, from the side of `axis` (the way through it), clear of every block."""
-        centre = [(a + b) / 2 for a, b in zip(lo, hi)]
-        corners = [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
-        base = math.atan2(axis[1], axis[0]) + math.pi / 2
+    def _frame(self, points, head, local):
+        """The nearest shot that holds every point, seen across the points' long side, clear of every block."""
+        xs, ys, zs = zip(*points)
+        centre = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2)
+        # Long side of the points on the ground (the main axis of their spread): it goes across the picture.
+        mx, mz = sum(xs) / len(xs), sum(zs) / len(zs)
+        sxx = sum((x - mx) ** 2 for x in xs)
+        szz = sum((z - mz) ** 2 for z in zs)
+        sxz = sum((x - mx) * (z - mz) for x, z in zip(xs, zs))
+        long_side = 0.5 * math.atan2(2 * sxz, sxx - szz)
+        base = long_side + math.pi / 2
         best = None
         for elev_deg in ELEVATIONS:
-            for side in (1, -1):
-                for turn in TURNS:
-                    ang = base + math.radians(turn) + (0 if side == 1 else math.pi)
+            for turn in TURNS:
+                for flip in (0.0, math.pi):
+                    ang = base + math.radians(turn) + flip
                     elev = math.radians(elev_deg)
                     back = (math.cos(ang) * math.cos(elev), math.sin(elev), math.sin(ang) * math.cos(elev))
-                    # The nearest distance at which every corner is inside the picture.
-                    for d in [MIN_DIST * 1.25 ** k for k in range(20)]:
-                        if d > MAX_DIST:
-                            break
+                    d, fits = MIN_DIST, False
+                    while d <= MAX_DIST:
                         at = (centre[0] + back[0] * d, centre[1] + back[1] * d, centre[2] + back[2] * d)
                         shot = self._aim(at, centre)
-                        if all(h <= H_HALF * FIT and v <= V_FOV / 2 * FIT for h, v in (self._angles(shot, c) for c in corners)):
+                        if all(h <= H_HALF * FIT and v <= V_FOV / 2 * FIT for h, v in (self._angles(shot, p) for p in points)):
+                            fits = True
                             break
-                    if self._clear(at, head, local) and self._clear(at, tuple(centre), local):
-                        score = d + abs(turn) * 0.05 + abs(elev_deg - ELEVATIONS[0]) * 0.05
-                        if best is None or score < best[0]:
-                            best = (score, shot)
-            if best:
+                        d *= 1.06
+                    if not fits or (best and d >= best[0]):
+                        continue
+                    if self._clear(at, head, local) and self._clear(at, centre, local):
+                        best = (d + abs(turn) * 0.02, shot)  # the nearest shot that holds it all fills the screen most
+            if best:  # the first angle (30 to 40 down) that has a clear shot wins
                 return best[1]
-        return self._aim((centre[0], hi[1] + MIN_DIST * 2, centre[2] + 0.01), centre)  # nothing clear: straight above
+        hi = max(ys)
+        return self._aim((centre[0], hi + MAX_DIST * 0.6, centre[2] + 0.01), centre)  # nothing fits clear: straight above
 
     @staticmethod
     def _aim(at, look):
@@ -137,8 +145,7 @@ class Shots:
         head = (x, y + 1.6, z)
         local = self._local(o)
         if self.shot is None:  # the opening shot: the whole course
-            lo, hi = self.extent
-            self.shot = self._frame(lo, hi, (env.goal_x, env.goal_z), head, local)
+            self.shot = self._frame(self.points, head, local)
             return list(self.shot)
         h, v = self._angles(self.shot, head)
         self.lost = self.lost + 1 if (h > H_HALF * 0.95 or v > V_FOV / 2 * 0.95) else 0
@@ -147,9 +154,9 @@ class Shots:
         if inside or self.lost >= LOST_FOR or self.hidden >= HIDDEN_FOR or math.dist(self.shot[:3], head) > MAX_DIST * 1.2:
             # The rest of the way: from the player to the goal.
             gx, gy, gz = env.goal_x + 0.5, 100 + 1 + env.dy, env.goal_z + 0.5
-            lo = [min(x, gx) - 2, min(y, gy) - 1, min(z, gz) - 2]
-            hi = [max(x, gx) + 2, max(y, gy) + 3, max(z, gz) + 2]
-            self.shot = self._frame(lo, hi, (gx - x, gz - z), head, local)
+            n = max(2, int(math.hypot(gx - x, gz - z)))
+            way = [(x + (gx - x) * i / n, y + (gy - y) * i / n + 1, z + (gz - z) * i / n) for i in range(n + 1)]
+            self.shot = self._frame(way + [head, (gx, gy + 1.6, gz)], head, local)
             self.lost = self.hidden = 0
             return list(self.shot)
         return None
