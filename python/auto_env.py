@@ -375,9 +375,16 @@ class AutoEnv(SkillEnv):
         norm = math.hypot(tx - x, tz - z) or 1.0
         return (tx - x) / norm, (tz - z) / norm
 
+    @staticmethod
+    def _climb(ahead, up):
+        """Distance left with `ahead` to go on the level and `up` to climb. With the goal higher up, getting closer
+        on the level than the climb left gains nothing: the way up has to start before it, not under the goal."""
+        return max(ahead, up) + up if up > 0 else ahead + abs(up)
+
     def _distance(self, o):
         if not self.landing_order:
-            return super()._distance(o)
+            x, y, z = o["pos"]
+            return self._climb(self._walk(x, z), Y + 1 + self.dy - y)
         x, y, z = o["pos"]
         tx, ty, tz = self._next_target()
         total = math.hypot(tx - x, tz - z) + abs(ty - y)
@@ -562,7 +569,7 @@ class AutoEnv(SkillEnv):
     def _begin_episode(self):
         self.visited = set()
         super()._begin_episode()
-        self.closest_block = math.hypot(self.goal_x, self.goal_z) - 1.0  # the edge of the start platform
+        self.closest_block = self._climb(math.hypot(self.goal_x, self.goal_z) - 1.0, self.dy)  # the edge of the start platform
         self._anchor()
 
     def _anchor(self):
@@ -623,7 +630,8 @@ class AutoEnv(SkillEnv):
             reward += self._points("blocks", -(BLOCK_COST if self.used <= self.par else WASTE_COST))
         if held > o["held_count"] and o.get("clicks"):
             c = o["clicks"][-1]
-            reach = math.hypot(self.goal_x - c[0], self.goal_z - c[2])
+            # As far as standing on it would leave: a block under the goal while still below it is no step closer.
+            reach = self._climb(math.hypot(self.goal_x - c[0], self.goal_z - c[2]), self.dy - c[1] + Y)
             if reach < self.closest_block - 0.5:
                 self.closest_block = reach
                 reward += self._points("placed toward the goal", PLACE_BONUS)

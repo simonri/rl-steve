@@ -503,6 +503,12 @@ for s in range(10):
     assert sp["blocks"] <= 64 and sp["par"] >= m.map_gap + 2 * max(sp["dy"], 0) - 1, (sp["blocks"], sp["par"], sp["dy"])
     homes.add(tuple(sp["goal"]))
 assert len(homes) > 5
+# With the goal 5 up, going on under it gains nothing: only climbing does, once closer than the climb left.
+climb = AutoEnv._climb
+assert climb(10, 5) - climb(9, 5) == 1.0, "far away, getting closer still counts"
+assert climb(4, 5) == climb(0, 5), "closer than the climb left: no gain on the level"
+assert climb(4, 4) < climb(4, 5), "climbing always counts"
+assert climb(6, -3) == 9 and climb(6, 0) == 6, "down or level: as before"
 # Shift costs nothing on parkour: it can stop at an edge.
 assert "shift without blocks" not in open(auto_env.__file__).read()
 print("practice ok")

@@ -169,6 +169,17 @@ const K_SNEAK: usize = 4;
 const K_JUMP: usize = 5;
 const K_SPRINT: usize = 6;
 
+/// AutoEnv._climb: distance left with `ahead` to go on the level and `up` to climb. With the goal higher up, getting
+/// closer on the level than the climb left gains nothing: the way up has to start before it, not under the goal.
+#[inline]
+fn climb(ahead: f64, up: f64) -> f64 {
+    if up > 0.0 {
+        ahead.max(up) + up
+    } else {
+        ahead + up.abs()
+    }
+}
+
 /// skill_env.rotate: turns (x, z) so yaw falls by 90 degrees k times.
 #[inline]
 pub fn rotate(mut x: f64, mut z: f64, k: i32) -> (f64, f64) {
@@ -224,7 +235,7 @@ impl Env {
             used: 0,
             deaths: 0,
             damage: 0.0,
-            closest_block: (course.goal[0] as f64).hypot(course.goal[1] as f64) - 1.0,
+            closest_block: climb((course.goal[0] as f64).hypot(course.goal[1] as f64) - 1.0, course.dy as f64),
             jump_wait: 0,
             was_on_ground: true,
             history: [[0.0; 8]; HISTORY],
@@ -277,7 +288,7 @@ impl Env {
         let [x, y, z] = self.player.pos;
         let c = &self.course;
         if c.landing.is_empty() {
-            return self.walk(x, z) + ((Y + 1 + c.dy) as f64 - y).abs();
+            return climb(self.walk(x, z), (Y + 1 + c.dy) as f64 - y);
         }
         let i = self.landed.min(c.landing.len() - 1);
         let t = c.landing[i];
@@ -417,7 +428,8 @@ impl Env {
             reward += self.points(P_BLOCKS, -cost);
         }
         if let Some((target, _)) = ev.placed {
-            let reach = ((self.course.goal[0] - target[0]) as f64).hypot((self.course.goal[1] - target[2]) as f64);
+            // As far as standing on it would leave: a block under the goal while still below it is no step closer.
+            let reach = climb(((self.course.goal[0] - target[0]) as f64).hypot((self.course.goal[1] - target[2]) as f64), (self.course.dy - target[1] + Y) as f64);
             if reach < self.closest_block - 0.5 {
                 self.closest_block = reach;
                 reward += self.points(P_PLACED, PLACE_BONUS);
