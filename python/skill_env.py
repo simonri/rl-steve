@@ -265,7 +265,7 @@ class SkillEnv(gym.Env):
             self.blocked -= {(x, z) for x in range(-1, 2) for z in range(-1, 2)}
             self.blocked -= {(x, z) for x in range(gx - 1, gx + 2) for z in range(gz - 1, gz + 2)}
             self._build_field()
-            if self._next_cell(0.5, 0.5)[1] is not None and self._walk(0.5, 0.5) < self.field.max() - 1.0:
+            if self.field is None or self._next_cell(0.5, 0.5)[1] is not None and self._walk(0.5, 0.5) < self.field.max() - 1.0:  # nothing in the way: fine
                 break
         else:
             raise RuntimeError("no reachable grass spot found")

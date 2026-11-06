@@ -31,7 +31,7 @@ pub fn body(p: &Player) -> Aabb {
 /// LocalPlayer.pick: the nearer of the block in reach (4.5) and a player's box on the line (3), as the client sees it.
 /// `others` are the other players' boxes, `None` for one that cannot be hit (itself, dead, gone).
 pub fn aim(p: &Player, world: &World, others: &[Option<Aabb>]) -> Aim {
-    let eye = [p.pos[0], p.pos[1] + p.eye_height(), p.pos[2]];
+    let eye = p.eye();
     let v = p.view();
     let block = p.pick(world);
     let block_d2 = block.map(|h| {
@@ -138,6 +138,7 @@ pub fn hit(s: &Swing, victim: &mut Player, victim_pos: [f64; 3]) -> (bool, bool)
         }
         let d = amount - victim.last_damage;
         victim.last_damage = amount;
+        victim.hurt_time = 10; // every hit that counts sends the damage event the client turns this on with
         (d, false)
     } else {
         victim.last_damage = amount;
@@ -153,7 +154,7 @@ pub fn hit(s: &Swing, victim: &mut Player, victim_pos: [f64; 3]) -> (bool, bool)
         if dx * dx + dz * dz < 1.0e-4 {
             (dx, dz) = (0.0, 0.01); // 1.8 draws a random tiny direction; a fixed one keeps the game and this equal
         }
-        let f = ((dx * dx + dz * dz) as f32).sqrt() as f64;
+        let f = (dx * dx + dz * dz).sqrt() as f32 as f64; // (float)Math.sqrt(double)
         let m = victim.server_motion;
         let mut v = [m[0] / 2.0 - dx / f * KNOCK, m[1] / 2.0 + KNOCK, m[2] / 2.0 - dz / f * KNOCK];
         if v[1] > 0.4000000059604645 {
@@ -163,11 +164,12 @@ pub fn hit(s: &Swing, victim: &mut Player, victim_pos: [f64; 3]) -> (bool, bool)
     }
     if level > 0 {
         let r = s.yaw * std::f32::consts::PI / 180.0;
+        let (sin, cos) = ((r as f64).sin() as f32, (r as f64).cos() as f32); // (float)Math.sin(double), as 1.8.9 and the mod
         let base = motion.unwrap_or(victim.server_motion);
         motion = Some([
-            base[0] + (-r.sin() * level as f32 * 0.5) as f64,
+            base[0] + (-sin * level as f32 * 0.5) as f64,
             base[1] + 0.1,
-            base[2] + (r.cos() * level as f32 * 0.5) as f64,
+            base[2] + (cos * level as f32 * 0.5) as f64,
         ]);
     }
     if motion.is_some() {
@@ -218,12 +220,12 @@ mod tests {
             assert!(counted);
             assert_eq!(broke, field("broke") == "true");
             let health: f32 = field("health").parse().unwrap();
-            assert!((v.health - health).abs() < 1e-5, "{} vs {}", v.health, health);
+            assert_eq!(v.health, health, "health");
             let i = case.find("\"motion\":").unwrap() + 10;
             let nums: Vec<f64> = case[i..].split(']').next().unwrap().trim_start_matches('[').split(',').map(|x| x.trim().parse().unwrap()).collect();
             let m = v.pending_knock.unwrap();
             for k in 0..3 {
-                assert!((m[k] - nums[k]).abs() < 1e-6, "motion {:?} vs {:?}", m, nums);
+                assert_eq!(m[k], nums[k], "motion {:?} vs {:?}", m, nums);
             }
             checked += 1;
         }

@@ -145,5 +145,9 @@ def vectors():
 
 
 if __name__ == "__main__":
+    # Writes the cases the simulator's Rust tests check against (sim/combat18_vectors.json).
     import json
-    print(json.dumps(vectors(), indent=1)[:2000])
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "sim" / "combat18_vectors.json"
+    path.write_text(json.dumps(vectors(), indent=0) + "\n")
+    print(f"{len(vectors())} cases -> {path}")

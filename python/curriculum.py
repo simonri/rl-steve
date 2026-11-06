@@ -137,7 +137,7 @@ class Curriculum:
         for family, dials in (levels or {}).items():
             for dial, level in dials.items():
                 if family in self.levels and dial in self.levels[family]:
-                    self.levels[family][dial] = min(level, len(FAMILIES[family][dial]) - 1)
+                    self.levels[family][dial] = max(0, min(int(level), len(FAMILIES[family][dial]) - 1))  # a hand-edited file may be off
         self.limit_rounds = {f: {d: deque(maxlen=WINDOW) for d in dials} for f, dials in FAMILIES.items()}
         self.all_rounds = {f: deque(maxlen=WINDOW) for f in FAMILIES}
         self.lowered = set()  # dials that just went down: they have to prove the level below twice before going up again
@@ -221,6 +221,9 @@ class Curriculum:
                     all_rounds={f: list(r) for f, r in self.all_rounds.items()}, lowered=sorted(self.lowered), failed_once=sorted(self.failed_once))
 
     def load_state(self, state):
+        """The rounds and flags from state(); replaces what was counted, so loading twice gives the same."""
+        for rounds in [*self.all_rounds.values(), *(r for dials in self.limit_rounds.values() for r in dials.values())]:
+            rounds.clear()
         for f, dials in state.get("limit_rounds", {}).items():
             for d, r in dials.items():
                 if f in self.limit_rounds and d in self.limit_rounds[f]:

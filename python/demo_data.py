@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+import mcsim
+
 from auto_env import TURN_STEPS, AutoEnv
 from skill_env import HISTORY, MIN_KEY_TICKS
 
@@ -85,6 +87,7 @@ def replay(path):
     env.best = float("inf")
     history = deque([np.zeros(8, np.float32)] * HISTORY, maxlen=HISTORY)
     delayed = deque(maxlen=1)  # the model sees the game as it is now
+    env.history2 = deque([(0.0, 0.0)] * HISTORY, maxlen=HISTORY)  # recordings never fight: no clicks, the first slot
     observations, actions = [], []
     env.landed = 0
     env._release_inputs()
@@ -111,13 +114,13 @@ def replay(path):
         delayed.append(env._vec(o))
         env.since_best = 0 if env._distance(o) < env.best - 0.01 else env.since_best + 1
         env.best = min(env.best, env._distance(o))
-        seen = env._with_timer(np.concatenate([delayed[0], *history]))
+        seen = env._with_timer(np.concatenate([delayed[0], *history, env._combat(o)]))
         move = 1 if then["forward"] and not then["back"] else 2 if then["back"] and not then["forward"] else 0
         strafe = 1 if then["left"] and not then["right"] else 2 if then["right"] and not then["left"] else 0
         placed = max(0, o["held_count"] - then.get("held_count", 0))
         env.used += placed
         action = [move, strafe, int(then["sneak"]), min(placed, 1), int(then["jump"]), int(then["sprint"]),
-                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"])]
+                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"]), 0, 0]  # no left click, keep the slot
         observations.append(seen)
         actions.append(action)
         history.append(np.asarray([move / 2, strafe / 2, action[2], action[3] / 2, action[4], action[5], action[6] / (len(TURN_STEPS) - 1), action[7] / (len(TURN_STEPS) - 1)], np.float32))
@@ -126,7 +129,7 @@ def replay(path):
         env.t += 1
     shape = (0, AutoEnv.N_OBS)
     return (np.asarray(observations, np.float32) if observations else np.zeros(shape, np.float32),
-            np.asarray(actions, np.int64) if actions else np.zeros((0, 8), np.int64), end["result"] == "won" and end["deaths"] == 0)
+            np.asarray(actions, np.int64) if actions else np.zeros((0, mcsim.ACTIONS), np.int64), end["result"] == "won" and end["deaths"] == 0)
 
 
 if __name__ == "__main__":

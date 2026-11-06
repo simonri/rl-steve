@@ -62,21 +62,19 @@ def main():
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.POLICY, seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     ta.fast_convolutions()
-    if a.resume:
-        # Loaded on the processor: a second model left on the card takes the scratch memory the fast convolutions need,
-        # and learning then runs several times slower.
-        old = ta.SplitPPO.load(a.resume, device="cpu")
-        grew = ta.transfer(model.policy, old.policy.state_dict())  # the eyes and hands may have grown: what was there is kept exactly
-        print(f"continuing from {a.resume}: grown {grew}", flush=True)
-        del old
-        torch.cuda.empty_cache()
-    elif a.start_from_recordings:
-        ta.start_from_recordings(model, a.start_from_recordings, a.recordings)
-        model.save(out / "copied_recordings")
-    model.play_on_card = True
     resumed_steps = 0
+    if continuing or a.resume:
+        # The eyes and hands may have grown since that model was saved: what was there is kept exactly.
+        grew, _ = ta.load_weights(model, out / "latest.zip" if continuing else a.resume)
+        print(f"continuing from {out / 'latest.zip' if continuing else a.resume}: grown {grew}", flush=True)
+        torch.cuda.empty_cache()
+    else:
+        ta.init_action_bias(model.policy)
+        if a.start_from_recordings:
+            ta.start_from_recordings(model, a.start_from_recordings, a.recordings)
+            model.save(out / "copied_recordings")
+    model.play_on_card = True
     if continuing:
-        model.set_parameters(str(out / "latest.zip"), device="cuda")
         # The steps saved with these weights; older runs only have status.json, which can be a little ahead of them.
         resumed_steps = saved_state.get("steps") or (json.loads((out / "status.json").read_text()).get("steps", 0) if (out / "status.json").exists() else 0)
         model.num_timesteps = resumed_steps

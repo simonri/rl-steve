@@ -48,6 +48,7 @@ impl Single {
         p.dm = [0.0, -0.0784, 0.0];
         p.keep_gear(&self.player); // as Env.respawn: the inventory and the rules stay
         self.player = p;
+        self.queued = None; // a hit on its way belongs to the player that was
     }
 
     /// A hit's knockback, as clutch.rs gives it.
@@ -84,6 +85,7 @@ impl Single {
         self.t = 0;
         self.since_hit = 99;
         self.since_hurt = 99;
+        self.queued = None;
     }
 
     fn set_block(&mut self, x: i32, y: i32, z: i32, name: &str) {
@@ -244,6 +246,17 @@ pub struct Batch {
     tick_count: i64,
 }
 
+impl Batch {
+    /// Round `i`, or a Python error when there is no such round or it has no course yet.
+    fn env(&self, i: usize) -> PyResult<&Env> {
+        self.envs
+            .get(i)
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err(format!("round {i} of {}", self.envs.len())))?
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("no course"))
+    }
+}
+
 fn get<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<T> {
     d.get_item(key)?.ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))?.extract::<T>().map_err(Into::into)
 }
@@ -329,13 +342,14 @@ impl Batch {
                 _ => Vec::new(),
             },
         };
-        self.envs[i] = Some(Env::new(course, self.tick_count));
+        let n = self.envs.len();
+        *self.envs.get_mut(i).ok_or_else(|| pyo3::exceptions::PyIndexError::new_err(format!("round {i} of {n}")))? = Some(Env::new(course, self.tick_count));
         Ok(())
     }
 
     /// Writes what round `i` sees now into `out`.
     fn observe(&self, i: usize, mut out: PyReadwriteArray1<f32>) -> PyResult<()> {
-        let env = self.envs[i].as_ref().ok_or_else(|| pyo3::exceptions::PyValueError::new_err("no course"))?;
+        let env = self.env(i)?;
         env.observe(out.as_slice_mut()?);
         Ok(())
     }
@@ -343,10 +357,21 @@ impl Batch {
     /// One decision in every round at once. Writes what each sees after it, its reward and whether it ended.
     fn step(&mut self, py: Python<'_>, actions: PyReadonlyArray2<i64>, mut obs: PyReadwriteArray2<f32>, mut rewards: PyReadwriteArray1<f32>, mut dones: PyReadwriteArray1<bool>) -> PyResult<()> {
         let acts = actions.as_array();
+        let n = self.envs.len();
+        let bad = |what: String| pyo3::exceptions::PyValueError::new_err(what);
+        if acts.nrows() != n || acts.ncols() != ACTIONS {
+            return Err(bad(format!("actions are {:?}, not ({n}, {ACTIONS})", acts.shape())));
+        }
+        if let Some((i, v)) = acts.indexed_iter().find(|((_, j), &v)| v < 0 || v >= crate::duel::CHOICES[*j]) {
+            return Err(bad(format!("action {v} at {i:?} is outside 0..{}", crate::duel::CHOICES[i.1])));
+        }
         let acts: Vec<[i64; ACTIONS]> = acts.rows().into_iter().map(|r| std::array::from_fn(|i| r[i])).collect();
         let obs = obs.as_slice_mut()?;
         let rewards = rewards.as_slice_mut()?;
         let dones = dones.as_slice_mut()?;
+        if obs.len() != n * N_OBS || rewards.len() != n || dones.len() != n {
+            return Err(bad(format!("buffers for {} rounds, {} rewards, {} dones, not {n}", obs.len() / N_OBS, rewards.len(), dones.len())));
+        }
         let envs = &mut self.envs;
         py.detach(|| {
             envs.par_iter_mut()
@@ -368,7 +393,7 @@ impl Batch {
 
     /// How round `i` went: the info a finished round reports.
     fn report<'py>(&self, py: Python<'py>, i: usize) -> PyResult<Bound<'py, PyDict>> {
-        let env = self.envs[i].as_ref().ok_or_else(|| pyo3::exceptions::PyValueError::new_err("no course"))?;
+        let env = self.env(i)?;
         let r = &env.report;
         let d = PyDict::new(py);
         d.set_item("success", r.success)?;
@@ -399,7 +424,7 @@ impl Batch {
 
     /// The state of round `i`'s player, for checks and for watching.
     fn player<'py>(&self, py: Python<'py>, i: usize) -> PyResult<Bound<'py, PyDict>> {
-        let env = self.envs[i].as_ref().ok_or_else(|| pyo3::exceptions::PyValueError::new_err("no course"))?;
+        let env = self.env(i)?;
         let p = &env.player;
         let d = PyDict::new(py);
         d.set_item("pos", p.pos)?;
@@ -479,7 +504,7 @@ fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8
         h[HISTORY - 1 - i] = *v;
     }
     let mut out = vec![0.0; EXTRA];
-    duel::features(&p, &m, &views, k, &Cube::from_text(feet, solid), &h, &mut out);
+    duel::features(&p, &m, &views, k, &|| Cube::from_text(feet, &solid), &h, &mut out);
     out
 }
 

@@ -102,6 +102,8 @@ pub struct Player {
     pub sent_sprinting: bool, // the sprint state the client last told the server
     pub server_sprinting: bool, // the server's own idea of it: a sprinting hit clears it until the client starts again
     pub unseen: f32, // damage from a hit this tick that its client shows only next tick (fight_tick)
+    pub fighting: bool, // in a fight its hurt resistance and healing count after the bots' hits (fight_tick calls count_down)
+    pub direct_turn: bool, // a bot driven on the server: turned by the step itself, not through the mouse (Fight18.drive)
     pub pending_knock: Option<[f64; 3]>, // a hit's motion, applied before the next tick as the packet is
     pub held: i32,
     pub server_motion: [f64; 3], // the server's deltaMovement for the player, sent back when it is hurt
@@ -144,6 +146,8 @@ impl Player {
             sent_sprinting: false,
             server_sprinting: false,
             unseen: 0.0,
+            fighting: false,
+            direct_turn: false,
             pending_knock: None,
             held,
             server_motion: [0.0; 3],
@@ -200,10 +204,20 @@ impl Player {
         if yaw_degrees == 0.0 && pitch_degrees == 0.0 {
             return;
         }
+        if self.direct_turn {
+            self.pitch = (self.pitch + pitch_degrees as f32).clamp(-90.0, 90.0);
+            self.yaw += yaw_degrees as f32;
+            return;
+        }
         let x_delta = (pitch_degrees / 0.15) as f32 * 0.15f32;
         let y_delta = (yaw_degrees / 0.15) as f32 * 0.15f32;
         self.pitch = (self.pitch + x_delta).clamp(-90.0, 90.0);
         self.yaw += y_delta;
+    }
+
+    /// Where its eyes are.
+    pub fn eye(&self) -> [f64; 3] {
+        [self.pos[0], self.pos[1] + self.eye_height(), self.pos[2]]
     }
 
     /// Entity.calculateViewVector.
@@ -219,7 +233,7 @@ impl Player {
 
     /// LocalPlayer.raycastHitResult for blocks: from the eyes along the view, as far as blocks can be reached.
     pub fn pick(&self, world: &World) -> Option<Hit> {
-        let eye = [self.pos[0], self.pos[1] + self.eye_height(), self.pos[2]];
+        let eye = self.eye();
         let v = self.view();
         let to = [eye[0] + v[0] * REACH, eye[1] + v[1] * REACH, eye[2] + v[2] * REACH];
         let hit = clip(world, eye, to)?;
@@ -334,6 +348,15 @@ impl Player {
         } else if self.on_ground {
             self.server_fall = 0.0;
         }
+        if !self.fighting {
+            self.count_down();
+        }
+        damage
+    }
+
+    /// The server's counters for this player once a tick: hurt resistance down, and healing (1.8's full food, or
+    /// Peaceful). In a fight the mod does this after the bots have hit (Fight18.serverTick), so fight_tick calls it then.
+    pub fn count_down(&mut self) {
         self.age += 1;
         if self.resist > 0 {
             self.resist -= 1; // EntityPlayerMP.onUpdate
@@ -349,11 +372,10 @@ impl Player {
             } else {
                 self.heal_timer = 0;
             }
-        } else if self.age % 20 == 0 && self.health < MAX_HEALTH {
-            // ServerPlayer.tickRegeneration: on Peaceful, one health point every 20 ticks.
+        } else if self.age % 20 == 0 && self.health < MAX_HEALTH && self.health > 0.0 {
+            // ServerPlayer.tickRegeneration: on Peaceful, one health point every 20 ticks (never for the dead).
             self.health = (self.health + 1.0).min(MAX_HEALTH);
         }
-        damage
     }
 
     /// LocalPlayer.aiStep, then LivingEntity.aiStep and travel.

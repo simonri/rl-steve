@@ -18,6 +18,8 @@ pub const CMD_F: usize = 4;
 pub const HIST_F: usize = 2; // attack, hotbar choice, per remembered tick
 pub const EXTRA: usize = ENEMIES * ENEMY_F + SELF_F + CMD_F + HIST_F * HISTORY;
 pub const ACTIONS: usize = 10; // the movement model's 8, then attack (0, 1) and hotbar (0 keep, 1 blocks, 2 sword)
+/// How many choices each action has (AutoEnv.action_space): move, strafe, sneak, use, jump, sprint, yaw, pitch, attack, hotbar.
+pub const CHOICES: [i64; ACTIONS] = [3, 3, 2, 2, 2, 2, 11, 11, 2, 3];
 
 /// A player as the game shows it to someone else.
 #[derive(Clone, Copy, Debug, Default)]
@@ -73,16 +75,24 @@ pub struct Me {
 
 /// The values after the movement model's 4681: opponents nearest first, then itself, the command, the history.
 /// `me_player` is the model's own player (position, view and aim), `history` its last attack and hotbar inputs.
-pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &Cube, history: &[[f32; HIST_F]; HISTORY], out: &mut [f32]) {
+/// `cube` makes the blocks around it, only asked for when there is someone to see.
+pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dyn Fn() -> Cube, history: &[[f32; HIST_F]; HISTORY], out: &mut [f32]) {
     debug_assert_eq!(out.len(), EXTRA);
     out.fill(0.0);
     let [x, y, z] = me_player.pos;
     let mut order: Vec<usize> = (0..enemies.len()).filter(|&i| enemies[i].health > 0.0).collect();
-    order.sort_by(|&a, &b| dist2(&enemies[a].pos, &me_player.pos).partial_cmp(&dist2(&enemies[b].pos, &me_player.pos)).unwrap());
-    let world = cube.world();
-    let boxes: Vec<Option<_>> = enemies.iter().map(|e| if e.health > 0.0 { Some(body(e)) } else { None }).collect();
-    let aimed = combat::aim(me_player, &world, &boxes);
-    let my_eye = [x, y + me_player.eye_height(), z];
+    order.sort_by(|&a, &b| dist2(&enemies[a].pos, &me_player.pos).total_cmp(&dist2(&enemies[b].pos, &me_player.pos))); // NaN-safe, stable for ties
+    // What the crosshair is on, only when someone is there to aim at: building the cube's world is most of the cost,
+    // and outside fights every tick would pay it for nothing.
+    let cube = if order.is_empty() { None } else { Some(cube()) };
+    let aimed = match &cube {
+        None => Aim::Nothing,
+        Some(cube) => {
+            let boxes: Vec<Option<_>> = enemies.iter().map(|e| if e.health > 0.0 { Some(body(e)) } else { None }).collect();
+            combat::aim(me_player, &cube.world(), &boxes)
+        }
+    };
+    let my_eye = me_player.eye();
     for (slot, &i) in order.iter().take(ENEMIES).enumerate() {
         let e = &enemies[i];
         let o = &mut out[slot * ENEMY_F..(slot + 1) * ENEMY_F];
@@ -114,7 +124,7 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &Cu
         o[16] = e.sprinting as i32 as f32;
         o[17] = (aimed == Aim::Player(i)) as i32 as f32;
         o[18] = reach as i32 as f32;
-        o[19] = clear(cube, my_eye, e.eye()) as i32 as f32;
+        o[19] = cube.as_ref().is_some_and(|c| clear(c, my_eye, e.eye())) as i32 as f32;
     }
     let s = &mut out[ENEMIES * ENEMY_F..ENEMIES * ENEMY_F + SELF_F];
     s[0] = (me.slot == 0) as i32 as f32;

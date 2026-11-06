@@ -132,6 +132,8 @@ class AutoEnv(SkillEnv):
 
     def _use_task(self, picked):
         self.family, self.task, self.tested = picked
+        # The levels it was drawn at: Progress drops the round if a dial has moved since. None when replaying a recording.
+        self.drawn_at = [self.levels[self.family][d] for d in curriculum.FAMILIES[self.family]] if self.levels else None
         t = self.task
         self.shape_cells = {}  # blocks of other shapes than a full block, put in after the reset built the course
         self.map_kind = "treenan"
@@ -720,7 +722,7 @@ class AutoEnv(SkillEnv):
         if "pos" in reply:  # the simulator answers with the state; the game with "ok", and shows the gear next tick
             self.obs = reply
         if d:
-            fall_line = Y + 1 - self.fall_margin
+            fall_line = self._fall_line()
             for bot, pos, yaw, damage, armor, kb in d["opponents"]:
                 reply = self.c.call(op="opponent", bot=bot, pos=pos, yaw=yaw, damage=damage, armor=armor, kb=kb, rules18=RULES18, centre=d["centre"], fall_line=fall_line)
                 if "pos" in reply:
@@ -773,14 +775,14 @@ class AutoEnv(SkillEnv):
             return
         import mcsim
         order = ("forward", "back", "left", "right", "jump", "sneak", "sprint")
-        fall_line = min(Y + 1, Y + 1 + self.dy) - self.fall_margin
+        fall_line = self._fall_line()
         try:  # the game reports feet as decimals; whatever else differs, a push is never worth stopping the round for
             v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(o["held_count"]),
                                [bool(before[k]) for k in order], [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5],
                                fall_line, plan[self.next_push], sprinting=bool(o.get("sprinting", False)))
         except (TypeError, ValueError) as e:
             print(f"no pushes: {e}", flush=True)
-            AutoEnv.can_push = False
+            self._no_pushes()
             return
         if v is None:
             return
@@ -788,7 +790,7 @@ class AutoEnv(SkillEnv):
             self.c.call(op="push", vel=list(v))
         except RuntimeError as e:  # an older mod: no pushes in this game
             print(f"no pushes: {e}", flush=True)
-            AutoEnv.can_push = False
+            self._no_pushes()
             return
         self.next_push += 1
         self.pushes_given += 1
@@ -834,17 +836,24 @@ class AutoEnv(SkillEnv):
                                      o["solid"], feet, [list(h) for h in getattr(self, "history2", [])])
         return np.clip(np.asarray(tail, np.float32), -5.0, 5.0)
 
+    def _send(self, keys, clicked, turn_yaw, turn_pitch, attack, slot):
+        """One tick of inputs to the game; returns what it shows after it."""
+        extra = dict(attack=True) if attack else {}
+        if slot:
+            extra["hotbar"] = slot - 1
+        if self.family == "duel" and not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
+            extra["opponents"] = self._bot_actions()
+        self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
+        self.t += 1
+        return o
+
     def _fight_tick(self, keys, clicked, turn_yaw, turn_pitch, attack, slot):
         """env.rs fight_step: what was dealt and taken, and the result."""
         before = [p["health"] for p in self.obs.get("players", [])]
         mine = self.obs["health"]
-        extra = dict(attack=True) if attack else {}
-        if not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
-            extra["opponents"] = self._bot_actions()
-        if slot:
-            extra["hotbar"] = slot - 1
-        self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
-        self.t += 1
+        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack, slot)
+        for c in o.get("clicks") or []:  # blocks built in a fight, maybe outside the arena
+            self._mark_dirty(c)
         reward = self._points("time", -TICK_COST)
         players = o.get("players", [])
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
@@ -853,7 +862,7 @@ class AutoEnv(SkillEnv):
         reward += self._points("damage dealt", HEALTH_POINTS * dealt)
         reward += self._points("damage taken", -HEALTH_POINTS * taken)
         self.damage += taken
-        line = Y + 1 - self.fall_margin
+        line = self._fall_line()
         for i, p in enumerate(players):
             if not self.out[i] and (p["health"] <= 0 or p["pos"][1] < line):
                 self.out[i] = True
@@ -866,9 +875,26 @@ class AutoEnv(SkillEnv):
             self.deaths += 1
         term = won or lost or self.t >= self.limit
         info = {"success": won, "clean": won, "fell": self.deaths > 0, "deaths": self.deaths, "respawned": False, "stalled": False, "damage": self.damage,
-                "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "landed": 0, "pushes": 0, "shift_share": 0.0,
+                "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,
                 "parts": dict(self.parts)}
         return float(reward) * self.reward_scale, term, False, info
+
+    def _fall_line(self):
+        """Below this the round counts as a fall (env.rs fall_line): the lower of start and goal, less the margin."""
+        return min(Y + 1, Y + 1 + self.dy) - self.fall_margin
+
+    def _mark_dirty(self, c):
+        """A block built at `c`, perhaps outside the arena: the next reset clears that far too."""
+        for i in range(3):
+            self.dirty[i] = min(self.dirty[i], c[i])
+            self.dirty[i + 3] = max(self.dirty[i + 3], c[i])
+
+    def _no_pushes(self):
+        """Pushes cannot be given in this game: none for the rest of this env's life, and a round drawn to test them
+        does not count for the push dial."""
+        self.can_push = False
+        if self.tested == "push":
+            self.tested = None
 
     def _bot_actions(self):
         """duel.rs Bot.action for every opponent, from what the game shows now: the same bots as in the simulator."""
@@ -904,11 +930,7 @@ class AutoEnv(SkillEnv):
         self._maybe_push(before, keys, clicked, turn_yaw, turn_pitch)
         if self.family == "duel":
             return self._fight_tick(keys, clicked, turn_yaw, turn_pitch, attack, slot)
-        extra = dict(attack=True) if attack else {}
-        if slot:
-            extra["hotbar"] = slot - 1
-        self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
-        self.t += 1
+        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack, slot)
         self._track_jump(o, keys["jump"])
         self._visit(o)
         reward = self._points("time", -TICK_COST)
@@ -950,16 +972,15 @@ class AutoEnv(SkillEnv):
         if held > o["held_count"] and o.get("clicks"):
             c = o["clicks"][-1]
             reward += self._closer(c[0], c[1], c[2])
-            for i in range(3):  # a block built outside the arena must also be cleared next time
-                self.dirty[i] = min(self.dirty[i], c[i])
-                self.dirty[i + 3] = max(self.dirty[i + 3], c[i])
+            self._mark_dirty(c)
         if self.blocks_given > 0 and o["on_ground"]:
             # The block it stands on counts the same as one it placed: jumping the last gap is worth as much as
             # building it, and a block put on ground it already reached is worth nothing.
             x, y, z = o["pos"]
             reward += self._closer(math.floor(x), math.floor(y) - 1, math.floor(z))
         success = self.reached(o)
-        fell = (self.fell(o) or o["health"] <= DEATH_HEALTH) and not success  # a fall that (nearly) kills is a death too
+        # A fall that (nearly) kills is a death too; one that kills outright the game has already respawned from.
+        fell = (self.fell(o) or o["health"] <= DEATH_HEALTH or bool(o.get("died"))) and not success
         if success:
             for _ in range(DAMAGE_SETTLE_TICKS):  # damage from this landing arrives a moment later
                 o = self.c.step()
@@ -999,7 +1020,7 @@ class AutoEnv(SkillEnv):
             reward += self._points("stayed on the start", -STAYED_HOME_COST)
         term = success or stalled or out_of_lives or timed_out
         info = {"success": success, "clean": clean, "fell": self.deaths > 0, "deaths": self.deaths, "respawned": respawned, "stalled": stalled,
-                "damage": self.damage, "blocks_used": self.used, "blocks_needed": self.par, "family": self.family, "tested": self.tested,
+                "damage": self.damage, "blocks_used": self.used, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at,
                 "landed": self.landed, "pushes": self.pushes_given, "shift_share": self.sneak_ticks / max(self.t, 1), "parts": dict(self.parts)}
         if success:
             info["blocks_per_s"] = math.hypot(self.goal_x, self.goal_z) / max(self.t / 20, 0.05)

@@ -31,7 +31,24 @@ pub const N_OBS: usize = MOVE_OBS + EXTRA; // and what it sees with opponents (d
 
 pub const TURN_STEPS: [f64; 11] = [-60.0, -15.0, -5.0, -2.0, -0.5, 0.0, 0.5, 2.0, 5.0, 15.0, 60.0];
 const JUMP_WAIT: i32 = 10;
-const MIN_KEY_TICKS: i32 = 2;
+pub const MIN_KEY_TICKS: i32 = 2;
+
+/// SkillEnv._press: each key goes where it is wanted, but changes at most every MIN_KEY_TICKS (a human's limit). The
+/// same for the model, the bots and the scripted clutch, in whatever key order they keep.
+pub fn limit_keys(keys: &mut [bool; 7], age: &mut [i32; 7], wanted: [bool; 7]) {
+    for i in 0..7 {
+        age[i] += 1;
+        if wanted[i] != keys[i] && age[i] >= MIN_KEY_TICKS {
+            keys[i] = wanted[i];
+            age[i] = 0;
+        }
+    }
+}
+
+/// The game's keys from the env's order (K_FORWARD ... K_SPRINT).
+fn to_game_keys(k: &[bool; 7]) -> Keys {
+    Keys { forward: k[K_FORWARD], back: k[K_BACK], left: k[K_LEFT], right: k[K_RIGHT], jump: k[K_JUMP], shift: k[K_SNEAK], sprint: k[K_SPRINT] }
+}
 const SNEAK_CLICK_TICKS: i32 = 2;
 const STALL_TICKS: i32 = 40;
 const MOVED_ON: f64 = 1.5; // blocks from where it last was to count as going somewhere
@@ -410,16 +427,8 @@ impl Env {
 
     // ---- Playing ----
 
-    /// SkillEnv._press: a key changes at most every MIN_KEY_TICKS.
     fn press(&mut self, wanted: [bool; 7]) {
-        for i in 0..7 {
-            self.key_age[i] += 1;
-            if wanted[i] == self.keys[i] || self.key_age[i] < MIN_KEY_TICKS {
-                continue;
-            }
-            self.keys[i] = wanted[i];
-            self.key_age[i] = 0;
-        }
+        limit_keys(&mut self.keys, &mut self.key_age, wanted);
     }
 
     fn release_inputs(&mut self) {
@@ -431,8 +440,7 @@ impl Env {
     }
 
     fn game_keys(&self) -> Keys {
-        let k = &self.keys;
-        Keys { forward: k[K_FORWARD], back: k[K_BACK], left: k[K_LEFT], right: k[K_RIGHT], jump: k[K_JUMP], shift: k[K_SNEAK], sprint: k[K_SPRINT] }
+        to_game_keys(&self.keys)
     }
 
     fn game_tick(&mut self, input: &Input) -> crate::player::Events {
@@ -867,8 +875,7 @@ impl Env {
             duel: self.course.duel.is_some(),
         };
         let views: Vec<View> = self.opponents.iter().map(|o| if o.out { View::default() } else { View::of(&o.player) }).collect();
-        let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
-        duel::features(p, &me, &views, k, &cube, &self.history2, &mut out[MOVE_OBS..]);
+        duel::features(p, &me, &views, k, &|| Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z)), &self.history2, &mut out[MOVE_OBS..]);
     }
 
     /// AutoEnv._can_place: a block in hand, aimed at a side in reach, the spot there empty and not where it stands.
@@ -916,18 +923,10 @@ impl Opponent {
     /// Its action through the same key limits as the model's (Env.press, the shift rule for clicks).
     fn input(&mut self, a: [i64; ACTIONS]) -> Input {
         let wanted = [a[0] == 1, a[0] == 2, a[1] == 1, a[1] == 2, a[2] != 0, a[4] != 0, a[5] != 0];
-        for i in 0..7 {
-            self.key_age[i] += 1;
-            if wanted[i] == self.keys[i] || self.key_age[i] < MIN_KEY_TICKS {
-                continue;
-            }
-            self.keys[i] = wanted[i];
-            self.key_age[i] = 0;
-        }
+        limit_keys(&mut self.keys, &mut self.key_age, wanted);
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
-        let k = &self.keys;
         Input {
-            keys: Keys { forward: k[K_FORWARD], back: k[K_BACK], left: k[K_LEFT], right: k[K_RIGHT], jump: k[K_JUMP], shift: k[K_SNEAK], sprint: k[K_SPRINT] },
+            keys: to_game_keys(&self.keys),
             click: a[3] != 0 && self.since_sneak <= SNEAK_CLICK_TICKS,
             turn_yaw: TURN_STEPS[a[6] as usize],
             turn_pitch: TURN_STEPS[a[7] as usize],
@@ -945,6 +944,7 @@ impl Opponent {
 #[allow(clippy::too_many_arguments)]
 pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Opponent], input: &Input, centre: [f64; 3], t: i32, since_hit: &mut i32, since_hurt: &mut i32,
                   queued: &mut Option<(Swing, usize)>) -> crate::player::Events {
+    player.fighting = true;
     let me = View::of(player);
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
@@ -952,7 +952,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         inputs.push(o.input(a));
     }
     if let Some((s, j)) = queued.take() {
-        if !opponents[j].out {
+        if !opponents[j].gone() {
             let at = opponents[j].player.pos;
             let (counted, broke) = combat::hit(&s, &mut opponents[j].player, at);
             if counted {
@@ -968,7 +968,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         o.player.begin(i);
     }
-    let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.out { None } else { Some(combat::body(&o.player)) }).collect();
+    let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
     let my_box = Some(combat::body(player));
     let target = if input.attack { combat::click(player, world, &boxes) } else { None };
     if let Some(j) = target {
@@ -978,7 +978,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let my_pos = player.pos;
     let mut their_hits = Vec::new();
     for (j, (o, i)) in opponents.iter_mut().zip(&inputs).enumerate() {
-        if i.attack && !o.out && combat::click(&mut o.player, world, &[my_box]).is_some() {
+        if i.attack && !o.gone() && combat::click(&mut o.player, world, &[my_box]).is_some() {
             their_hits.push((j, Swing::of(&o.player)));
             combat::recoil(&mut o.player);
         }
@@ -986,8 +986,8 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let ev = player.rest(world, input);
     // Players do not push each other: Hypixel's teams have collisionRule never, and so do the mod's (Fight18.gear).
     for (o, i) in opponents.iter_mut().zip(&inputs) {
-        if !o.out {
-            o.player.rest(world, i);
+        if !o.gone() {
+            o.player.rest(world, i); // the mod's drive() leaves a dead one where it fell
         }
     }
     let before_hits = player.health;
@@ -1002,6 +1002,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         }
     }
     player.unseen = before_hits - player.health;
+    player.count_down(); // Fight18.serverTick: hurt resistance and healing after the bots' hits
     *since_hit += 1;
     *since_hurt += 1;
     for o in opponents.iter_mut() {
@@ -1011,6 +1012,11 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
 }
 
 impl Opponent {
+    /// Out of the fight, or killed this tick by the model's hit (which lands before it would act).
+    pub fn gone(&self) -> bool {
+        self.out || self.player.health <= 0.0
+    }
+
     /// An opponent standing where a round puts it, as after the mod's reset.
     pub fn new(r: &Rival, rules18: bool) -> Opponent {
         let mut p = Player::new(r.pos, r.yaw, 0.0, 0);
@@ -1020,6 +1026,86 @@ impl Opponent {
         p.armor = r.armor;
         p.kb_enchant = r.kb;
         p.slot = 1;
+        p.direct_turn = true; // Fight18.drive adds the turn step itself
         Opponent { player: p, bot: r.bot, out: false, keys: [false; 7], key_age: [MIN_KEY_TICKS; 7], since_sneak: SNEAK_CLICK_TICKS + 1, since_hit: 99 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::FULL;
+
+    /// A floor at y 99 and the model at (0.5, 100, 0.5) facing +z; one opponent `ahead` blocks in front, facing it.
+    fn arena(bot: Bot, ahead: f64) -> (World, Player, Vec<Opponent>) {
+        let mut w = World::new([-10, 90, -10], [10, 110, 10]);
+        w.fill([-10, 99, -10], [10, 99, 10], FULL);
+        let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
+        settle(&mut p);
+        p.rules18 = true;
+        let o = Opponent::new(&Rival { bot, pos: [0.5, 100.0, 0.5 + ahead], yaw: 180.0, damage: 1.0, armor: 0, kb: 0 }, true);
+        (w, p, vec![o])
+    }
+
+    fn tick(w: &mut World, p: &mut Player, o: &mut [Opponent], t: i32, queued: &mut Option<(Swing, usize)>) {
+        let (mut since_hit, mut since_hurt) = (99, 99);
+        fight_tick(w, p, o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, queued);
+    }
+
+    /// The model's queued hit lands first: an opponent it kills neither hits back nor moves that tick (Fight18.drive
+    /// skips the dead).
+    #[test]
+    fn killed_by_the_queued_hit_does_nothing_more() {
+        let (mut w, mut p, mut o) = arena(Bot::Walker, 2.0);
+        o[0].player.health = 1.0;
+        let at = o[0].player.pos;
+        let mut queued = Some((Swing::of(&p), 0));
+        tick(&mut w, &mut p, &mut o, 0, &mut queued);
+        assert_eq!(o[0].player.health, 0.0);
+        assert!(o[0].gone());
+        assert_eq!(p.health, 20.0, "a dead bot does not hit");
+        assert_eq!(o[0].player.pos, at, "nor move");
+    }
+
+    /// A bot's hit: the model's server counts resistance down after it (19 at the end of the tick, as the mod's
+    /// tickState), and its client shows the damage a tick later.
+    #[test]
+    fn a_bot_hit_counts_and_shows_late() {
+        let (mut w, mut p, mut o) = arena(Bot::Walker, 2.0);
+        let mut queued = None;
+        tick(&mut w, &mut p, &mut o, 0, &mut queued);
+        assert_eq!(p.health, 19.0, "the walker's first click hits");
+        assert_eq!(p.resist, 19);
+        assert_eq!(p.hurt_time, 10);
+        assert_eq!(p.shown_health(), 20.0, "shown next tick");
+        tick(&mut w, &mut p, &mut o, 1, &mut queued);
+        assert_eq!(p.shown_health(), 19.0);
+        assert_eq!(p.resist, 18);
+    }
+
+    /// Bots turn by the step itself, as Fight18.drive adds it; the model turns through the mouse (multiples of 0.15).
+    #[test]
+    fn bots_turn_directly() {
+        let (_, mut p, mut o) = arena(Bot::Dummy, 3.0);
+        let yaw = o[0].player.yaw;
+        o[0].player.turn(15.0, -60.0);
+        assert_eq!(o[0].player.yaw, yaw + 15.0);
+        assert_eq!(o[0].player.pitch, -60.0);
+        let before = p.yaw;
+        p.turn(0.5, 0.0);
+        assert_eq!(p.yaw, before + ((0.5f64 / 0.15) as f32 * 0.15f32));
+    }
+
+    /// The model's server counters wait in a fight (fight_tick counts them) and run with the move outside one.
+    #[test]
+    fn counters_once_a_tick() {
+        let (mut w, mut p, _) = arena(Bot::Dummy, 3.0);
+        p.resist = 5;
+        p.tick(&mut w, &Input::default());
+        assert_eq!(p.resist, 4, "outside a fight: in the server tick");
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 3.0);
+        p.resist = 5;
+        tick(&mut w, &mut p, &mut o, 0, &mut None);
+        assert_eq!(p.resist, 4, "in a fight: once, after the hits");
     }
 }

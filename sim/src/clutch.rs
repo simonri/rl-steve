@@ -172,7 +172,7 @@ pub fn can_save(world: &World, feet: [i32; 3], s: &State, v: [f64; 3], first: &I
             }
         }
     }
-    targets.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    targets.sort_by(|a, b| a.0.total_cmp(&b.0)); // NaN-safe
     targets.truncate(MAX_CANDIDATES);
     targets.iter().any(|&(_, cell, against, face)| rescue(world, s, v, first, fall_line, cell, against, face))
 }
@@ -224,20 +224,14 @@ fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, 
         let input = if t == 0 {
             *first
         } else {
-            let eye = [p.pos[0], p.pos[1] + p.eye_height(), p.pos[2]];
+            let eye = p.eye();
             let (ax, ay, az) = (aim[0] - eye[0], aim[1] - eye[1], aim[2] - eye[2]);
             let want_yaw = (-ax).atan2(az).to_degrees();
             let want_pitch = (-ay).atan2(ax.hypot(az)).to_degrees();
             let dyaw = (want_yaw - p.yaw as f64 + 540.0).rem_euclid(360.0) - 180.0;
             let dpitch = want_pitch - p.pitch as f64;
             let want = if t == 1 { keys } else { key_list(toward(&p, cell)) };
-            for i in 0..7 {
-                age[i] += 1;
-                if want[i] != keys[i] && age[i] >= MIN_KEY_TICKS {
-                    keys[i] = want[i];
-                    age[i] = 0;
-                }
-            }
+            crate::env::limit_keys(&mut keys, &mut age, want);
             let (ty, tp) = (step(dyaw), step(dpitch));
             let placed = w.present(cell[0], cell[1], cell[2]);
             // The game turns first and then picks for the click, so aim is judged after this tick's turn.
@@ -260,7 +254,7 @@ fn rescue(world: &World, s: &State, v: [f64; 3], first: &Input, fall_line: f64, 
     false
 }
 
-const MIN_KEY_TICKS: i32 = 2; // env.rs: a key changes at most every second tick
+use crate::env::MIN_KEY_TICKS;
 
 fn key_list(k: Keys) -> [bool; 7] {
     [k.forward, k.back, k.left, k.right, k.jump, k.shift, k.sprint]

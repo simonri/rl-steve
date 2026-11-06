@@ -67,6 +67,9 @@ def transfer(policy, old_state):
         if t.shape == old.shape:
             new[name] = old.clone()
             continue
+        if name.startswith("action_net") and t.shape[0] > old.shape[0] and sum(sizes_of(old.shape[0], policy)) != old.shape[0]:
+            # Only actions added at the end keep their meaning; anything else would quietly move old choices around.
+            raise ValueError(f"{name}: the older {old.shape[0]} choices are not the first actions of {list(policy.action_space.nvec)}")
         if name.endswith("action_net.weight") and t.shape[1] == old.shape[1] and t.shape[0] > old.shape[0]:
             w = torch.zeros_like(t)
             w[: old.shape[0]] = old
@@ -87,6 +90,39 @@ def transfer(policy, old_state):
         grew.append(name)
     policy.load_state_dict(new)
     return grew
+
+
+# A new model starts with rare jumps and sprints and a mostly steady view, so random inputs do not throw it off the
+# platform before it has learned anything (indices into the action logits); the fighting inputs as NEW_ACTION_BIAS.
+MOVE_BIAS = ((10, 1.5), (11, -1.5), (12, 1.5), (13, -1.5), (14 + NO_TURN, 1.5), (14 + len(TURN_STEPS) + NO_TURN, 1.5))
+MOVE_ACTIONS = 8  # the movement model's inputs; the fighting ones come after them
+
+
+def init_action_bias(policy):
+    """The starting leanings of a new model's choices (MOVE_BIAS, NEW_ACTION_BIAS)."""
+    bias = policy.action_net.bias.data
+    for index, value in MOVE_BIAS:
+        bias[index] = value
+    nvec = [int(n) for n in policy.action_space.nvec]
+    i = sum(nvec[:MOVE_ACTIONS])
+    for n in nvec[MOVE_ACTIONS:]:
+        bias[i : i + n] = torch.tensor(NEW_ACTION_BIAS.get(n, (0.0,) * n))
+        i += n
+
+
+def load_weights(model, path):
+    """A saved model's weights into `model`. The same layout loads whole, learning state included; an older one whose
+    inputs or actions have since grown goes through transfer(), which keeps what it knew exactly. Loaded on the
+    processor: a second model on the card takes the scratch memory the fast convolutions need. Returns (what grew, the
+    saved model's step count)."""
+    old = SplitPPO.load(path, device="cpu")
+    state, steps = old.policy.state_dict(), old.num_timesteps
+    del old
+    new = model.policy.state_dict()
+    if state.keys() == new.keys() and all(state[k].shape == new[k].shape for k in state):
+        model.set_parameters(str(path), device=model.device)
+        return [], steps
+    return transfer(model.policy, state), steps
 
 
 def sizes_of(total, policy):
@@ -352,7 +388,8 @@ class Progress(BaseCallback):
 
     def _on_step(self):
         if self.first_step is None:
-            self.first_step = self.num_timesteps
+            # A resumed run counts from where it is: no save and full exam the moment it starts.
+            self.first_step = self.last_save = self.last_exam = self.num_timesteps
         moved = False
         for done, info in zip(self.locals["dones"], self.locals["infos"]):
             if not done:
@@ -366,7 +403,7 @@ class Progress(BaseCallback):
             self.damage.append(float(info["damage"]))
             self.shift.append(float(info["shift_share"]))
             self.parts.append(info["parts"])
-            if info["success"]:
+            if info["success"] and family != "duel" and "blocks_per_s" in info:  # a won fight has no speed over the course
                 self.speeds.append(info["blocks_per_s"])
             if family == "bridge" and info["clean"] and info["blocks_needed"] >= 8:
                 self.bridge_speeds.append(info["blocks_per_s"])
@@ -561,28 +598,14 @@ if __name__ == "__main__":
     saved = out / "levels.json"
     curriculum = Curriculum(json.loads(saved.read_text()) if saved.exists() else None)
     vec = SubprocVecEnv([make_env(port, curriculum.levels) for port in a.ports])
+    curriculum.load_state((json.loads((out / "latest.json").read_text()) if (out / "latest.json").exists() else {}).get("curriculum", {}))
+    model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=4096 // len(a.ports), batch_size=512, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA,
+                     learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device, target_kl=TARGET_KL, policy_kwargs=POLICY)
     if a.resume:
-        model = SplitPPO.load(a.resume, env=vec, device=a.device)
-        if model.policy_kwargs != POLICY:  # a changed layout: start the new one with every weight that still fits
-            old = model
-            model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=old.n_steps, batch_size=old.batch_size, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA,
-                             learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device, target_kl=TARGET_KL, policy_kwargs=POLICY)
-            kept = model.policy.load_state_dict(old.policy.state_dict(), strict=False)
-            model.num_timesteps = old.num_timesteps
-            print(f"new layout: carried over every weight that fits, new {kept.missing_keys}, dropped {kept.unexpected_keys}", flush=True)
-            del old
-        model.gamma, model.gae_lambda = GAMMA, GAE_LAMBDA
-        model.n_epochs = a.epochs
-        model.target_kl = TARGET_KL
-        model.rollout_buffer.gamma, model.rollout_buffer.gae_lambda = GAMMA, GAE_LAMBDA
+        grew, model.num_timesteps = load_weights(model, a.resume)
+        print(f"continuing from {a.resume}: grown {grew}", flush=True)
     else:
-        model = SplitPPO(MemoryPolicy, vec, seed=a.seed, n_steps=4096 // len(a.ports), batch_size=512, n_epochs=a.epochs, gamma=GAMMA, gae_lambda=GAE_LAMBDA, learning_rate=LEARNING_RATE, ent_coef=ENTROPY, device=a.device,
-                         target_kl=TARGET_KL, policy_kwargs=POLICY)
-        # Start with rare jumps and sprints and a mostly steady view, so random inputs do not throw the
-        # agent off the platform before it has learned anything. It can still learn to use them freely.
-        bias = model.policy.action_net.bias.data
-        for index, value in ((10, 1.5), (11, -1.5), (12, 1.5), (13, -1.5), (14 + NO_TURN, 1.5), (14 + len(TURN_STEPS) + NO_TURN, 1.5)):
-            bias[index] = value
+        init_action_bias(model.policy)
         if a.start_from_recordings:
             start_from_recordings(model, a.start_from_recordings, a.recordings)
             model.save(out / "copied_recordings")
