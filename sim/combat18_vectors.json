@@ -1,0 +1,632 @@
+[
+{
+"sword": "hand",
+"falling": false,
+"sprinting": false,
+"armor": 7,
+"health": 19.280000686645508,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": false,
+"sprinting": false,
+"armor": 11,
+"health": 19.440000534057617,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": false,
+"sprinting": false,
+"armor": 13,
+"health": 19.520000457763672,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": false,
+"sprinting": true,
+"armor": 7,
+"health": 19.280000686645508,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "hand",
+"falling": false,
+"sprinting": true,
+"armor": 11,
+"health": 19.440000534057617,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "hand",
+"falling": false,
+"sprinting": true,
+"armor": 13,
+"health": 19.520000457763672,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": false,
+"armor": 7,
+"health": 18.920000076293945,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": false,
+"armor": 11,
+"health": 19.15999984741211,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": false,
+"armor": 13,
+"health": 19.280000686645508,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": true,
+"armor": 7,
+"health": 18.920000076293945,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": true,
+"armor": 11,
+"health": 19.15999984741211,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "hand",
+"falling": true,
+"sprinting": true,
+"armor": 13,
+"health": 19.280000686645508,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": false,
+"armor": 7,
+"health": 16.399999618530273,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": false,
+"armor": 11,
+"health": 17.200000762939453,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": false,
+"armor": 13,
+"health": 17.600000381469727,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": true,
+"armor": 7,
+"health": 16.399999618530273,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": true,
+"armor": 11,
+"health": 17.200000762939453,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": false,
+"sprinting": true,
+"armor": 13,
+"health": 17.600000381469727,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": false,
+"armor": 7,
+"health": 14.600000381469727,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": false,
+"armor": 11,
+"health": 15.800000190734863,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": false,
+"armor": 13,
+"health": 16.399999618530273,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": true,
+"armor": 7,
+"health": 14.600000381469727,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": true,
+"armor": 11,
+"health": 15.800000190734863,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "wood",
+"falling": true,
+"sprinting": true,
+"armor": 13,
+"health": 16.399999618530273,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": false,
+"armor": 7,
+"health": 14.960000038146973,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": false,
+"armor": 11,
+"health": 16.079999923706055,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": false,
+"armor": 13,
+"health": 16.639999389648438,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": true,
+"armor": 7,
+"health": 14.960000038146973,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": true,
+"armor": 11,
+"health": 16.079999923706055,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": false,
+"sprinting": true,
+"armor": 13,
+"health": 16.639999389648438,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": false,
+"armor": 7,
+"health": 12.440000534057617,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": false,
+"armor": 11,
+"health": 14.119999885559082,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": false,
+"armor": 13,
+"health": 14.960000038146973,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": true,
+"armor": 7,
+"health": 12.440000534057617,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": true,
+"armor": 11,
+"health": 14.119999885559082,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "iron",
+"falling": true,
+"sprinting": true,
+"armor": 13,
+"health": 14.960000038146973,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": false,
+"armor": 7,
+"health": 14.239999771118164,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": false,
+"armor": 11,
+"health": 15.520000457763672,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": false,
+"armor": 13,
+"health": 16.15999984741211,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": true,
+"armor": 7,
+"health": 14.239999771118164,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": true,
+"armor": 11,
+"health": 15.520000457763672,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": false,
+"sprinting": true,
+"armor": 13,
+"health": 16.15999984741211,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": false,
+"armor": 7,
+"health": 11.359999656677246,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": false,
+"armor": 11,
+"health": 13.280000686645508,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": false,
+"armor": 13,
+"health": 14.239999771118164,
+"motion": [
+-0.38231161796850766,
+0.4,
+-0.11763434399031003
+],
+"broke": false
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": true,
+"armor": 7,
+"health": 11.359999656677246,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": true,
+"armor": 11,
+"health": 13.280000686645508,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"sword": "diamond",
+"falling": true,
+"sprinting": true,
+"armor": 13,
+"health": 14.239999771118164,
+"motion": [
+0.09321665203767215,
+0.5,
+0.0368741423998038
+],
+"broke": true
+},
+{
+"resist_case": true,
+"weaker": false,
+"stronger": true,
+"health": 12.5
+}
+]
