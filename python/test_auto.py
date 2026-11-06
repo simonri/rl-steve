@@ -482,6 +482,27 @@ m = CourseMaker(lv)
 m.set_exam("treenan")
 rises = {m.draw(seed=s)[0]["dy"] for s in range(12)}
 assert len(rises) > 3, rises
+# Slabs: parkour lands half a block lower on them, paths get half steps up. The rounds say so, and the simulator
+# gets them as blocks to put in after the reset.
+for fam in ("hop", "path"):
+    lv = Curriculum().levels
+    for d, v in FAMILIES[fam].items():
+        lv[fam][d] = len(v) - 1 if d in ("shapes", "slope", "count", "length") else 0
+    m = CourseMaker(lv)
+    m.set_exam(fam)
+    found = [m.draw(seed=s)[0] for s in range(15)]
+    assert any(sp["settle"] and sp["cells"] is not None and len(sp["cells"]) for sp in found), fam
+# Treenan from anywhere on the bed island, and never more blocks than one stack when it climbs.
+lv = Curriculum().levels
+lv["treenan"].update(start=1, height=4, gap=4, budget=0)
+m = CourseMaker(lv)
+m.set_exam("treenan")
+homes = set()
+for s in range(10):
+    sp, _ = m.draw(seed=s)
+    assert sp["blocks"] <= 64 and sp["par"] >= m.map_gap + 2 * max(sp["dy"], 0) - 1, (sp["blocks"], sp["par"], sp["dy"])
+    homes.add(tuple(sp["goal"]))
+assert len(homes) > 5
 # Shift costs nothing on parkour: it can stop at an edge.
 assert "shift without blocks" not in open(auto_env.__file__).read()
 print("practice ok")

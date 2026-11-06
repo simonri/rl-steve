@@ -61,17 +61,18 @@ class Treenan:
         if not home:
             raise RuntimeError("no flat grass near the bed")
         self.start = min(home, key=lambda s: math.hypot(s[0] + 0.5 - BED[0], s[2] + 0.5 - BED[1]))
+        self.homes = home  # every flat grass spot on the bed island, for starting anywhere on it
         self.spots = {}
         for name, box in (("center", CENTER), ("side", SIDE)):
             drop = self.start[1] - MAX_DROP
             climb = self.start[1] + MAX_CLIMB
             self.spots[name] = [s for s in flat_spots(self.cells, box) if drop <= s[1] <= climb]
 
-    def layout(self, target, gap, rng, base_y, rise=0):
+    def layout(self, target, gap, rng, base_y, rise=0, start=None):
         """Moves the bed island so the start spot is at (0, base_y, 0), and the other island so the gap between
         the edges facing each other is the given number of blocks. Heights are as on the map, with the other island
-        `rise` blocks higher (or lower when negative)."""
-        sx, sy, sz = self.start
+        `rise` blocks higher (or lower when negative). `start` is a spot on the bed island, by default beside the bed."""
+        sx, sy, sz = start or self.start
         move = (-sx, base_y - sy, -sz)
         edge, goal_edge, name = (EDGE_STRAIGHT, EDGE_CENTER, "center") if target == "straight" else (EDGE_DIAGONAL, EDGE_SIDE, "side")
         start_edge = (edge[0] + move[0], edge[1] + move[2])

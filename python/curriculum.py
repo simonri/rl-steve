@@ -36,6 +36,7 @@ FAMILIES = {
         mix=(False, True),  # every jump of a course can be a different one
         bend=(False, True),  # the course can turn, so the next block is not always further the same way
         longer=(1, 2, 3),  # times the number of blocks
+        shapes=(False, True),  # some blocks are slabs: half a block lower to land on, half a block harder to jump from
     ),
     "path": dict(
         length=(4, 6, 8, 11, 14, 17, 20),
@@ -47,6 +48,7 @@ FAMILIES = {
         # Harder, and only open once all of the above is at its limit.
         wide_holes=(False, True),  # holes up to 3 blocks long
         longer=(1, 2),
+        shapes=(False, True),  # slabs as on real maps: half steps up, and blocks sunk half a block
     ),
     "bridge": dict(
         gap=(5, 8, 12, 16, 20),  # from 5, since anything shorter can be jumped and teaches nothing about building
@@ -66,6 +68,7 @@ FAMILIES = {
         budget=(NORMAL, TIGHT, STRICT),
         ticks=(40, 30, 20, 15, 10, 7),
         height=(0, 2, 4, 6, 8),  # the other island moved up or down by up to this many blocks
+        start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
     ),
     # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
     "stairs": dict(
@@ -78,7 +81,7 @@ FAMILIES = {
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
-EXPERT = {"hop": ("far", "mix", "bend", "longer"), "path": ("wide_holes", "longer"), "bridge": ("longer", "faster")}  # dials that wait for the rest of the course kind
+EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster")}  # dials that wait for the rest of the course kind
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2))}

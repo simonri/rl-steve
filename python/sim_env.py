@@ -45,10 +45,9 @@ class CourseMaker(AutoEnv):
         spec = self._spec()
         self.limit = self.time_limit()
         boxes = [list(map(int, b)) for b in spec["platforms"]]
-        cells = None
-        if self.extras == "treenan":
-            placed = self.next_cells
-            cells = np.array([(x, y, z, kind(s)) for (x, y, z), s in placed.items() if s != "minecraft:air"], np.int32).reshape(-1, 4)
+        placed = dict(self.next_cells) if self.extras == "treenan" else {}
+        placed.update(self.shape_cells)  # slabs and other shapes, put in after the course is built
+        cells = np.array([(x, y, z, kind(s)) for (x, y, z), s in placed.items() if s != "minecraft:air"], np.int32).reshape(-1, 4) if placed else None
         points = [b[:3] for b in boxes] + [b[3:] for b in boxes] + ([] if cells is None or not len(cells) else [cells[:, :3].min(0).tolist(), cells[:, :3].max(0).tolist()])
         points += [[0, Y, 0], [self.goal_x, Y + self.dy, self.goal_z]]
         lo = [min(p[i] for p in points) - 8 for i in range(3)]
@@ -66,6 +65,7 @@ class CourseMaker(AutoEnv):
             hop=self.family == "hop", goal=[int(self.goal_x), int(self.goal_z)], dy=int(self.dy), goal_half=int(self.goal_half), fall_margin=float(self.fall_margin),
             landing=[list(map(int, c)) for c in self.landing_order], par=int(self.par), limit=int(self.limit), no_blocks=self.extras in NO_BLOCKS, field=field,
             home=[float(v) for v in spec["pos"]], yaw=float(spec["yaw"]), pitch=float(spec["pitch"]), blocks=int(spec["blocks"]), boxes=boxes, cells=cells, lo=lo, hi=hi,
+            settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
         ), dict(family=self.family, tested=self.tested)
 
 
@@ -157,7 +157,10 @@ class FakeClient:
     def call(self, op=None, **msg):
         if op == "paste":
             for x, y, z, i in msg["blocks"]:
-                self.pasted[(x, y, z)] = msg["palette"][i]
+                if msg.get("now"):  # into the round being played
+                    self.single.set_block(x, y, z, msg["palette"][i])
+                else:  # for the next round's world
+                    self.pasted[(x, y, z)] = msg["palette"][i]
         return {"ok": True}
 
     def _obs(self, s, placed=None):

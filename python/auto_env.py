@@ -48,6 +48,7 @@ FACES_3D = {"north": (0, 0, -1), "south": (0, 0, 1), "west": (-1, 0, 0), "east":
 FOUR = ((1, 0), (0, 1), (-1, 0), (0, -1))
 MAX_HEIGHT_CHANGE = 10  # above or below the start, on long courses
 FAR_JUMP = (4, 3)  # just inside what the jump math allows from a block
+SLAB = "minecraft:stone_slab[type=bottom,waterlogged=false]"
 MOVED_ON = 1.5  # blocks from where it last was to count as going somewhere
 DETOUR_TICKS = 200  # longest it may go around something without getting closer: 10 s
 
@@ -111,6 +112,7 @@ class AutoEnv(SkillEnv):
     def _use_task(self, picked):
         self.family, self.task, self.tested = picked
         t = self.task
+        self.shape_cells = {}  # blocks of other shapes than a full block, put in after the reset built the course
         self.kind, self.blocked, self.detour, self.field = None, set(), 0, None
         self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 2, 6, 1.5, 0
         self.ticks_per_block, self.budget = t.get("faster") or t["ticks"], t.get("budget", (0.0, 0))
@@ -134,6 +136,7 @@ class AutoEnv(SkillEnv):
             self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
             self.map_gaps = (10, t["gap"])
             self.map_rise = t.get("height", 0)
+            self.map_start = t.get("start", "bed")
 
     def _spec(self):
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()
@@ -178,13 +181,32 @@ class AutoEnv(SkillEnv):
             blocks.append((x, height, z))
             sign = -sign
         self.course = blocks
-        self.landing_order = [(bx, by + 1, bz) for bx, by, bz in blocks]
+        slabs = self._hop_slabs(blocks) if t.get("shapes") else set()
+        # On a slab the feet are half a block lower, inside the slab's own block.
+        self.landing_order = [(bx, by if (bx, by, bz) in slabs else by + 1, bz) for bx, by, bz in blocks]
         self.goal_x, self.goal_z, self.dy = x, z, height - Y
         self.par, self.blocks_given = len(blocks), 0
         self.poles = self._safe_poles(poles)
-        boxes = [[bx, by, bz, bx, by, bz] for bx, by, bz in blocks]
+        boxes = [[bx, by, bz, bx, by, bz] for bx, by, bz in blocks if (bx, by, bz) not in slabs]
         boxes += [[px, py - 1, pz, px, py + POLE_HEIGHT, pz] for px, py, pz in self.poles]
         return self._course_spec(boxes, on_platform)
+
+    def _hop_slabs(self, blocks):
+        """Some blocks become bottom slabs: landing on one is half a block lower, and jumping from it half a block
+        harder. Only where the jump off it still passes the jump math."""
+        slabs = set()
+        for i in range(1, len(blocks)):
+            b = blocks[i]
+            if self.np_random.random() >= 0.35:
+                continue
+            if i + 1 < len(blocks):
+                n = blocks[i + 1]
+                dx, dz = abs(n[0] - b[0]), abs(n[2] - b[2])
+                if not jump_possible(max(dx, dz), min(dx, dz), n[1] - b[1] + 0.5, run_up_ticks=2):
+                    continue
+            slabs.add(b)
+            self.shape_cells[b] = SLAB
+        return slabs
 
     @staticmethod
     def _hop_is_free(x, z, heading, ahead, sideways, blocks, start_size):
@@ -201,8 +223,9 @@ class AutoEnv(SkillEnv):
         lowest = min(Y + 1, min(b[1] for b in blocks) + 1)
         self.fall_margin = 1.5 + min(Y + 1, Y + 1 + self.dy) - lowest
         boxes = [[-1, Y, -1, 1, Y, 1] if on_platform else [0, Y, 0, 0, Y, 0], *boxes]
-        box = [min(b[0] for b in boxes) - 4, min(b[1] for b in boxes) - 3, min(b[2] for b in boxes) - 4,
-               max(b[3] for b in boxes) + 4, max(b[4] for b in boxes) + POLE_HEIGHT + 3, max(b[5] for b in boxes) + 4]
+        extent = boxes + [[x, y, z, x, y, z] for x, y, z in self.shape_cells]  # slabs are part of the arena too
+        box = [min(b[0] for b in extent) - 4, min(b[1] for b in extent) - 3, min(b[2] for b in extent) - 4,
+               max(b[3] for b in extent) + 4, max(b[4] for b in extent) + POLE_HEIGHT + 3, max(b[5] for b in extent) + 4]
         clear = [min(a, b) for a, b in zip(self.dirty[:3], box[:3])] + [max(a, b) for a, b in zip(self.dirty[3:], box[3:])]
         self.dirty = box
         spread = 0.3 if on_platform else 0.1
@@ -294,11 +317,29 @@ class AutoEnv(SkillEnv):
         self.goal_x, self.goal_z = world(last_a + 3, last_s)
         self.dy = last_h - Y
         edge_x, edge_z = world(last_a + 1, last_s)
-        self.landing_order = [(x, y + 1, z) for x, y, z in self.course] + [(edge_x, last_h + 1, edge_z)]
+        sunk = self._path_shapes() if self.task.get("shapes") else set()
+        self.landing_order = [(x, y if (x, y, z) in sunk else y + 1, z) for x, y, z in self.course] + [(edge_x, last_h + 1, edge_z)]
         self.par, self.blocks_given = len(cells), 0
-        boxes = [[x, y, z, x, y, z] for x, y, z in self.course]
+        boxes = [[x, y, z, x, y, z] for x, y, z in self.course if (x, y, z) not in sunk]
         boxes.append([self.goal_x - 2, last_h, self.goal_z - 2, self.goal_x + 2, last_h, self.goal_z + 2])
         return self._course_spec(boxes, True)
+
+    def _path_shapes(self):
+        """Slabs as on real maps: a half step on the block before a step up, so it can be walked without a jump, and
+        some blocks sunk to a slab, half a block lower. Never next to a hole, where the jump has to stay as it is.
+        Returns the sunk blocks."""
+        r, course, sunk = self.np_random, self.course, set()
+        near = lambda a, b: max(abs(a[0] - b[0]), abs(a[2] - b[2])) == 1
+        for i in range(1, len(course) - 1):
+            p, c, n = course[i - 1], course[i], course[i + 1]
+            if not (near(p, c) and near(c, n)):
+                continue
+            if n[1] == c[1] + 1 and r.random() < 0.6:
+                self.shape_cells[(c[0], c[1] + 1, c[2])] = SLAB
+            elif p[1] == c[1] == n[1] and (p not in sunk) and r.random() < 0.25:
+                sunk.add(c)
+                self.shape_cells[c] = SLAB
+        return sunk
 
     def _safe_poles(self, poles):
         """Poles never stand in the way of a real jump, or on a block of the course."""
@@ -506,6 +547,15 @@ class AutoEnv(SkillEnv):
         return seen
 
     # ---- Playing ----
+
+    def _after_reset(self):
+        """The reset builds courses from plain blocks. Slabs go in afterwards, and one tick lets the game show them."""
+        if not self.shape_cells:
+            return
+        palette = sorted(set(self.shape_cells.values()))
+        rows = [[x, y, z, palette.index(s)] for (x, y, z), s in self.shape_cells.items()]
+        self.c.call(op="paste", palette=palette, blocks=rows, now=True)
+        self.obs = self.c.step()
 
     def _begin_episode(self):
         self.visited = set()

@@ -222,6 +222,7 @@ impl Batch {
             home_pitch: get(spec, "pitch")?,
             blocks: get(spec, "blocks")?,
             world,
+            settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
         };
         self.envs[i] = Some(Env::new(course, self.tick_count));
         Ok(())

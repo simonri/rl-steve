@@ -247,7 +247,14 @@ class SkillEnv(gym.Env):
             gap = int(r.integers(self.map_gaps[0], self.map_gaps[1] + 1))
             most = getattr(self, "map_rise", 0)
             rise = int(r.integers(-most, most + 1)) if most else 0  # the other island moved up or down
-            placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise)
+            start = data.homes[int(r.integers(len(data.homes)))] if getattr(self, "map_start", "bed") == "anywhere" else None
+            placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
+            # Climbing costs blocks beyond the width of the gap. One stack of 64 is all it holds, so a round that
+            # would need more gets a shorter gap instead of too few blocks.
+            fits = int((64 - self.budget[1]) / max(self.budget[0], 1e-9)) - 2 * max(gy - Y, 0)
+            if self.budget[0] and gap > max(fits, MIN_GAP):
+                gap = max(fits, MIN_GAP)
+                placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start)
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
             low, high = min(Y, gy) + 2, max(Y, gy) + 3
             self.blocked = {(x, z) for (x, y, z) in placed if low <= y <= high}
@@ -259,7 +266,8 @@ class SkillEnv(gym.Env):
         else:
             raise RuntimeError("no reachable grass spot found")
         self.map_target, self.map_gap = target, gap
-        self.par = gap + max(self.dy, 0)
+        # Up costs about two blocks a step: a pillar to stand on and the way on from it.
+        self.par = gap + 2 * max(self.dy, 0)
         self.walk_par = int(self._walk(0.5, 0.5))
         self.blocks_given = min(64, math.ceil(self.par * self.budget[0]) + self.budget[1])
         self.next_cells = placed
@@ -756,9 +764,13 @@ class SkillEnv(gym.Env):
         self._prepare_arena()
         self.home = dict(pos=spec["pos"], yaw=spec["yaw"], pitch=spec["pitch"])
         self.obs = self.c.reset(**spec)
+        self._after_reset()
         self.limit = self.time_limit()
         self._begin_episode()
         return self._seen(self._vec(self.obs)), {}
+
+    def _after_reset(self):
+        """Room for blocks a reset cannot build itself."""
 
     def _wait_dead(self):
         if self.realtime:

@@ -110,6 +110,8 @@ pub struct Course {
     pub home_pitch: f32,
     pub blocks: i32,
     pub world: World,
+    /// Blocks were put in after the reset, and the game takes one tick with no keys to show them.
+    pub settle: bool,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -190,9 +192,12 @@ fn rotate_i(mut x: i32, mut z: i32, k: i32) -> (i32, i32) {
 
 impl Env {
     pub fn new(course: Course, tick_count: i64) -> Env {
-        let world = course.world.clone();
+        let mut world = course.world.clone();
         let mut player = Player::new(course.home, course.home_yaw, course.home_pitch, course.blocks);
         settle(&mut player);
+        if course.settle {
+            player.tick(&mut world, &Input::default());
+        }
         let mut suffix = vec![0.0; course.landing.len() + 1];
         for i in (0..course.landing.len().saturating_sub(1)).rev() {
             let (a, b) = (course.landing[i], course.landing[i + 1]);
