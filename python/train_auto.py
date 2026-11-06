@@ -29,6 +29,7 @@ from curriculum import FAMILIES, Curriculum, finished, is_open
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAM_EVERY = 200_000
+SAVE_EVERY = 20_000  # decisions between saves of latest.zip, which the live viewer picks up
 EXAM_ROUNDS = 32  # per open course kind, best action only and every dial at its limit
 WINDOW = 100
 # One decision per tick, so these keep looking the same distance ahead in game time as before.
@@ -119,7 +120,9 @@ class SplitPPO(RecurrentPPO):
     The memory it carries between ticks stays on the processor too, since that is where it plays."""
 
     def _excluded_save_params(self):
-        return super()._excluded_save_params() + ["actor"]
+        # What the games looked like when it stopped is no use later, and with hundreds of simulated rounds it is most
+        # of the file. Learning starts the games afresh when these are missing.
+        return super()._excluded_save_params() + ["actor", "_last_obs", "_last_original_obs", "_last_episode_starts", "_last_lstm_states", "ep_info_buffer", "ep_success_buffer"]
 
     def _setup_model(self):
         super()._setup_model()
@@ -129,7 +132,8 @@ class SplitPPO(RecurrentPPO):
 
     @contextmanager
     def playing(self):
-        if self.device.type == "cpu":
+        # Hundreds of simulated rounds at once are a big batch too, so then playing stays on the card as well.
+        if self.device.type == "cpu" or getattr(self, "play_on_card", False):
             yield
             return
         learner, device = self.policy, self.device
@@ -295,7 +299,7 @@ class Progress(BaseCallback):
             speed = (self.num_timesteps - self.first_step) / max(s["seconds"], 1)
             print(self.num_timesteps, f"level {s['stage']}/{s['stages']}", *(f"{x} {self.cur.total(x)} {self.mean(self.clean[x]):.2f}" for x in FAMILIES if is_open(self.cur.levels, x)),
                   f"died {s['fell']:.2f} stuck {s['stalled']:.2f} {speed:.0f} decisions/s", flush=True)
-        if self.num_timesteps - self.last_save >= 20_000:
+        if self.num_timesteps - self.last_save >= SAVE_EVERY:
             self.last_save = self.num_timesteps
             self.save_latest()
         return True  # also after the last level: the goal is every round, not just the dials at their limit
