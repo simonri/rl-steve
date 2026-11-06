@@ -47,7 +47,7 @@ def main():
         levels = curriculum.Curriculum().levels
         family = families[n % len(families)]
         for d, values in curriculum.FAMILIES[family].items():
-            if d not in curriculum.EXPERT.get(family, ()) or d == "shapes":
+            if d not in curriculum.EXPERT.get(family, ()) or d in ("shapes", "steep", "way"):
                 levels[family][d] = int(rng.integers(len(values)))
         if ref is None:
             ref = reference_env(levels)

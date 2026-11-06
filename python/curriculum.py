@@ -78,10 +78,13 @@ FAMILIES = {
         directions=("axis", "eight"),
         budget=(ROOMY, NORMAL, TIGHT),
         ticks=(60, 40, 30, 20),
+        # Harder, and only open once all of the above is at its limit.
+        steep=(1.0, 1.5, 2.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
+        way=("up", "up or down"),  # down too: building a way down without falling off it
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
-EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster")}  # dials that wait for the rest of the course kind
+EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster"), "stairs": ("steep", "way")}  # dials that wait for the rest of the course kind
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2))}

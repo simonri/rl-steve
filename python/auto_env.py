@@ -130,7 +130,9 @@ class AutoEnv(SkillEnv):
         elif self.family == "stairs":
             # The goal as many blocks up as the gap is long: 45 degrees, one step up per block built ahead.
             self.extras = None
-            self.gap, self.heights, self.directions, self.start = t["rise"], (t["rise"],), t["directions"], t["start"]
+            down = t.get("way") == "up or down" and self.np_random.random() < 0.5
+            self.gap = max(2, round(t["rise"] / t.get("steep", 1.0)))
+            self.heights, self.directions, self.start = (-t["rise"] if down else t["rise"],), t["directions"], t["start"]
         else:
             self.extras = TREENAN
             self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
