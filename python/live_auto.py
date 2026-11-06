@@ -37,7 +37,16 @@ def connect():
     return e
 
 
-env = connect()
+def first_connect():
+    while True:  # the game may be busy or starting: wait for it instead of stopping
+        try:
+            return connect()
+        except Exception as e:
+            print(f"no game yet: {e!r}", flush=True)
+            time.sleep(10.0)
+
+
+env = first_connect()
 model, mtime = None, 0.0
 score = defaultdict(lambda: [0, 0])  # course kinds added to a run later count from zero instead of stopping the viewer
 

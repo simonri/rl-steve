@@ -793,7 +793,7 @@ class AutoEnv(SkillEnv):
             x, y, z = o["pos"]
             reward += self._closer(math.floor(x), math.floor(y) - 1, math.floor(z))
         success = self.reached(o)
-        fell = self.fell(o) and not success
+        fell = (self.fell(o) or o["health"] <= 0) and not success  # fall damage that kills is a death too, as in the game
         if success:
             for _ in range(DAMAGE_SETTLE_TICKS):  # damage from this landing arrives a moment later
                 o = self.c.step()

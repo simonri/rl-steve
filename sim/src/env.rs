@@ -463,7 +463,7 @@ impl Env {
             reward += self.closer([p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32]);
         }
         let success = self.reached();
-        let fell = self.fell() && !success;
+        let fell = (self.fell() || self.player.health <= 0.0) && !success; // fall damage that kills is a death too
         if success {
             // The landing's damage arrives a moment later; the keys are let go meanwhile.
             for _ in 0..DAMAGE_SETTLE_TICKS {
