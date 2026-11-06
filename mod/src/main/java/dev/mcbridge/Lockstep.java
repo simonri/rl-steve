@@ -23,6 +23,7 @@ final class Lockstep {
         // disable() can leave a permit behind, which would otherwise run one tick nobody asked for.
         go.drainPermits();
         done.drainPermits();
+        serverTasks.clear(); // what a session that ended before its next step asked for does not belong to this one
         enabled = true;
     }
 
@@ -48,7 +49,13 @@ final class Lockstep {
         if (!enabled) return;
         holdingTick = true;
         Runnable task;
-        while ((task = serverTasks.poll()) != null) task.run();
+        while ((task = serverTasks.poll()) != null) {
+            try {
+                task.run();
+            } catch (RuntimeException e) { // a bad command must not take the server down with it
+                McBridge.LOG.error("server task failed", e);
+            }
+        }
     }
 
     void serverEndTick() {

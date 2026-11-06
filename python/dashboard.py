@@ -4,8 +4,8 @@ import ast
 import csv
 import gzip
 import json
-import threading
 import re
+import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -113,7 +113,11 @@ def read_levels(name):
             continue
     try:
         with open(folder / "levels.csv", newline="") as f:
-            rows += [{k: float(v) if v else None for k, v in row.items() if k} for row in csv.DictReader(f)]
+            for row in csv.DictReader(f):
+                try:  # a line cut off mid-write drops only that line
+                    rows.append({k: float(v) if v else None for k, v in row.items() if k})
+                except (TypeError, ValueError):
+                    continue
     except (OSError, ValueError):
         pass
     columns = {k for r in rows for k in r}
@@ -160,6 +164,8 @@ def answer(run):
 
 def snapshot(name):
     run = name or newest_run()
+    if run is None:  # no run has written anything yet
+        return dict(run=None, status={}, age=None, progress=[], tests=[], stages=[], done=None, jumps=[], levels=[])
     path = MODELS / run / "status.json"
     try:
         status = json.loads(path.read_text())
@@ -189,7 +195,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if url.path == "/api/data":
             asked = parse_qs(url.query).get("run", [None])[0]
-            run = asked if asked and (MODELS / asked / "status.json").exists() else self.run_name
+            ok = asked and re.fullmatch(r"[\w-]+", asked) and (MODELS / asked / "status.json").exists()  # a run's folder name, nothing else
+            run = asked if ok else self.run_name
             self._send(answer(run), "application/json", zipped=True)
         elif url.path == "/":
             self._send((HERE / "dashboard.html").read_bytes(), "text/html; charset=utf-8")

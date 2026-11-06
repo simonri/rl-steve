@@ -48,7 +48,6 @@ public final class Fight18 {
 
     static final double[] TURN_STEPS = {-60.0, -15.0, -5.0, -2.0, -0.5, 0.0, 0.5, 2.0, 5.0, 15.0, 60.0};
     static final int MAX_RESIST = 20;
-    static final int MISS_LOCK = 10;
     static final double ENTITY_REACH = 3.0;
     static final double BLOCK_REACH = 4.5;
     static final int SPRINT_WINDOW = 7; // options.sprintWindow: ticks to tap forward again for a sprint
@@ -63,7 +62,6 @@ public final class Fight18 {
         public int kb;
         public int sinceHit = 99;
         public int sinceHurt = 99;
-        public int missLock;
         public boolean serverSprint; // an opponent's sprint as the server knows it (a real player's is its isSprinting)
     }
 
@@ -130,7 +128,7 @@ public final class Fight18 {
     /** Once per server tick, before anything moves: opponents act, then hurt resistance and healing count down. */
     public static void serverTick(MinecraftServer server) {
         if (!enabled) return;
-        drive(server);
+        if (McBridge.stepping()) drive(server); // nobody stepping the game (released, or Python gone): the bots stand still
         for (ServerPlayer p : server.getPlayerList().getPlayers()) tickState(p);
         for (Opponent o : OPPONENTS) tickState(o.player);
     }
@@ -141,7 +139,6 @@ public final class Fight18 {
         if (s.resist > 0) s.resist--;
         s.sinceHit++;
         s.sinceHurt++;
-        if (s.missLock > 0) s.missLock--;
         if (p.getHealth() < p.getMaxHealth() && p.getHealth() > 0) {
             if (++s.heal >= 80) {
                 p.heal(1.0f);
@@ -155,6 +152,13 @@ public final class Fight18 {
     /** Sets a player's gear for a round: sword by attack value, Bedwars armor by points, Knockback, and the rules. */
     public static void gear(ServerPlayer p, float damage, int armor, int kb, boolean rules18) {
         enabled = rules18;
+        if (!rules18) {
+            // Back to the game's own rules: its regeneration, and the attack cooldown the 1.8 rules turned off.
+            MinecraftServer server = p.level().getServer();
+            server.getGameRules().set(GameRules.NATURAL_HEALTH_REGENERATION, true, server);
+            var speed = p.getAttribute(Attributes.ATTACK_SPEED);
+            if (speed != null) speed.setBaseValue(4.0);
+        }
         if (rules18) {
             MinecraftServer server = p.level().getServer();
             server.getGameRules().set(GameRules.NATURAL_HEALTH_REGENERATION, false, server); // ours instead (tickState)
@@ -176,7 +180,7 @@ public final class Fight18 {
         s.sinceHurt = 99;
         s.serverSprint = false;
         var attackSpeed = p.getAttribute(Attributes.ATTACK_SPEED);
-        if (attackSpeed != null) attackSpeed.setBaseValue(1024.0); // no cooldown: every click is a full hit
+        if (attackSpeed != null && rules18) attackSpeed.setBaseValue(1024.0); // no cooldown: every click is a full hit
         p.getInventory().setItem(1, sword(damage));
         dress(p, armor);
     }
@@ -302,6 +306,14 @@ public final class Fight18 {
         OPPONENTS.add(new Opponent(p, cmd.get("bot").getAsInt()));
     }
 
+    /** Tells a watcher who just joined about the bots, which are not in the player list it was sent. */
+    public static void introduce(ServerPlayer watcher) {
+        if (OPPONENTS.isEmpty()) return;
+        List<ServerPlayer> bots = new ArrayList<>();
+        for (Opponent o : OPPONENTS) bots.add(o.player);
+        watcher.connection.send(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(bots));
+    }
+
     /** Takes every opponent out of the world, before a new round. */
     public static void clear(MinecraftServer server) {
         if (OPPONENTS.isEmpty()) return;
@@ -349,7 +361,7 @@ public final class Fight18 {
             if (a[9] == 1) p.getInventory().setSelectedSlot(0);
             if (a[9] == 2) p.getInventory().setSelectedSlot(1);
             State s = of(p);
-            if (a[8] != 0 && s.missLock <= 0 && target != null) {
+            if (a[8] != 0 && target != null) {
                 Vec3 eye = p.getEyePosition();
                 Vec3 view = p.getViewVector(1.0f);
                 BlockHitResult block = p.level().clip(new ClipContext(eye, eye.add(view.scale(BLOCK_REACH)), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));

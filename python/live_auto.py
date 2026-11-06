@@ -141,7 +141,7 @@ def turn_once():
     s = status()
     levels = Curriculum(s.get("levels")).levels
     env.set_levels(levels)
-    kinds = [f for f in FAMILIES if is_open(levels, f)]
+    kinds = [f for f in FAMILIES if is_open(levels, f)] or ["hop"]  # parkour is always open; never an empty list
     env.set_exam(kinds[turn % len(kinds)], all_dials=False)  # the mix of courses it trains on, not only the hardest
     turn += 1
     info = episode(s)

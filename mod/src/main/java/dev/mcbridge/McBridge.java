@@ -98,6 +98,9 @@ public final class McBridge implements ClientModInitializer {
     private MinecraftServer server;
     private boolean worldRequested;
     private boolean sprinting;
+    private static volatile boolean stepping; // Python is driving the game tick by tick (Fight18 bots act only then)
+
+    static boolean stepping() { return stepping; }
     private boolean watchPortOpen;
 
     // Step in progress.
@@ -262,6 +265,7 @@ public final class McBridge implements ClientModInitializer {
             if (testMenu || humanMode) player.setGameMode(GameType.SPECTATOR); // the bot only hosts here
             return;
         }
+        Fight18.introduce(player); // a fight going on: its bots are not in the player list this watcher was sent
         if (humanMode) {
             player.setGameMode(GameType.ADVENTURE); // nothing can be built or broken: no bridging yet
             player.getInventory().clearContent();
@@ -291,6 +295,7 @@ public final class McBridge implements ClientModInitializer {
         ((ServerTickRateManagerAccessor) tm).mcbridge$setScheduledCurrentSprintTicks(Long.MAX_VALUE);
         lockstep.enable();
         sprinting = true;
+        stepping = true;
     }
 
     /** Nobody is driving: give the game back its normal clock, so joined watchers stay connected. */
@@ -300,6 +305,7 @@ public final class McBridge implements ClientModInitializer {
         ticksLeft = 0;
         resetting = false;
         lockstep.disable();
+        stepping = false;
         server.execute(() -> server.tickRateManager().stopSprinting());
         sprinting = false;
     }
@@ -574,7 +580,8 @@ public final class McBridge implements ClientModInitializer {
             board.resetSinglePlayerScore(ScoreHolder.forNameOnly("line" + i), objective);
         }
         for (int i = 0; i < lines.size(); i++) {
-            if (i < sidebarLines.size() && lines.get(i).equals(sidebarLines.get(i))) continue;
+            // Unchanged only if the text and its place are: a score is its row, and it moves when the row count does.
+            if (lines.size() == sidebarLines.size() && lines.get(i).equals(sidebarLines.get(i))) continue;
             ScoreAccess score = board.getOrCreatePlayerScore(ScoreHolder.forNameOnly("line" + i), objective);
             score.set(lines.size() - i);
             score.display(lines.get(i));
@@ -620,7 +627,20 @@ public final class McBridge implements ClientModInitializer {
                     if (!lockstep.enabled()) return; // nobody driving: let the game run
                     continue;
                 }
-                if (handle(mc, cmd)) return;
+                boolean waits;
+                try {
+                    waits = handle(mc, cmd);
+                } catch (RuntimeException e) { // a malformed command is answered, not a crashed game
+                    LOG.error("command failed: {}", cmd, e);
+                    ticksLeft = 0;
+                    pendingReply = null;
+                    JsonObject o = new JsonObject();
+                    o.addProperty("error", cmd.has("op") ? cmd.get("op").getAsString() + ": " + e : String.valueOf(e));
+                    tag(o, cmd);
+                    link.reply(o);
+                    continue;
+                }
+                if (waits) return;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

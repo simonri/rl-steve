@@ -19,10 +19,10 @@ det riktiga spelet utan ändringar.
     $U live_auto.py --name auto6 --port 25601 > ../runs/live.log 2>&1 &   # visning på riktig server, localhost:25701
 
 Utan `--resume` fortsätter den körningen från sin egen `latest.zip`. Kontroller:
-- `sim_traces.py` spelar in vad det riktiga spelet gör tick för tick, `sim_check.py` spelar upp det i simulatorn: 99 % av
+- `tools/sim_traces.py` spelar in vad det riktiga spelet gör tick för tick, `tools/sim_check.py` spelar upp det i simulatorn: 99 % av
   ticken blir exakt lika, resten är mest spelets egna kapplöpningar mellan klient och server.
-- `test_sim_env.py` kör den oförändrade `AutoEnv` på simulatorn bredvid Rust-rundorna: allt den ser och alla poäng ska vara lika.
-- `sim_bench.py` mäter simulatorn ensam (30 000–45 000 beslut per sekund med slumpdrag).
+- `tests/test_sim_env.py` kör den oförändrade `AutoEnv` på simulatorn bredvid Rust-rundorna: allt den ser och alla poäng ska vara lika.
+- `tools/sim_bench.py` mäter simulatorn ensam (39 000–46 000 beslut per sekund med slumpdrag, med striden).
 
 ## Krav
 Java 25 (`mise install java@temurin-25`) och `uv`. Bygg en gång, och efter varje ändring i modet:
@@ -52,7 +52,7 @@ Stoppa en spelinstans med `./stop_client.sh bot0`.
 `curriculum.py` har alla banor som reglage per banatyp (parkour, väg, bro, Treenan). Ett reglage höjs vid 70 % rundor
 utan död och sänks vid 25 %. De allra svåraste reglagen öppnas först när resten av banatypen är på max, och de snabbaste
 broarna jagar tid tills spelet självt sätter gränsen. `auto_env.py` bygger banorna och ser allt från spelarens blick.
-`skill_env.py` med `train_skill.py` och `live.py` är den gamla stegvisa träningen (körningen `skill8`).
+`skill_env.py` är basen `AutoEnv` bygger på (den gamla stegvisa träningen `skill8` är borttagen, finns i historiken).
 
 ## Titta
 - **Lunar eller annan 26.3-klient:** `localhost:25702` visar träningen. `localhost:25701` visar senaste
@@ -66,7 +66,7 @@ En egen spelinstans där den som ansluter väljer uppgift: föremål 1 bygger be
 sidoö diagonalt. Gapet slumpas mellan 10 och 30 block, och hela området rensas först. Ingen bridgear här än.
 
     python3 launch.py maptest --port 25604 --watch-port 25704 --test-menu --render-distance 12
-    $U map_test.py --port 25604 > ../runs/map_test.log 2>&1 &
+    $U checks/map_test.py --port 25604 > ../runs/map_test.log 2>&1 &
 
 Anslut till `localhost:25704`. Stoppa med `./stop_client.sh maptest` och genom att avsluta `map_test.py`.
 
@@ -82,9 +82,14 @@ Fabric-klient. G slår på och av båda: shift vid kanten medan du själv går o
 med shift nere eller precis släppt. Bara med block i handen och bara på en server på den här datorn.
 
 Anslut till `localhost:25708`. Rundorna hamnar i `runs/demos/`. `$U demo_data.py` gör om dem till det modellen ser och
-vad den hade tryckt, i `runs/demos.npz`. Testa med `test_demo.py` och en andra klient som spelare.
+vad den hade tryckt, i `runs/demos.npz`. Testa med `checks/test_demo.py` och en andra klient som spelare.
 
 ## Tester
-`test_auto.py`, `test_rewards.py`, `test_human_limits.py` och `test_skill_env.py` kräver inget spel. Övriga `test_*.py` körs mot en
-egen spelinstans, till exempel `$U test_respawn.py 25605`. En instans tar bara en Python-anslutning åt gången, så använd
-inte portarna som träningen eller `live.py` kör på. `diagnose_*.py` mäter vad en sparad modell gör, utan att träna.
+`python/` har biblioteket och det som startas (`train_sim.py`, `train_auto.py`, `live_auto.py`, `dashboard.py`, `launch.py`,
+`demo_server.py`). Resten ligger i tre mappar:
+- `tests/`: kräver inget spel. `$U run_tests.py` kör alla sida vid sida plus simulatorns Rust-tester och visar vad som
+  föll och varför; `$U run_tests.py duel camera` kör bara de med något av orden i namnet.
+- `checks/`: körs mot en egen spelinstans, till exempel `$U checks/test_respawn.py 25605` eller
+  `$U checks/check_duel_real.py 25602` (strid i spelet och i simulatorn, tick för tick). En instans tar bara en
+  Python-anslutning åt gången, så använd inte portarna som träningen eller `live_auto.py` kör på.
+- `tools/`: mätningar och engångsskript (`sim_bench.py`, `sim_traces.py` och `sim_check.py`, `sim_exam.py`, `make_demos.py`).

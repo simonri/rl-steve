@@ -44,4 +44,11 @@ class McClient:
         return self.call(op="render", on=on)
 
     def close(self):
+        """Really ends the connection: the file from makefile() holds the socket open otherwise, and the mod, which
+        serves one connection at a time, would wait on it forever while a new one queues behind it."""
+        try:
+            self.file.close()
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self.sock.close()
