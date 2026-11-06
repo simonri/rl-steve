@@ -1,6 +1,6 @@
-# minecraft-ai
+# Steve Learns MC
 
-En AI som lär sig bridgea i riktiga Minecraft 26.3, från speltillstånd och utan pixlar.
+Steve lär sig Minecraft med förstärkningsinlärning (RL): parkour, bridging och snart Bedwars, i riktiga Minecraft 26.3 från speltillstånd och utan pixlar.
 
 - `mod/`: Fabric-mod som stegar klient och inbyggd server ett tick i taget från Python.
 - `python/`: anslutning, Gymnasium-miljö, träning, uppspelning, dashboard och tester.

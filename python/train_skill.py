@@ -112,7 +112,7 @@ class Curriculum(BaseCallback):
         if time.time() - self.last_text >= 1.0:
             self.last_text = time.time()
             color = "yellow" if title == "TESTING" else "aqua"
-            self.vec.env_method("sidebar", [["BRIDGE AI ", "white", True], [title, color, True]], self.lines(), indices=0)
+            self.vec.env_method("sidebar", [["STEVE LEARNS ", "white", True], [title, color, True]], self.lines(), indices=0)
 
     def mean_parts(self):
         """Average points per round from each rule, so it is visible what actually drives the model."""
