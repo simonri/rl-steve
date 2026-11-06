@@ -1,0 +1,268 @@
+<title>Hur modellen ser riktningar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* Layout: one reading column; the two maps side by side (stacked on phones), with the numbers right under them. */
+:root {
+  --bg: #f3f5f1; --panel: #ffffff; --ink: #1d2420; --muted: #5d6a62; --line: #d5dcd5;
+  --grid: #e3e8e2; --stone: #8d958f; --goal: #c9851a; --look: #2f6fd6; --ahead: #2e8b57; --soft: #eef3ec;
+  --display: "Bricolage Grotesque", "Atkinson Hyperlegible", system-ui, sans-serif;
+  --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141916; --panel: #1c231f; --ink: #e4ebe5; --muted: #9aa89f; --line: #2f3a34;
+  --grid: #26302a; --stone: #7d877f; --goal: #e7a43a; --look: #6fa3ff; --ahead: #4fc283; --soft: #222b26; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141916; --panel: #1c231f; --ink: #e4ebe5; --muted: #9aa89f; --line: #2f3a34;
+  --grid: #26302a; --stone: #7d877f; --goal: #e7a43a; --look: #6fa3ff; --ahead: #4fc283; --soft: #222b26; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font: 17px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; }
+main { max-width: 980px; margin: 0 auto; display: grid; gap: 40px; }
+h1 { font: 800 clamp(30px, 5vw, 46px)/1.1 var(--display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font: 600 24px/1.25 var(--display); margin: 0 0 12px; text-wrap: balance; }
+p { margin: 0 0 12px; max-width: 66ch; }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; }
+.key { display: inline-flex; gap: 8px; align-items: center; font: 600 13px var(--mono); }
+.dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 4px 0 0; color: var(--muted); }
+.lab { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: grid; gap: 18px; }
+.controls { display: flex; flex-wrap: wrap; gap: 18px 28px; align-items: end; }
+.controls fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.controls legend, .controls label.cap { font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button, .turn button { font: 600 14px var(--body); background: var(--soft); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--goal); border-color: var(--goal); color: #1b1407; }
+.seg button:focus-visible, .turn button:focus-visible, input:focus-visible { outline: 3px solid var(--look); outline-offset: 2px; }
+.turn { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+input[type=range] { width: min(260px, 70vw); accent-color: var(--look); }
+.maps { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.map { display: grid; gap: 8px; min-width: 0; }
+.map h3 { font: 600 15px var(--body); margin: 0; }
+.map .sub { font-size: 14px; color: var(--muted); margin: 0; }
+.map svg { width: 100%; height: auto; max-width: 100%; aspect-ratio: 1; background: var(--soft); border-radius: 10px; border: 1px solid var(--line); }
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.num { background: var(--soft); border-radius: 10px; padding: 10px 12px; }
+.num b { display: block; font: 600 22px var(--mono); font-variant-numeric: tabular-nums; }
+.num span { font-size: 13px; color: var(--muted); }
+.note { font-size: 15px; color: var(--muted); margin: 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+.card h3 { margin: 0 0 6px; font: 600 18px var(--display); }
+.card p { font-size: 16px; margin: 0; }
+.tag { font: 600 12px var(--mono); padding: 2px 8px; border-radius: 999px; vertical-align: 2px; margin-left: 6px; }
+.tag.r { background: color-mix(in srgb, var(--ahead) 22%, transparent); color: var(--ahead); }
+.tag.b { background: color-mix(in srgb, var(--look) 22%, transparent); color: var(--look); }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 15px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td code, p code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border-radius: 5px; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px; font: 600 13px var(--mono); }
+.steps span { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+@media (max-width: 680px) { .maps { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <header>
+    <h1>Hur modellen ser riktningar</h1>
+    <p class="lede">Modellen får aldrig väderstrecken. Den ser blocken i en ram som pekar mot målet, och allt som handlar om rörelse mätt från sin egen blick. Vrid och byt mål nedan så syns exakt vad som ändras och vad som står still.</p>
+  </header>
+
+  <section class="lab" aria-label="Prova själv">
+    <div class="controls">
+      <fieldset>
+        <legend>Var målet ligger</legend>
+        <div class="seg" id="goals"></div>
+      </fieldset>
+      <div style="display:grid;gap:8px">
+        <label class="cap" for="yaw">Spelarens blick (spelets yaw)</label>
+        <input type="range" id="yaw" min="0" max="359" step="1" value="200">
+      </div>
+      <div class="turn" aria-label="Vrid som modellen gör">
+        <button type="button" data-d="-15">Vrid −15°</button>
+        <button type="button" data-d="15">Vrid +15°</button>
+        <button type="button" data-d="60">+60° (största steget)</button>
+      </div>
+    </div>
+    <div class="maps">
+      <div class="map">
+        <h3>Världen som spelet har den</h3>
+        <p class="sub">Norr uppåt. Samma bana, bara målet flyttas.</p>
+        <svg id="world" viewBox="-110 -110 220 220" role="img" aria-label="Banan sedd uppifrån med norr uppåt"></svg>
+      </div>
+      <div class="map">
+        <h3>Vad modellen ser</h3>
+        <p class="sub">Ramen vriden så att målet är uppåt. Vrids aldrig av blicken.</p>
+        <svg id="model" viewBox="-110 -110 220 220" role="img" aria-label="Samma bana i modellens ram, målet uppåt"></svg>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="key"><span class="dot" style="background:var(--goal)"></span>målet</span>
+      <span class="key"><span class="dot" style="background:var(--look)"></span>blicken</span>
+      <span class="key"><span class="dot" style="background:var(--stone)"></span>block</span>
+      <span class="key"><span class="dot" style="background:var(--ahead)"></span>"framåt" i modellens ram</span>
+    </div>
+    <div class="nums" id="nums"></div>
+    <p class="note">Talen är de modellen faktiskt får (avrundade). Prova: vrid +15° och se att <b>blicken i ramen</b> alltid ökar med exakt 15, oavsett var målet ligger.</p>
+  </section>
+
+  <section>
+    <h2>Två ramar, ett jobb var</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Ramen <span class="tag r">R</span></h3>
+        <p>Bestäms en gång när rundan börjar: väderstrecket mot målet, avrundat till närmaste 90°. Blockkuben, kartan, var i blocket fötterna står och vad siktet träffar vrids med den. Den står still hela rundan, så blocken hoppar aldrig runt när modellen tittar sig omkring.</p>
+      </div>
+      <div class="card">
+        <h3>Blicken <span class="tag b">B</span></h3>
+        <p>Allt om rörelse mäts från dit modellen tittar, för det är så tangenterna fungerar: W går dit blicken pekar. Målet blir "så här mycket framåt och åt höger", farten likadant.</p>
+      </div>
+      <div class="card">
+        <h3>Kopplingen</h3>
+        <p>Blickens vinkel i ramen är <code>yaw − 90 × k</code>, där k är ramens vridning. Blick 0° betyder alltid "uppåt i kartan", 180° alltid "nedåt", +15° alltid 15° åt höger. Spelets egen yaw får modellen aldrig.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Alla tal som handlar om riktning</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Vad</th><th>Ram</th><th>Hur det räknas</th><th>Tal</th></tr></thead>
+        <tbody>
+          <tr><td>Målet framåt och åt sidan</td><td><span class="tag b">B</span></td><td>Riktningen till målet delad med avståndet, sett från blicken</td><td>2</td></tr>
+          <tr><td>Avstånd till målet</td><td>ingen</td><td><code>log(1 + avstånd) / 4</code></td><td>1</td></tr>
+          <tr><td>Målets höjd</td><td>ingen</td><td>Höjdskillnad, komprimerad med log</td><td>1</td></tr>
+          <tr><td>Var i blocket fötterna står</td><td><span class="tag r">R</span></td><td>−0,5 till 0,5 i sidled och framåt, plus höjd i blocket</td><td>3</td></tr>
+          <tr><td>Fart</td><td><span class="tag b">B</span></td><td>Framåt och åt sidan från blicken, plus uppåt</td><td>3</td></tr>
+          <tr><td>Blickens vinkel</td><td><span class="tag r">R</span></td><td><code>sin</code> och <code>cos</code> av blicken i ramen, plus hur långt upp eller ner den tittar</td><td>3</td></tr>
+          <tr><td>Vad siktet träffar</td><td><span class="tag r">R</span></td><td>Blocket det pekar på och var på blocket, och vilken sida (upp, ner, framåt, bakåt, höger, vänster)</td><td>13</td></tr>
+          <tr><td>Blockkuben</td><td><span class="tag r">R</span></td><td>11 × 11 × 11 block runt fötterna: finns något eller inte</td><td>1331</td></tr>
+          <tr><td>Kartan</td><td><span class="tag r">R</span></td><td>33 × 33 kolumner: höjden på översta blocket, om det finns ett, om den har stått där</td><td>3267</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Hur den vrider</h2>
+    <p>Varje tick väljer modellen ett vridsteg i sidled och ett upp eller ner. Stegen är fina nära noll, som en hand, och som mest 60° per tick (1200° i sekunden):</p>
+    <div class="steps" aria-label="Vridstegen i grader">
+      <span>−60</span><span>−15</span><span>−5</span><span>−2</span><span>−0,5</span><span>0</span><span>0,5</span><span>2</span><span>5</span><span>15</span><span>60</span>
+    </div>
+    <p style="margin-top:12px">Positivt är åt höger, precis som musen i spelet. Eftersom blickens vinkel mäts i ramen ändras den med exakt det steget, och blocken i kuben och kartan står still.</p>
+  </section>
+
+  <section>
+    <h2>Varför målet och inte norr</h2>
+    <p>Ögonen är faltningar: små filter som letar mönster, till exempel "kant till höger om mig". De vet inte att ett mönster vridet 90° betyder samma sak. Med norr fast skulle samma bro österut och norrut se olika ut, och varje färdighet behöva läras fyra gånger. Med målramen ser de likadana ut, så samma övning räcker fyra gånger längre.</p>
+    <p>Det modellen inte får veta är det absoluta väderstrecket. I parkour och bro behövs det inte. I Bedwars, där kartan har fasta riktningar, kan det behövas, och där måste ramen också klara att målet byts mitt i en runda.</p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const goals = [
+    { name: "Öster", g: [14, 0] }, { name: "Norr", g: [0, -14] }, { name: "Väster", g: [-14, 0] },
+    { name: "Söder", g: [0, 14] }, { name: "Nordost", g: [10, -10] },
+  ];
+  // Some fixed blocks so the eye can follow the same place in both views.
+  const landmarks = [[-3, -4], [-2, -4], [-1, -4], [4, 3], [4, 4], [5, 4], [-5, 2]];
+  let goal = goals[0], yaw = 200;
+  const $ = (id) => document.getElementById(id);
+  const ns = "http://www.w3.org/2000/svg";
+  const S = 7; // pixels per block
+
+  // Python's round: halves go to the even number, as the game code does.
+  const roundEven = (v) => { const f = Math.floor(v), d = v - f; if (d > 0.5) return f + 1; if (d < 0.5) return f; return f % 2 === 0 ? f : f + 1; };
+  const rotate = (x, z, k) => { for (let i = 0; i < ((k % 4) + 4) % 4; i++) { const t = x; x = z; z = -t; } return [x, z]; };
+  const frameK = () => roundEven((Math.atan2(-goal.g[0], goal.g[1]) * 180 / Math.PI) / 90);
+  const wrap = (a) => ((a % 360) + 540) % 360 - 180;
+
+  function el(tag, attrs, parent) { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; }
+
+  function path(goalBlocks) {
+    // A straight row of blocks from the start toward the goal.
+    const [gx, gz] = goal.g, n = Math.max(Math.abs(gx), Math.abs(gz));
+    const out = [];
+    for (let i = 2; i < n - 1; i++) out.push([Math.round(gx * i / n), Math.round(gz * i / n)]);
+    return out;
+  }
+
+  function draw(svg, toScreen, lookDir, aheadDir, label) {
+    svg.replaceChildren();
+    const css = getComputedStyle(document.documentElement);
+    const c = (n) => css.getPropertyValue(n).trim();
+    for (let i = -15; i <= 15; i++) {
+      el("line", { x1: i * S - S / 2, y1: -105, x2: i * S - S / 2, y2: 105, stroke: c("--grid"), "stroke-width": 0.6 }, svg);
+      el("line", { x1: -105, y1: i * S - S / 2, x2: 105, y2: i * S - S / 2, stroke: c("--grid"), "stroke-width": 0.6 }, svg);
+    }
+    const block = (p, fill) => { const [sx, sy] = toScreen(p[0], p[1]); el("rect", { x: sx * S - S / 2 + 0.5, y: sy * S - S / 2 + 0.5, width: S - 1, height: S - 1, rx: 1.2, fill }, svg); };
+    for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) block([x, z], c("--stone"));
+    for (const p of landmarks) block(p, c("--stone"));
+    for (const p of path()) block(p, c("--stone"));
+    const [gx, gz] = goal.g;
+    for (let x = -2; x <= 2; x++) for (let z = -2; z <= 2; z++) block([gx + x, gz + z], c("--goal"));
+    const [ax, ay] = aheadDir;
+    el("line", { x1: 0, y1: 0, x2: ax * 96, y2: ay * 96, stroke: c("--ahead"), "stroke-width": 1.4, "stroke-dasharray": "3 3" }, svg);
+    if (label) {
+      const t = el("text", { x: ax * 70 + 6, y: ay * 70 - 4, fill: c("--ahead"), "font-size": 9, "font-family": "JetBrains Mono, monospace" }, svg);
+      t.textContent = label;
+    }
+    const [lx, ly] = lookDir;
+    el("line", { x1: 0, y1: 0, x2: lx * 38, y2: ly * 38, stroke: c("--look"), "stroke-width": 3.2, "stroke-linecap": "round" }, svg);
+    el("polygon", { points: `${lx * 46},${ly * 46} ${lx * 34 - ly * 6},${ly * 34 + lx * 6} ${lx * 34 + ly * 6},${ly * 34 - lx * 6}`, fill: c("--look") }, svg);
+    el("circle", { cx: 0, cy: 0, r: 4.2, fill: c("--panel"), stroke: c("--ink"), "stroke-width": 1.6 }, svg);
+  }
+
+  function compass(svg) {
+    const css = getComputedStyle(document.documentElement);
+    const t = el("text", { x: 0, y: -98, fill: css.getPropertyValue("--muted").trim(), "font-size": 10, "text-anchor": "middle", "font-family": "JetBrains Mono, monospace" }, svg);
+    t.textContent = "N";
+  }
+
+  function render() {
+    const k = frameK();
+    const r = yaw * Math.PI / 180;
+    // The world: x is east, z is south, so north is up on screen.
+    draw($("world"), (x, z) => [x, z], [-Math.sin(r), Math.cos(r)], (() => { const a = k * Math.PI / 2; return [-Math.sin(a), Math.cos(a)]; })(), "");
+    compass($("world"));
+    // The model's frame: turned k quarter turns, ahead (frame +z) drawn up, right on the right.
+    const look = wrap(yaw - 90 * k);
+    const L = look * Math.PI / 180;
+    draw($("model"), (x, z) => { const [fx, fz] = rotate(x, z, k); return [-fx, -fz]; }, [Math.sin(L), -Math.cos(L)], [0, -1], "framåt");
+    // What it gets about the goal, from its look.
+    const [gx, gz] = [goal.g[0] + 0.5 - 0.5, goal.g[1] + 0.5 - 0.5];
+    const d = Math.hypot(gx, gz);
+    const fwd = [-Math.sin(r), Math.cos(r)], right = [-Math.cos(r), -Math.sin(r)];
+    const gf = (gx * fwd[0] + gz * fwd[1]) / d, gr = (gx * right[0] + gz * right[1]) / d;
+    const cells = [
+      [`${(k * 90 + 360) % 360}°`, "ramens vridning (k × 90), fast hela rundan"],
+      [`${Math.round(yaw)}°`, "spelets yaw (får modellen aldrig)"],
+      [`${Math.round(look)}°`, "blicken i ramen"],
+      [`${Math.sin(L).toFixed(2)} / ${Math.cos(L).toFixed(2)}`, "sin / cos av blicken"],
+      [gf.toFixed(2), "målet framåt (1 = rakt fram)"],
+      [gr.toFixed(2), "målet åt höger (−1 = rakt vänster)"],
+    ];
+    $("nums").replaceChildren(...cells.map(([v, s]) => { const e = document.createElement("div"); e.className = "num"; e.innerHTML = `<b>${v}</b><span>${s}</span>`; return e; }));
+    $("yaw").value = Math.round(((yaw % 360) + 360) % 360);
+  }
+
+  const seg = $("goals");
+  goals.forEach((g) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = g.name;
+    b.setAttribute("aria-pressed", g === goal); b.id = "goal-" + g.name;
+    b.addEventListener("click", () => { goal = g; seg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); render(); });
+    seg.appendChild(b);
+  });
+  $("yaw").addEventListener("input", (e) => { yaw = +e.target.value; render(); });
+  document.querySelectorAll(".turn button").forEach((b) => b.addEventListener("click", () => { yaw = ((yaw + +b.dataset.d) % 360 + 360) % 360; render(); }));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+  new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  render();
+})();
+</script>
