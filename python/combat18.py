@@ -1,8 +1,9 @@
 """Combat as in 1.8.9 (Hypixel), the reference both the simulator (sim/src/combat.rs) and the server mod follow.
 
 Our players run 26.3 clients, so what the client decides stays 26.3: which entity the crosshair is on (eyes along the
-view, 3 blocks, hitbox not inflated: Entity.getPickRadius is 0), and a click that hits nothing at all locks attacks for
-10 ticks (Minecraft.missTime; a click on a block does not). With no attack cooldown (the server sets attack speed so
+view, 3 blocks, hitbox not inflated: Entity.getPickRadius is 0). A click on nothing sets a 10-tick attack lock
+(Minecraft.missTime), but the same tick's continueAttack(false) clears it again unless the button is held, so clicks never
+wait. With no attack cooldown (the server sets attack speed so
 high the charge is always full), 26.3's own client side of an attack matches 1.8: a sprinting hit slows the attacker
 to 0.6 and stops its sprint.
 

@@ -104,6 +104,7 @@ public final class McBridge implements ClientModInitializer {
     private int ticksLeft;
     private JsonObject pendingReply; // the command being answered
     private boolean resetting;
+    private boolean died; // a death since the last reply (the respawn follows at once)
     private int settleTicks;
     private long settleStart;
     private String settleReason = "";
@@ -589,7 +590,9 @@ public final class McBridge implements ClientModInitializer {
             return;
         }
         if (mc.player == null || server == null) return;
+        Fight18.snapClientCopies(mc);
         if (mc.player.isDeadOrDying()) {
+            if (!resetting) died = true;
             mc.player.respawn();
             // Between commands nothing else steps the server, and the respawn only happens on a server tick: without
             // this step it never comes, no command is read again, and the game hangs for good.
@@ -682,6 +685,7 @@ public final class McBridge implements ClientModInitializer {
             case "reset" -> {
                 applyAction(mc, new JsonObject());
                 resetSpec = cmd;
+                died = false;
                 if (cmd.has("beam")) beam = cmd.getAsJsonArray("beam");
                 resetting = true;
                 settleTicks = 0;
@@ -1023,6 +1027,10 @@ public final class McBridge implements ClientModInitializer {
         }
         o.add("players", Fight18.players());
         o.addProperty("health", pl.getHealth());
+        if (died) { // it died since the last reply and is already back at the spawn: the round has to know
+            o.addProperty("died", true);
+            died = false;
+        }
         o.add("clicks", clicks);
         clicks = new JsonArray();
 

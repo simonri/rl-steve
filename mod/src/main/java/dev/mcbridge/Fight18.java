@@ -51,6 +51,7 @@ public final class Fight18 {
     static final int MISS_LOCK = 10;
     static final double ENTITY_REACH = 3.0;
     static final double BLOCK_REACH = 4.5;
+    static final int SPRINT_WINDOW = 7; // options.sprintWindow: ticks to tap forward again for a sprint
 
     /** What the 1.8 rules keep per player. */
     public static final class State {
@@ -63,6 +64,7 @@ public final class Fight18 {
         public int sinceHit = 99;
         public int sinceHurt = 99;
         public int missLock;
+        public boolean serverSprint; // an opponent's sprint as the server knows it (a real player's is its isSprinting)
     }
 
     static final Map<UUID, State> STATES = new HashMap<>();
@@ -80,7 +82,8 @@ public final class Fight18 {
         float amount = a.damage;
         boolean falling = attacker.fallDistance > 0 && !attacker.onGround() && !attacker.onClimbable() && !attacker.isInWater();
         if (falling) amount *= 1.5f;
-        int level = a.kb + (attacker.isSprinting() ? 1 : 0);
+        boolean sprinting = attacker instanceof Bot ? a.serverSprint : attacker.isSprinting();
+        int level = a.kb + (sprinting ? 1 : 0);
         float dealt;
         boolean knock;
         if ((float) v.resist > MAX_RESIST / 2.0f) {
@@ -113,7 +116,8 @@ public final class Fight18 {
             float r = attacker.getYRot() * (float) Math.PI / 180.0f;
             Vec3 base = motion == null ? Vec3.ZERO : motion;
             motion = new Vec3(base.x + (double) (-((float) Math.sin(r)) * level * 0.5f), base.y + 0.1, base.z + (double) ((float) Math.cos(r) * level * 0.5f));
-            attacker.setSprinting(false);
+            if (attacker instanceof Bot) a.serverSprint = false; // its client keeps sprinting; the server's flag is off
+            else attacker.setSprinting(false);
         }
         if (motion != null) {
             victim.setDeltaMovement(motion);
@@ -154,6 +158,12 @@ public final class Fight18 {
         if (rules18) {
             MinecraftServer server = p.level().getServer();
             server.getGameRules().set(GameRules.NATURAL_HEALTH_REGENERATION, false, server); // ours instead (tickState)
+            // As on Hypixel, players do not push each other: a team with collisionRule never (the client keeps to it too).
+            var board = server.getScoreboard();
+            var team = board.getPlayerTeam("mcbridge");
+            if (team == null) team = board.addPlayerTeam("mcbridge");
+            team.setCollisionRule(net.minecraft.world.scores.Team.CollisionRule.NEVER);
+            board.addPlayerToTeam(p.getScoreboardName(), team);
         }
         State s = of(p);
         s.damage = damage;
@@ -164,6 +174,7 @@ public final class Fight18 {
         s.heal = 0;
         s.sinceHit = 99;
         s.sinceHurt = 99;
+        s.serverSprint = false;
         var attackSpeed = p.getAttribute(Attributes.ATTACK_SPEED);
         if (attackSpeed != null) attackSpeed.setBaseValue(1024.0); // no cooldown: every click is a full hit
         p.getInventory().setItem(1, sword(damage));
@@ -214,6 +225,37 @@ public final class Fight18 {
         public void tick() {
             // ticked by drive(), after its inputs are set
         }
+
+        boolean crouching; // as its client would have it, set by drive()
+
+        /**
+         * Its keys as a client turns them into movement (LocalPlayer.applyInput with modifyInput, player.rs apply_input),
+         * not as the server does for others (only the 0.98): a diagonal on the keys is as fast as straight ahead.
+         */
+        @Override
+        protected void applyInput() {
+            float x = this.xxa, z = this.zza; // drive() sets the keys' direction, of length 1
+            if (x * x + z * z != 0.0f) {
+                x *= 0.98f;
+                z *= 0.98f;
+                if (crouching) {
+                    x *= 0.3f;
+                    z *= 0.3f;
+                }
+                float length = (float) Math.sqrt(x * x + z * z);
+                if (length > 0.0f) {
+                    float dx = x * (1.0f / length), dz = z * (1.0f / length);
+                    float ax = Math.abs(dx), az = Math.abs(dz);
+                    float tan = az > ax ? ax / az : az / ax;
+                    float toSquare = (float) Math.sqrt(1.0f + tan * tan);
+                    float newLength = Math.min(length * toSquare, 1.0f);
+                    x = dx * newLength;
+                    z = dz * newLength;
+                }
+            }
+            this.xxa = x;
+            this.zza = z;
+        }
     }
 
     static final class Opponent {
@@ -222,6 +264,10 @@ public final class Fight18 {
         boolean[] keys = new boolean[7];
         int[] keyAge = {2, 2, 2, 2, 2, 2, 2};
         int[] action = {0, 0, 0, 0, 0, 0, 5, 5, 0, 0};
+        // Its client's sprint (LocalPlayer.aiStep), as player.rs has it.
+        boolean sprinting, sentSprinting, wasShift;
+        int sprintTrigger;
+        float lastForward;
 
         Opponent(Bot player, int bot) {
             this.player = player;
@@ -243,6 +289,10 @@ public final class Fight18 {
         p.setYRot(yaw);
         p.setYHeadRot(yaw);
         p.setXRot(0);
+        // It stands on the arena as a player at rest does: on the ground, gravity's last tick in its motion (so its first
+        // move meets the floor again). Otherwise its first steps are air steps (0.02 instead of 0.1).
+        p.setOnGround(true);
+        p.setDeltaMovement(0.0, -0.0784000015258789, 0.0);
         p.setHealth(p.getMaxHealth());
         p.setGameMode(GameType.SURVIVAL);
         server.getPlayerList().broadcastAll(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(p)));
@@ -307,11 +357,14 @@ public final class Fight18 {
                 double max = blockD2 == Double.MAX_VALUE ? BLOCK_REACH : Math.sqrt(blockD2);
                 AABB box = target.getBoundingBox();
                 var clip = box.contains(eye) ? java.util.Optional.of(eye) : box.clip(eye, eye.add(view.scale(max)));
-                if (clip.isPresent() && clip.get().distanceToSqr(eye) < blockD2) {
-                    if (clip.get().distanceToSqr(eye) < ENTITY_REACH * ENTITY_REACH) attack(p, target);
-                    else s.missLock = MISS_LOCK;
-                } else if (blockD2 == Double.MAX_VALUE) {
-                    s.missLock = MISS_LOCK;
+                // A click on nothing would lock attacks, but a click is not a held button: 26.3 clears it the same tick.
+                if (clip.isPresent() && clip.get().distanceToSqr(eye) < blockD2 && clip.get().distanceToSqr(eye) < ENTITY_REACH * ENTITY_REACH) {
+                    attack(p, target);
+                    // Its client's side of the click (26.3 Player.attack, combat.rs recoil): knockback slows it and stops its sprint.
+                    if (s.kb + (o.sprinting ? 1 : 0) > 0) {
+                        p.setDeltaMovement(p.getDeltaMovement().multiply(0.6, 1.0, 0.6));
+                        o.sprinting = false;
+                    }
                 }
                 p.swing(net.minecraft.world.InteractionHand.MAIN_HAND, p.getMainHandItem().getAttackAnimation(), true); // watchers see the arm swing
             }
@@ -325,9 +378,45 @@ public final class Fight18 {
             p.xxa = strafe;
             p.zza = forward;
             p.setShiftKeyDown(sneak);
-            p.setSprinting(sprint && forward > 0 && !sneak);
+            if (o.sprintTrigger > 0) o.sprintTrigger--;
+            boolean hadForward = o.lastForward > 1.0e-5f, hasForward = forward > 1.0e-5f;
+            boolean crouching = o.wasShift; // crouching follows the shift key as it was before this tick
+            p.crouching = crouching;
+            if (o.wasShift || back) o.sprintTrigger = 0;
+            if (!o.sprinting && hasForward && !crouching) {
+                if (!hadForward) {
+                    if (o.sprintTrigger > 0) o.sprinting = true;
+                    else o.sprintTrigger = SPRINT_WINDOW;
+                }
+                if (sprint) o.sprinting = true;
+            }
+            if (o.sprinting && (!hasForward || p.horizontalCollision && !p.minorHorizontalCollision)) o.sprinting = false;
+            o.wasShift = sneak;
+            o.lastForward = forward;
+            p.setSprinting(o.sprinting);
             p.setJumping(jump);
             p.doTick();
+            if (o.sprinting != o.sentSprinting) { // LocalPlayer.sendIsSprintingIfNeeded: only a change reaches the server
+                o.sentSprinting = o.sprinting;
+                s.serverSprint = o.sprinting;
+            }
+        }
+    }
+
+    /**
+     * At the start of each client tick: the model's client sees every opponent where the server has it, without the
+     * three ticks of smoothing a client gives other players, so what it aims at and is pushed by is where the simulator
+     * has them (combat.rs, env.rs fight_tick).
+     */
+    public static void snapClientCopies(net.minecraft.client.Minecraft mc) {
+        if (mc.level == null) return;
+        for (Opponent o : OPPONENTS) {
+            Entity e = mc.level.getEntity(o.player.getId());
+            if (e == null) continue;
+            var smoothing = e.getInterpolation();
+            if (smoothing != null) smoothing.cancel();
+            e.snapTo(o.player.getX(), o.player.getY(), o.player.getZ(), o.player.getYRot(), o.player.getXRot());
+            e.setOldPosAndRot();
         }
     }
 

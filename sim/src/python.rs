@@ -22,6 +22,7 @@ pub struct Single {
     since_hit: i32,
     since_hurt: i32,
     fall_line: f64, // below this an opponent is out, as in Env.fight_step
+    queued: Option<(crate::combat::Swing, usize)>,
 }
 
 #[pymethods]
@@ -37,7 +38,7 @@ impl Single {
         for (x, y, z, name) in cells {
             world.set(x, y, z, kind_for(&name));
         }
-        Single { world, player: Player::new([0.0; 3], 0.0, 0.0, 0), opponents: Vec::new(), centre: [0.0; 3], t: 0, since_hit: 99, since_hurt: 99, fall_line: f64::MIN }
+        Single { world, player: Player::new([0.0; 3], 0.0, 0.0, 0), opponents: Vec::new(), centre: [0.0; 3], t: 0, since_hit: 99, since_hurt: 99, fall_line: f64::MIN, queued: None }
     }
 
     /// A new player standing at a spot, as after the mod's reset: nothing kept from before.
@@ -126,7 +127,7 @@ impl Single {
         let ev = if self.opponents.is_empty() {
             self.player.tick(&mut self.world, &input)
         } else {
-            let ev = fight_tick(&mut self.world, &mut self.player, &mut self.opponents, &input, self.centre, self.t, &mut self.since_hit, &mut self.since_hurt);
+            let ev = fight_tick(&mut self.world, &mut self.player, &mut self.opponents, &input, self.centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
             self.t += 1;
             for o in self.opponents.iter_mut() {
                 if !o.out && (o.player.health <= 0.0 || o.player.pos[1] < self.fall_line) {
@@ -156,7 +157,7 @@ impl Single {
         d.set_item("collision", p.horizontal_collision)?;
         d.set_item("fall_distance", p.fall_distance)?;
         d.set_item("held_count", p.held)?;
-        d.set_item("health", p.health)?;
+        d.set_item("health", p.shown_health())?; // what its client shows (a hit's damage from the next tick)
         d.set_item("hurt_time", p.hurt_time)?;
         d.set_item("crouch_pose", p.crouch_pose)?;
         d.set_item("slot", p.slot)?;
@@ -407,7 +408,7 @@ impl Batch {
         d.set_item("pitch", p.pitch)?;
         d.set_item("on_ground", p.on_ground)?;
         d.set_item("held_count", p.held)?;
-        d.set_item("health", p.health)?;
+        d.set_item("health", p.shown_health())?;
         d.set_item("t", env.t)?;
         Ok(d)
     }

@@ -42,7 +42,7 @@ impl View {
             vel: p.dm,
             yaw: p.yaw,
             pitch: p.pitch,
-            health: p.health,
+            health: p.shown_health(), // an opponent's is the server's (its unseen is always 0)
             armor: p.armor,
             damage: if p.slot == 1 { p.attack_damage } else { 1.0 },
             hurt_time: p.hurt_time,

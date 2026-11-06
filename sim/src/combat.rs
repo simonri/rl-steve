@@ -9,7 +9,7 @@ use crate::player::{clip_box, Player, REACH, WIDTH};
 use crate::world::{Aabb, World};
 
 pub const ENTITY_REACH: f64 = 3.0; // Attributes.ENTITY_INTERACTION_RANGE for a player
-pub const MISS_LOCK: i32 = 10; // Minecraft.missTime after a click on nothing
+pub const MISS_LOCK: i32 = 10; // Minecraft.missTime after a click on nothing, while the button is held (see click)
 const MAX_RESIST: i32 = 20; // maxHurtResistantTime
 const KNOCK: f64 = 0.4;
 
@@ -68,18 +68,30 @@ pub fn aim(p: &Player, world: &World, others: &[Option<Aabb>]) -> Aim {
     }
 }
 
-/// A left click: hits whoever `aim` finds, or locks attacks for 10 ticks when it finds nothing. Returns the target.
+/// A left click: hits whoever `aim` finds. Returns the target.
+///
+/// A click on nothing sets 26.3's 10-tick attack lock (Minecraft.missTime), but the same tick ends with
+/// continueAttack(false) for a button that is not held, which sets it back to 0: clicks, as people and the model make
+/// them, never wait. The lock only bites while the button is held down, which nobody here does.
 pub fn click(p: &mut Player, world: &World, others: &[Option<Aabb>]) -> Option<usize> {
     if p.miss_lock > 0 {
         return None;
     }
     match aim(p, world, others) {
         Aim::Player(i) => Some(i),
-        Aim::Block => None, // starts breaking it; blocks do not break in these rounds
-        Aim::Nothing => {
-            p.miss_lock = MISS_LOCK;
-            None
-        }
+        Aim::Block | Aim::Nothing => None, // a block would start breaking; blocks do not break in these rounds
+    }
+}
+
+/// The attacker's own client after a click on a player (26.3 Player.attack, which still runs there): a hit with
+/// knockback (a sprint or the enchantment) slows it to 0.6 sideways and stops its sprint. A held sprint key starts the
+/// sprint again in the same tick's aiStep, but the server is not told (the state ends as it began), so its flag stays
+/// as the hit left it. Checked against the game (duel_real_vs_sim).
+pub fn recoil(p: &mut Player) {
+    if p.kb_enchant + p.sprinting as i32 > 0 {
+        p.dm[0] *= 0.6;
+        p.dm[2] *= 0.6;
+        p.sprinting = false;
     }
 }
 
@@ -231,18 +243,30 @@ mod tests {
         assert!({ let at = v.pos; hit(&s(1.0), &mut v, at) }.0, "from the second half on, any hit counts in full");
     }
 
+    /// A sprinting hit slows the attacker's client to 0.6 and ends its sprint (duel_real_vs_sim).
+    #[test]
+    fn recoil_after_a_sprint_hit() {
+        let mut q = Player::new([0.0, 100.0, 0.0], 0.0, 0.0, 0);
+        q.dm = [0.1, -0.0784, 0.2];
+        q.sprinting = true;
+        recoil(&mut q);
+        assert!(!q.sprinting && (q.dm[0] - 0.06).abs() < 1e-12 && (q.dm[2] - 0.12).abs() < 1e-12 && q.dm[1] == -0.0784);
+        recoil(&mut q);
+        assert!((q.dm[0] - 0.06).abs() < 1e-12, "no knockback, no recoil");
+    }
+
     #[test]
     fn aim_and_miss_lock() {
         let mut w = World::new([-10, 90, -10], [10, 110, 10]);
         w.fill([-10, 99, -10], [10, 99, 10], FULL);
-        // Looking along +z (yaw 0) at a player 2.5 ahead: hit. 3.5 ahead: nothing in reach, and the lock starts.
+        // Looking along +z (yaw 0) at a player 2.5 ahead: hit. 3.5 ahead: nothing in reach, and no lock for a click.
         let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
         let near = Player::new([0.5, 100.0, 3.0], 0.0, 0.0, 0);
         let far = Player::new([0.5, 100.0, 4.2], 0.0, 0.0, 0);
         assert_eq!(click(&mut p, &w, &[Some(body(&near))]), Some(0));
         assert_eq!(click(&mut p, &w, &[Some(body(&far))]), None);
-        assert_eq!(p.miss_lock, MISS_LOCK);
-        assert_eq!(click(&mut p, &w, &[Some(body(&near))]), None, "locked");
+        assert_eq!(p.miss_lock, 0);
+        assert_eq!(click(&mut p, &w, &[Some(body(&near))]), Some(0), "the next click hits");
         // Looking at the ground in front: a block, no lock.
         let mut q = Player::new([0.5, 100.0, 0.5], 0.0, 60.0, 0);
         assert_eq!(click(&mut q, &w, &[None]), None);

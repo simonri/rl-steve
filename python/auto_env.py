@@ -735,7 +735,7 @@ class AutoEnv(SkillEnv):
     def _begin_episode(self):
         self.visited = set()
         self.history2 = collections.deque([(0.0, 0.0)] * HISTORY, maxlen=HISTORY)
-        self.out = [False] * len(self.obs.get("players", []))
+        self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
         self._plan_pushes()
         self.next_push, self.pushed, self.push_airborne, self.pushes_given = 0, False, False, 0
         super()._begin_episode()
@@ -848,7 +848,8 @@ class AutoEnv(SkillEnv):
         reward = self._points("time", -TICK_COST)
         players = o.get("players", [])
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
-        taken = max(0.0, mine - o["health"])
+        died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost
+        taken = mine if died else max(0.0, mine - o["health"])
         reward += self._points("damage dealt", HEALTH_POINTS * dealt)
         reward += self._points("damage taken", -HEALTH_POINTS * taken)
         self.damage += taken
@@ -857,7 +858,7 @@ class AutoEnv(SkillEnv):
             if not self.out[i] and (p["health"] <= 0 or p["pos"][1] < line):
                 self.out[i] = True
         won = all(self.out)
-        lost = not won and (o["health"] <= 0 or o["pos"][1] < line)
+        lost = not won and (died or o["health"] <= 0 or o["pos"][1] < line)
         if won:
             reward += self._points("won", FIGHT_RESULT)
         if lost:
@@ -876,7 +877,11 @@ class AutoEnv(SkillEnv):
                                    int(p.get("hurt_time", 0)), bool(p["on_ground"]), bool(p.get("sprinting", False)), bool(p.get("crouching", p.get("crouch_pose", False))))
         me = view(o, o["health"])
         actions = []
-        for i, p in enumerate(o.get("players", [])):
+        players = list(o.get("players", []))
+        for i, (bot, pos, yaw, damage, armor, kb) in enumerate(self.duel["opponents"]):
+            if i >= len(players):  # it comes into the game a tick after the round starts: until then, as planned
+                players.append(dict(pos=pos, vel=[0.0, 0.0, 0.0], yaw=yaw, pitch=0.0, health=20.0, armor=armor, damage=damage, hurt_time=0, on_ground=True, bot=bot, since_hit=99))
+        for i, p in enumerate(players):
             if i < len(self.out) and self.out[i]:
                 actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
                 continue

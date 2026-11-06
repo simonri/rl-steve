@@ -218,6 +218,7 @@ pub struct Env {
     pushes_given: i32,
     pub opponents: Vec<Opponent>,
     history2: [[f32; HIST_F]; HISTORY],
+    queued: Option<(Swing, usize)>, // the model's hit, on its way to the server
     since_hit: i32,
     since_hurt: i32,
 }
@@ -318,6 +319,7 @@ impl Env {
             pushes_given: 0,
             opponents: Vec::new(),
             history2: [[0.0; HIST_F]; HISTORY],
+            queued: None,
             since_hit: 99,
             since_hurt: 99,
             course,
@@ -606,15 +608,15 @@ impl Env {
     fn fight_step(&mut self, input: &Input) -> (f64, bool) {
         let centre = self.course.duel.as_ref().map_or([0.0; 3], |d| d.centre);
         let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
-        let my_health = self.player.health;
-        fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt);
+        let my_health = self.player.shown_health();
+        fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
         self.tick_count += 1;
         self.t += 1;
         self.hit = self.player.pick(&self.world);
         // Points: what was dealt and taken, and the result.
         let mut reward = self.points(P_TIME, -TICK_COST);
         let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
-        let taken = (my_health - self.player.health).max(0.0);
+        let taken = (my_health - self.player.shown_health()).max(0.0);
         reward += self.points(P_DEALT, HEALTH_POINTS * dealt as f64);
         reward += self.points(P_TAKEN, -HEALTH_POINTS * taken as f64);
         self.damage += taken as f64;
@@ -625,7 +627,7 @@ impl Env {
             }
         }
         let won = self.opponents.iter().all(|o| o.out);
-        let lost = !won && (self.player.health <= 0.0 || self.player.pos[1] < line);
+        let lost = !won && (self.player.shown_health() <= 0.0 || self.player.pos[1] < line);
         if won {
             reward += self.points(P_WON, FIGHT_RESULT);
         }
@@ -745,7 +747,7 @@ impl Env {
         head[12] = look.cos();
         head[13] = p.on_ground as i32 as f64;
         head[14] = p.sprinting as i32 as f64;
-        head[15] = p.health as f64 / 20.0;
+        head[15] = p.shown_health() as f64 / 20.0;
         head[16] = p.horizontal_collision as i32 as f64;
         head[17] = p.fall_distance.ln_1p() / 3.0;
         head[18] = p.hurt_time as f64 / 10.0;
@@ -935,17 +937,33 @@ impl Opponent {
     }
 }
 
-/// One tick of the game with opponents: bots choose (from where everyone is now), every player's left click is worked
-/// out before anyone moves, then everyone moves, then the server handles the hits with the places it knew when the
-/// clicks came, the player's first. `t` is the tick the bots go by; `since_hit`, `since_hurt` count up for the player.
+/// One tick of the game with opponents, in the order the game has them (checked against it, duel_real_vs_sim):
+/// bots choose from where everyone is now; the model's hit from last tick's click reaches the server (its packet comes a
+/// tick after the click), so an opponent it knocks flies off this tick; every left click is worked out before anyone
+/// moves; everyone moves; the opponents' hits land, their motion reaching the model before its next tick; counters
+/// count up last, so a hit's own tick shows 1, as the server's do. `queued` carries the model's hit to the next tick.
 #[allow(clippy::too_many_arguments)]
-pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Opponent], input: &Input, centre: [f64; 3], t: i32, since_hit: &mut i32, since_hurt: &mut i32) -> crate::player::Events {
+pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Opponent], input: &Input, centre: [f64; 3], t: i32, since_hit: &mut i32, since_hurt: &mut i32,
+                  queued: &mut Option<(Swing, usize)>) -> crate::player::Events {
     let me = View::of(player);
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
         let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit) };
         inputs.push(o.input(a));
     }
+    if let Some((s, j)) = queued.take() {
+        if !opponents[j].out {
+            let at = opponents[j].player.pos;
+            let (counted, broke) = combat::hit(&s, &mut opponents[j].player, at);
+            if counted {
+                *since_hit = 0;
+            }
+            if broke {
+                player.server_sprinting = false;
+            }
+        }
+    }
+    player.unseen = 0.0;
     player.begin(input);
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         o.player.begin(i);
@@ -953,35 +971,26 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.out { None } else { Some(combat::body(&o.player)) }).collect();
     let my_box = Some(combat::body(player));
     let target = if input.attack { combat::click(player, world, &boxes) } else { None };
-    let my_swing = Swing::of(player);
+    if let Some(j) = target {
+        *queued = Some((Swing::of(player), j));
+        combat::recoil(player);
+    }
     let my_pos = player.pos;
-    let their_pos: Vec<[f64; 3]> = opponents.iter().map(|o| o.player.pos).collect();
     let mut their_hits = Vec::new();
     for (j, (o, i)) in opponents.iter_mut().zip(&inputs).enumerate() {
         if i.attack && !o.out && combat::click(&mut o.player, world, &[my_box]).is_some() {
             their_hits.push((j, Swing::of(&o.player)));
+            combat::recoil(&mut o.player);
         }
     }
     let ev = player.rest(world, input);
+    // Players do not push each other: Hypixel's teams have collisionRule never, and so do the mod's (Fight18.gear).
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         if !o.out {
             o.player.rest(world, i);
         }
     }
-    *since_hit += 1;
-    *since_hurt += 1;
-    for o in opponents.iter_mut() {
-        o.since_hit += 1;
-    }
-    if let Some(j) = target {
-        let (counted, broke) = combat::hit(&my_swing, &mut opponents[j].player, their_pos[j]);
-        if counted {
-            *since_hit = 0;
-        }
-        if broke {
-            player.server_sprinting = false;
-        }
-    }
+    let before_hits = player.health;
     for (j, s) in their_hits {
         let (counted, broke) = combat::hit(&s, player, my_pos);
         if counted {
@@ -991,6 +1000,12 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         if broke {
             opponents[j].player.server_sprinting = false;
         }
+    }
+    player.unseen = before_hits - player.health;
+    *since_hit += 1;
+    *since_hurt += 1;
+    for o in opponents.iter_mut() {
+        o.since_hit += 1;
     }
     ev
 }

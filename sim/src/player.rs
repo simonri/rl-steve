@@ -101,6 +101,7 @@ pub struct Player {
     pub kb_enchant: i32,      // Knockback level of the held item
     pub sent_sprinting: bool, // the sprint state the client last told the server
     pub server_sprinting: bool, // the server's own idea of it: a sprinting hit clears it until the client starts again
+    pub unseen: f32, // damage from a hit this tick that its client shows only next tick (fight_tick)
     pub pending_knock: Option<[f64; 3]>, // a hit's motion, applied before the next tick as the packet is
     pub held: i32,
     pub server_motion: [f64; 3], // the server's deltaMovement for the player, sent back when it is hurt
@@ -142,6 +143,7 @@ impl Player {
             kb_enchant: 0,
             sent_sprinting: false,
             server_sprinting: false,
+            unseen: 0.0,
             pending_knock: None,
             held,
             server_motion: [0.0; 3],
@@ -254,6 +256,11 @@ impl Player {
         world.set(target[0], target[1], target[2], FULL);
         self.held -= 1;
         Some((target, hit.block))
+    }
+
+    /// Health as its own client shows it: a hit's damage only from the tick after it.
+    pub fn shown_health(&self) -> f32 {
+        (self.health + self.unseen).min(MAX_HEALTH)
     }
 
     /// One whole tick. Returns what happened along the way.
