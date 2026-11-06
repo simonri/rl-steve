@@ -544,3 +544,12 @@ assert climb(6, -3) == 9 and climb(6, 0) == 6, "down or level: as before"
 # Shift costs nothing on parkour: it can stop at an edge.
 assert "shift without blocks" not in open(auto_env.__file__).read()
 print("practice ok")
+# Whole hop courses that never win bring the hardest expert dial down, after two bad windows in a row.
+top = {"hop": {d: len(v) - 1 for d, v in FAMILIES["hop"].items()}}
+c = Curriculum(top)
+changes = [c.record("hop", "all", False) for _ in range(2 * curriculum.WINDOW)]
+assert [x for x in changes if x] == [("longer", 1)], changes
+assert c.levels["hop"]["count"] == len(FAMILIES["hop"]["count"]) - 1
+c = Curriculum(top)
+assert not any(c.record("hop", "all", i % 2 == 0) for i in range(3 * curriculum.WINDOW)), "half won: stays"
+print("step back ok")

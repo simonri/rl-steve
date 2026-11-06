@@ -85,6 +85,8 @@ FAMILIES = {
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
 EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster"), "stairs": ("steep", "way")}  # dials that wait for the rest of the course kind
+# When rounds with every dial at its limit almost never win, these come down first, hardest first.
+STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("longer", "faster"), "stairs": ("way", "steep")}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2))}
@@ -105,8 +107,7 @@ class Curriculum:
     def record(self, family, tested, clean):
         """One finished round. Returns (dial, new level) when that changed a dial."""
         if tested == "all":
-            self.all_rounds[family].append(clean)
-            return None
+            return self._record_all(family, clean)
         if tested is None:
             return None
         rounds = self.limit_rounds[family][tested]
@@ -131,6 +132,29 @@ class Curriculum:
             self.failed_once.discard((family, tested))
             self.lowered.add((family, tested))
             return self._move(family, tested, level - 1)
+        return None
+
+    def _record_all(self, family, clean):
+        """Each dial is judged alone, so every one of them can pass while the whole course at its limit never does:
+        then nothing can go up and nothing comes down. Two bad windows of whole-course rounds in a row lower the
+        hardest expert dial instead, so the course gets back to where it wins about half the time."""
+        rounds = self.all_rounds[family]
+        rounds.append(clean)
+        if len(rounds) < WINDOW:
+            return None
+        if sum(rounds) / WINDOW >= ALL_DIALS_FLOOR:
+            self.failed_once.discard((family, "all"))
+            return None
+        if (family, "all") not in self.failed_once:
+            self.failed_once.add((family, "all"))
+            rounds.clear()
+            return None
+        self.failed_once.discard((family, "all"))
+        for dial in STEP_BACK.get(family, ()):
+            if self.levels[family][dial] > 0:
+                self.lowered.add((family, dial))
+                return self._move(family, dial, self.levels[family][dial] - 1)
+        rounds.clear()
         return None
 
     def _all_dials_hold(self, family):

@@ -71,7 +71,8 @@ class AutoEnv(SkillEnv):
     tested = None
     mastered = ()  # course kinds that need less practice
     jump_wait, was_on_ground = 0, True
-    exam_family = None  # plays this kind with every dial at its limit, for a test or for watching
+    exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
+    exam_all = True
 
     def __init__(self, port, levels=None, render=False):
         self.levels = levels or curriculum.Curriculum().levels
@@ -87,8 +88,8 @@ class AutoEnv(SkillEnv):
     def set_levels(self, levels, mastered=(), practice=None):
         self.levels, self.mastered, self.practice = levels, mastered, practice
 
-    def set_exam(self, family):
-        self.exam_family = family
+    def set_exam(self, family, all_dials=True):
+        self.exam_family, self.exam_all = family, all_dials
 
     def reset(self, *, seed=None, options=None):
         """A very long course can reach past what the game has loaded yet. Then another round is drawn instead."""
@@ -106,7 +107,7 @@ class AutoEnv(SkillEnv):
 
     def _pick_stage(self):
         family = self.exam_family or curriculum.pick_family(self.levels, self.np_random, self.mastered, self.practice)
-        settings, tested = curriculum.draw(self.levels, family, self.np_random, "all" if self.exam_family else None)
+        settings, tested = curriculum.draw(self.levels, family, self.np_random, "all" if self.exam_family and self.exam_all else None)
         return family, settings, tested
 
     def _use_task(self, picked):

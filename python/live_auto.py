@@ -117,7 +117,7 @@ while True:
     levels = Curriculum(s.get("levels")).levels
     env.set_levels(levels)
     kinds = [f for f in FAMILIES if is_open(levels, f)]
-    env.set_exam(kinds[turn % len(kinds)])
+    env.set_exam(kinds[turn % len(kinds)], all_dials=False)  # the mix of courses it trains on, not only the hardest
     turn += 1
     info = episode(s)
     if info is None:
