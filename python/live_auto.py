@@ -3,6 +3,7 @@ import argparse
 import json
 import time
 import zipfile
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,7 @@ env = AutoEnv(a.port)
 env.realtime = True  # watchers see the full 4 seconds when it dies
 env.c.call(op="release")
 model, mtime = None, 0.0
-score = {f: [0, 0] for f in FAMILIES}
+score = defaultdict(lambda: [0, 0])  # course kinds added to a run later count from zero instead of stopping the viewer
 
 
 def status():
