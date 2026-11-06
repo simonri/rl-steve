@@ -133,7 +133,7 @@ class AutoEnv(SkillEnv):
         # Pushes: when in the round (a share of the time limit), which way and how hard. Placed in time once the limit is known.
         level = curriculum.PUSHES.index(t.get("push"))
         r = self.np_random
-        self.push_draws = [(float(r.uniform(0.1, 0.6)), float(r.random()), float(r.uniform(0, 22.5))) for _ in range(1 + int(r.random() < 0.5))] if level else []
+        self.push_draws = [(float(r.uniform(0.1, 0.6)), float(r.random()), float(r.uniform(0, 22.5))) for _ in range(int(r.integers(1, t.get("hits", 2) + 1)))] if level else []
         self.push_level = level
         self.push_spare = PUSH_SPARE_BLOCKS * len(self.push_draws)
         self.gap, self.heights, self.directions, self.yaw_range, self.start = 8, (0,), "axis", t.get("yaw", 180), "center"

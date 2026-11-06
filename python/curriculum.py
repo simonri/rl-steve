@@ -66,16 +66,18 @@ FAMILIES = {
         longer=(1.0, 1.5, 2.0),  # a diagonal that would need more than a stack gets shorter (skill_env._spec)
         faster=(None, 6, 5, 4),  # ticks per block with almost no spare time: chasing the record. 3 is faster than bridging can go.
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        hits=(2, 3),  # the most pushes in a round, each one checked to be savable
         goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
     ),
     "treenan": dict(
-        gap=(10, 15, 20, 25, 30),
+        gap=(10, 15, 20, 25, 30, 35, 40),  # a gap whose blocks would not fit one stack gets shorter (skill_env._treenan_spec)
         budget=(NORMAL, TIGHT, STRICT),
         ticks=(40, 30, 20, 15, 10, 7, 5, 4),  # the model already finished its hardest rounds inside 5 every time and inside 4 in about nine of ten
         height=(0, 2, 4, 6, 8, 10, 12),  # the other island moved up or down by up to this many blocks; a gap that then needs more than a stack gets shorter
         start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
         spots=("grass", "any top"),  # the goal on any flat top of the other island, up to 3 higher, not only its grass
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        hits=(2, 3),  # the most pushes in a round, each one checked to be savable
     ),
     # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
     "stairs": dict(
@@ -89,6 +91,7 @@ FAMILIES = {
         steep=(1.0, 1.5, 2.0, 3.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
         way=("up", "up or down"),  # down too: building a way down without falling off it
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        hits=(2, 3),  # the most pushes in a round, each one checked to be savable
         goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
     ),
     # Fresh Bedwars maps every round (bedwars_map.py): from the own base across void to another island.
@@ -103,14 +106,15 @@ FAMILIES = {
         budget=(ROOMY, NORMAL, TIGHT, STRICT, EXACT),  # par follows a walkable way, so a quarter over it is always enough
         ticks=(40, 30, 20, 15, 10, 7, 5),  # the model already finished its hardest maps inside 5 in 99 of 100
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        hits=(2, 3),  # the most pushes in a round, each one checked to be savable
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
-EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push", "goal"), "stairs": ("steep", "way", "push", "goal"),
-          "treenan": ("push", "spots"), "bedwars": ("push",)}  # dials that wait for the rest of the course kind
+EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push", "goal", "hits"), "stairs": ("steep", "way", "push", "goal", "hits"),
+          "treenan": ("push", "spots", "hits"), "bedwars": ("push", "hits")}  # dials that wait for the rest of the course kind
 # When rounds with every dial at its limit almost never win, these come down first, hardest first.
-STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("goal", "push", "longer", "faster"), "stairs": ("goal", "push", "way", "steep"),
-             "treenan": ("spots", "push"), "bedwars": ("push",)}
+STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("hits", "goal", "push", "longer", "faster"), "stairs": ("hits", "goal", "push", "way", "steep"),
+             "treenan": ("hits", "spots", "push"), "bedwars": ("hits", "push")}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2)), "bedwars": ("treenan", dict(gap=1))}
