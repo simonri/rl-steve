@@ -45,7 +45,7 @@ FAMILIES = {
         length=(4, 6, 8, 11, 14, 17, 20),
         holes=(False, True),
         yaw=YAW,
-        ticks=(40, 30, 20, 15, 12),  # 12 ticks a block is 1.7 blocks/s: walking pace, with room for the jumps
+        ticks=(40, 30, 20, 15, 12, 10, 8, 6),  # the model already finished its hardest paths inside 6 every time
         wind=("gentle", "tight", "around"),  # how often it turns, and if it can double back
         slope=("flat", "some steps", "stairs", "stairs and drops"),
         # Harder, and only open once all of the above is at its limit.
