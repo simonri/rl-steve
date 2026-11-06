@@ -42,7 +42,7 @@ start = np.cumsum([0] + nvec)
 attack = bias[start[8] : start[9]]
 assert attack[0] > attack[1], attack
 slot = bias[start[9] : start[10]]
-assert slot[0] > slot[1] and slot[0] > slot[2], slot
+assert slot[2] < slot[0] - 3 and slot[2] < slot[1] - 3, slot  # the sword is a rare choice at first
 for index, value in ta.MOVE_BIAS:
     assert bias[index] == value
 

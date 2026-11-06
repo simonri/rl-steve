@@ -50,7 +50,10 @@ POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan", "stairs": "Stairs", "bedwars": "Bedwars", "duel": "Duel"}
 
 
-NEW_ACTION_BIAS = {2: (1.0, -1.0), 3: (2.0, 0.0, 0.0)}  # a new left click starts at about one in nine, a new hotbar input at mostly "keep"
+# A new left click starts at about one in nine. A new hotbar input keeps the slot or takes the blocks, and takes the
+# sword rarely (about 1 in 100): with "keep" alone at 0.79, a sword was in hand most of the time on block courses and
+# a model that bridged well could no longer place (bridging fell from 0.85 to 0.1 in a test run).
+NEW_ACTION_BIAS = {2: (1.0, -1.0), 3: (3.0, 3.0, -1.0)}
 
 
 def transfer(policy, old_state):

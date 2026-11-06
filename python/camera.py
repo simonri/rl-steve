@@ -152,11 +152,17 @@ class Shots:
         self.hidden = self.hidden + 1 if not self._clear(self.shot[:3], head, local) else 0
         inside = not self._clear(self.shot[:3], self.shot[:3], local)  # a block was placed where the camera is
         if inside or self.lost >= LOST_FOR or self.hidden >= HIDDEN_FOR or math.dist(self.shot[:3], head) > MAX_DIST * 1.2:
-            # The rest of the way: from the player to the goal.
-            gx, gy, gz = env.goal_x + 0.5, 100 + 1 + env.dy, env.goal_z + 0.5
-            n = max(2, int(math.hypot(gx - x, gz - z)))
-            way = [(x + (gx - x) * i / n, y + (gy - y) * i / n + 1, z + (gz - z) * i / n) for i in range(n + 1)]
-            self.shot = self._frame(way + [head, (gx, gy + 1.6, gz)], head, local)
+            if getattr(env, "family", None) == "duel":
+                # A fight: the player and everyone still in it.
+                out = getattr(env, "out", [])
+                foes = [(p["pos"][0], p["pos"][1] + 1.6, p["pos"][2]) for i, p in enumerate(o.get("players", [])) if not (i < len(out) and out[i])]
+                self.shot = self._frame([head, (x, y, z)] + foes, head, local)
+            else:
+                # The rest of the way: from the player to the goal.
+                gx, gy, gz = env.goal_x + 0.5, 100 + 1 + env.dy, env.goal_z + 0.5
+                n = max(2, int(math.hypot(gx - x, gz - z)))
+                way = [(x + (gx - x) * i / n, y + (gy - y) * i / n + 1, z + (gz - z) * i / n) for i in range(n + 1)]
+                self.shot = self._frame(way + [head, (gx, gy + 1.6, gz)], head, local)
             self.lost = self.hidden = 0
             return list(self.shot)
         return None

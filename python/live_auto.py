@@ -73,6 +73,9 @@ def overlay(s):
     lines = [[["PPO + LSTM", sb.LABEL]], sb.BLANK, [["Now playing ", head, True], [families.get(env.family, {}).get("name", env.family), "light_purple"]]]
     if env.family == "hop":
         lines.append(sb.stat("Platforms", f"{env.landed}/{len(env.landing_order)}"))
+    elif env.family == "duel":
+        foes = [p["health"] for i, p in enumerate(env.obs.get("players", [])) if not (i < len(env.out) and env.out[i])]
+        lines.append(sb.stat("Health", f"{env.obs['health']:.0f} vs {' '.join(f'{h:.0f}' for h in foes) or '-'}"))
     elif env.blocks_given:
         lines.append(sb.stat("Blocks", f"{env.obs['held_count']} left"))
     lines += [sb.BLANK, [["Curriculum", head, True]]]
