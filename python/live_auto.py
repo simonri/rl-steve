@@ -50,8 +50,8 @@ def overlay(s):
     viewing session has gone."""
     families = s.get("families", {})
     head = "yellow"
-    lines = [[["PPO + LSTM", sb.LABEL]], sb.BLANK, [["Now playing", head, True]]]
-    lines.append([[families.get(env.family, {}).get("name", env.family), "light_purple"]])
+    # The game shows 15 rows at most: heading and task share one row, so there is room for a gap before Trained.
+    lines = [[["PPO + LSTM", sb.LABEL]], sb.BLANK, [["Now playing ", head, True], [families.get(env.family, {}).get("name", env.family), "light_purple"]]]
     if env.family == "hop":
         lines.append(sb.stat("Platforms", f"{env.landed}/{len(env.landing_order)}"))
     elif env.blocks_given:
@@ -61,7 +61,7 @@ def overlay(s):
         if row["open"]:
             done = row["level"] >= row["most"]
             lines.append(sb.stat(row["name"], "max" if done else f"{row['level']}/{row['most']}", "green" if done else sb.VALUE))
-    lines.append(sb.stat("Trained", sb.compact(s.get("steps", 0)), sb.VALUE, "steps"))  # the game shows 15 rows at most
+    lines += [sb.BLANK, sb.stat("Trained", sb.compact(s.get("steps", 0)), sb.VALUE, "steps")]
     won, played = sum(v[0] for v in score.values()), sum(v[1] for v in score.values())
     if played:  # all rounds shown since the viewer started, so it only ever grows
         lines.append(sb.stat("Solved", f"{won}/{played}", sb.VALUE, "rounds shown"))
