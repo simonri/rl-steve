@@ -56,7 +56,7 @@ def overlay(s):
         if row["open"]:
             lines.append(sb.stat(row["name"], f"{row['level']}/{row['most']}", sb.VALUE, f"here {score[f][0]}/{score[f][1]}"))
     lines.append(sb.stat("Model", sb.compact(s.get("steps", 0)), sb.VALUE, "steps"))
-    env.sidebar([["STEVE LEARNS ", "white", True], ["LIVE", "gold", True]], lines)
+    env.sidebar([["RL STEVE ", "white", True], ["LIVE", "gold", True]], lines)
 
 
 def episode(s):
