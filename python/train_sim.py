@@ -39,7 +39,6 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     os.environ.setdefault("RAYON_NUM_THREADS", str(a.sim_threads))
-    torch.backends.cudnn.benchmark = True
     Distribution.set_default_validate_args(False)
     # Far more decisions per hour than the game gives, so the schedules are counted further out.
     ta.EXAM_EVERY = 2_000_000
@@ -54,6 +53,7 @@ def main():
     kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=ta.GAMMA, gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.POLICY, seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
+    ta.fast_convolutions()
     if a.resume:
         # Loaded on the processor: a second model left on the card takes the scratch memory the fast convolutions need,
         # and learning then runs several times slower.

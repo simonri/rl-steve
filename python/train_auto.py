@@ -50,6 +50,13 @@ POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan"}
 
 
+def fast_convolutions():
+    """Stable-Baselines3 turns on cuDNN's deterministic mode when given a seed. That leaves only slow ways through the
+    convolutions' backward pass: a learning step took 500 ms instead of 120. Call after the model is made."""
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+
+
 def make_env(port, levels):
     def build():
         env = AutoEnv(port, levels=levels)
@@ -102,7 +109,9 @@ class ShortStretches(RecurrentRolloutBuffer):
         firsts = picked[torch.as_tensor(first, device=self.device)]
         states = [self._card(name)[firsts].swapaxes(0, 1).contiguous() for name in ("hidden_states_pi", "cell_states_pi", "hidden_states_vf", "cell_states_vf")]
         return RecurrentRolloutBufferSamples(
-            observations=pad(self._card("observations")[picked], float("nan")),  # MemoryPolicy skips these
+            # What it saw is most of a stretch's memory (600 MB for 512 rounds), so it goes to the card a batch at a
+            # time. With all of it there the card ran short, and cuDNN fell back to a convolution 4x slower.
+            observations=pad(torch.from_numpy(self.observations[batch_inds]).to(self.device), float("nan")),  # MemoryPolicy skips these
             actions=pad(self._card("actions")[picked]),
             old_values=column("values"),
             old_log_prob=column("log_probs"),
@@ -150,12 +159,39 @@ class SplitPPO(RecurrentPPO):
 
     def train(self):
         if not os.environ.get("PROFILE_LEARNING"):
+            # How many learning steps ran before the KL stop, and what each cost: tells a slower card from more steps.
+            policy, calls = self.policy, [0]
+            evaluate = policy.evaluate_actions
+
+            def counted(*args, **kwargs):
+                calls[0] += 1
+                return evaluate(*args, **kwargs)
+
+            policy.evaluate_actions = counted
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()  # what playing kept in the cache goes back, so the convolutions have room
+            started = time.perf_counter()
+            try:
+                super().train()
+            finally:
+                del policy.evaluate_actions
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
+                self.logger.record("train/free_card_mb", torch.cuda.mem_get_info()[0] // 2**20)
+            self.logger.record("train/steps", calls[0])
+            self.logger.record("train/ms_per_step", 1000 * (time.perf_counter() - started) / max(calls[0], 1))
+            return
+        # PROFILE_LEARNING=<file>: the third learning pass under the torch profiler, card and processor time per kernel.
+        self._profiled = getattr(self, "_profiled", 0) + 1
+        if self._profiled < 3:
             return super().train()
-        import cProfile, pstats
-        profile = cProfile.Profile()
-        profile.runcall(super().train)
+        from torch.profiler import ProfilerActivity, profile
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+            super().train()
+            torch.cuda.synchronize()
         with open(os.environ["PROFILE_LEARNING"], "w") as f:
-            pstats.Stats(profile, stream=f).sort_stats("tottime").print_stats(30)
+            f.write(prof.key_averages().table(sort_by="cuda_time_total", row_limit=25, max_name_column_width=70))
+            f.write(prof.key_averages().table(sort_by="cpu_time_total", row_limit=25, max_name_column_width=70))
         os.environ.pop("PROFILE_LEARNING")
 
     def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
@@ -484,5 +520,6 @@ if __name__ == "__main__":
         if a.start_from_recordings:
             start_from_recordings(model, a.start_from_recordings, a.recordings)
             model.save(out / "copied_recordings")
+    fast_convolutions()
     model.learn(a.steps, callback=Progress(vec, out, curriculum, a.threads), reset_num_timesteps=not a.resume)
     model.save(out / "final")
