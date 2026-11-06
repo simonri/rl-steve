@@ -7,6 +7,8 @@
 use std::collections::HashSet;
 
 use crate::clutch::{self, Cube, Push};
+use crate::combat::{self, Swing};
+use crate::duel::{self, Bot, View, ACTIONS, EXTRA, HIST_F};
 use crate::player::{Hit, Input, Keys, Player, FACE_STEP};
 use crate::world::World;
 
@@ -24,7 +26,8 @@ pub const MAP_START: usize = CUBE_START + (SIZE * SIZE * SIZE) as usize;
 pub const MAP_CELLS: usize = (MAP_SIDE * MAP_SIDE) as usize;
 pub const HISTORY_START: usize = MAP_START + 3 * MAP_CELLS;
 pub const HISTORY: usize = 5;
-pub const N_OBS: usize = HISTORY_START + 8 * HISTORY;
+pub const MOVE_OBS: usize = HISTORY_START + 8 * HISTORY; // what the movement model saw
+pub const N_OBS: usize = MOVE_OBS + EXTRA; // and what it sees with opponents (duel.rs)
 
 pub const TURN_STEPS: [f64; 11] = [-60.0, -15.0, -5.0, -2.0, -0.5, 0.0, 0.5, 2.0, 5.0, 15.0, 60.0];
 const JUMP_WAIT: i32 = 10;
@@ -55,9 +58,9 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 16] = [
+pub const PARTS: [&str; 20] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -74,6 +77,12 @@ const P_STUCK: usize = 12;
 const P_HOME: usize = 13;
 const P_CLUTCH: usize = 14;
 const P_SAVED: usize = 15;
+const P_DEALT: usize = 16;
+const P_TAKEN: usize = 17;
+const P_WON: usize = 18;
+const P_LOST: usize = 19;
+const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
+const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -120,6 +129,41 @@ pub struct Course {
     pub settle: bool,
     /// Pushes, as a hit would give them, in the order they come (clutch.rs).
     pub pushes: Vec<Push>,
+    /// 1.8 rules for healing (combat always follows them).
+    pub rules18: bool,
+    /// A fight instead of a way to a goal.
+    pub duel: Option<Duel>,
+}
+
+/// A fight: the model's gear and its opponents, each a scripted bot.
+#[derive(Clone)]
+pub struct Duel {
+    pub damage: f32, // attack attribute with the sword
+    pub armor: i32,
+    pub kb: i32,
+    pub centre: [f64; 3], // the middle of the arena: bots that push try to send it the other way
+    pub opponents: Vec<Rival>,
+}
+
+#[derive(Clone)]
+pub struct Rival {
+    pub bot: Bot,
+    pub pos: [f64; 3],
+    pub yaw: f32,
+    pub damage: f32,
+    pub armor: i32,
+    pub kb: i32,
+}
+
+/// An opponent in a round: its player, its bot, and the same key limits the model has.
+pub struct Opponent {
+    pub player: Player,
+    pub bot: Bot,
+    pub out: bool, // dead or fallen: no longer in the round
+    keys: [bool; 7],
+    key_age: [i32; 7],
+    since_sneak: i32,
+    since_hit: i32,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -172,6 +216,10 @@ pub struct Env {
     pushed: bool,        // a push came and it has not landed again yet
     push_airborne: bool, // it has left the ground since
     pushes_given: i32,
+    pub opponents: Vec<Opponent>,
+    history2: [[f32; HIST_F]; HISTORY],
+    since_hit: i32,
+    since_hurt: i32,
 }
 
 const K_FORWARD: usize = 0;
@@ -219,6 +267,13 @@ impl Env {
         let mut world = course.world.clone();
         let mut player = Player::new(course.home, course.home_yaw, course.home_pitch, course.blocks);
         settle(&mut player);
+        player.rules18 = course.rules18;
+        if let Some(d) = &course.duel {
+            player.attack_damage = d.damage;
+            player.armor = d.armor;
+            player.kb_enchant = d.kb;
+            player.slot = 1; // a fight starts with the sword in hand
+        }
         if course.settle {
             player.tick(&mut world, &Input::default());
         }
@@ -261,8 +316,17 @@ impl Env {
             pushed: false,
             push_airborne: false,
             pushes_given: 0,
+            opponents: Vec::new(),
+            history2: [[0.0; HIST_F]; HISTORY],
+            since_hit: 99,
+            since_hurt: 99,
             course,
         };
+        if let Some(d) = env.course.duel.clone() {
+            for r in &d.opponents {
+                env.opponents.push(Opponent::new(r, env.course.rules18));
+            }
+        }
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
@@ -376,8 +440,11 @@ impl Env {
     }
 
     /// One decision: AutoEnv.step with one tick. Returns the reward and whether the round is over.
-    pub fn step(&mut self, a: [i64; 8]) -> (f64, bool) {
+    pub fn step(&mut self, a: [i64; ACTIONS]) -> (f64, bool) {
         let (mv, strafe, sneak, use_, jump, sprint, yaw, pitch) = (a[0], a[1], a[2] != 0, a[3] != 0, a[4] != 0, a[5] != 0, a[6] as usize, a[7] as usize);
+        let (attack, slot) = (a[8] != 0, slot_choice(a[9]));
+        self.history2.rotate_left(1);
+        self.history2[HISTORY - 1] = [attack as i32 as f32, a[9] as f32 / 2.0];
         self.history.rotate_left(1);
         self.history[HISTORY - 1] = [mv as f32 / 2.0, strafe as f32 / 2.0, sneak as i32 as f32, use_ as i32 as f32 / 2.0, jump as i32 as f32, sprint as i32 as f32, yaw as f32 / 10.0, pitch as f32 / 10.0];
         let held = self.player.held;
@@ -387,8 +454,11 @@ impl Env {
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
-        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], ..Input::default() };
+        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot };
         self.maybe_push(before, &input);
+        if self.course.duel.is_some() {
+            return self.fight_step(&input);
+        }
         let ev = self.game_tick(&input);
         self.t += 1;
         let on_ground = self.player.on_ground;
@@ -527,6 +597,51 @@ impl Env {
             t: self.t,
             pushes: self.pushes_given,
             blocks_per_s: if success { (self.course.goal[0] as f64).hypot(self.course.goal[1] as f64) / (self.t as f64 / 20.0).max(0.05) } else { 0.0 },
+        };
+        (reward * REWARD_SCALE, done)
+    }
+
+    /// One tick of a fight: every player's left click is worked out before anyone moves, then everyone moves, then the
+    /// server handles the hits with the places it knew when the clicks came (combat.rs). AutoEnv._fight_tick.
+    fn fight_step(&mut self, input: &Input) -> (f64, bool) {
+        let centre = self.course.duel.as_ref().map_or([0.0; 3], |d| d.centre);
+        let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
+        let my_health = self.player.health;
+        fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt);
+        self.tick_count += 1;
+        self.t += 1;
+        self.hit = self.player.pick(&self.world);
+        // Points: what was dealt and taken, and the result.
+        let mut reward = self.points(P_TIME, -TICK_COST);
+        let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
+        let taken = (my_health - self.player.health).max(0.0);
+        reward += self.points(P_DEALT, HEALTH_POINTS * dealt as f64);
+        reward += self.points(P_TAKEN, -HEALTH_POINTS * taken as f64);
+        self.damage += taken as f64;
+        let line = self.fall_line();
+        for o in self.opponents.iter_mut() {
+            if !o.out && (o.player.health <= 0.0 || o.player.pos[1] < line) {
+                o.out = true;
+            }
+        }
+        let won = self.opponents.iter().all(|o| o.out);
+        let lost = !won && (self.player.health <= 0.0 || self.player.pos[1] < line);
+        if won {
+            reward += self.points(P_WON, FIGHT_RESULT);
+        }
+        if lost {
+            reward += self.points(P_LOST, -FIGHT_RESULT);
+            self.deaths += 1;
+        }
+        let done = won || lost || self.t >= self.course.limit;
+        self.report = Report {
+            success: won,
+            clean: won,
+            deaths: self.deaths,
+            damage: self.damage,
+            t: self.t,
+            pushes: self.pushes_given,
+            ..Report::default()
         };
         (reward * REWARD_SCALE, done)
     }
@@ -735,6 +850,22 @@ impl Env {
             out[i..i + 8].copy_from_slice(h);
             i += 8;
         }
+        // duel.features: the opponents, its own fighting state, the command, its last attack and hotbar inputs.
+        let p = &self.player;
+        let me = duel::Me {
+            slot: p.slot,
+            miss_lock: p.miss_lock,
+            resist: p.resist,
+            damage: p.attack_damage,
+            armor: p.armor,
+            server_sprinting: p.server_sprinting,
+            since_hit: self.since_hit,
+            since_hurt: self.since_hurt,
+            duel: self.course.duel.is_some(),
+        };
+        let views: Vec<View> = self.opponents.iter().map(|o| if o.out { View::default() } else { View::of(&o.player) }).collect();
+        let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
+        duel::features(p, &me, &views, k, &cube, &self.history2, &mut out[MOVE_OBS..]);
     }
 
     /// AutoEnv._can_place: a block in hand, aimed at a side in reach, the spot there empty and not where it stands.
@@ -767,4 +898,112 @@ fn settle(p: &mut Player) {
     p.server_fall = 0.0;
     p.health = crate::player::MAX_HEALTH;
     p.hurt_time = 0;
+}
+
+/// The hotbar input: 0 keeps the slot, 1 picks the blocks, 2 the sword.
+fn slot_choice(a: i64) -> Option<u8> {
+    match a {
+        1 => Some(0),
+        2 => Some(1),
+        _ => None,
+    }
+}
+
+impl Opponent {
+    /// Its action through the same key limits as the model's (Env.press, the shift rule for clicks).
+    fn input(&mut self, a: [i64; ACTIONS]) -> Input {
+        let wanted = [a[0] == 1, a[0] == 2, a[1] == 1, a[1] == 2, a[2] != 0, a[4] != 0, a[5] != 0];
+        for i in 0..7 {
+            self.key_age[i] += 1;
+            if wanted[i] == self.keys[i] || self.key_age[i] < MIN_KEY_TICKS {
+                continue;
+            }
+            self.keys[i] = wanted[i];
+            self.key_age[i] = 0;
+        }
+        self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
+        let k = &self.keys;
+        Input {
+            keys: Keys { forward: k[K_FORWARD], back: k[K_BACK], left: k[K_LEFT], right: k[K_RIGHT], jump: k[K_JUMP], shift: k[K_SNEAK], sprint: k[K_SPRINT] },
+            click: a[3] != 0 && self.since_sneak <= SNEAK_CLICK_TICKS,
+            turn_yaw: TURN_STEPS[a[6] as usize],
+            turn_pitch: TURN_STEPS[a[7] as usize],
+            attack: a[8] != 0,
+            slot: slot_choice(a[9]),
+        }
+    }
+}
+
+/// One tick of the game with opponents: bots choose (from where everyone is now), every player's left click is worked
+/// out before anyone moves, then everyone moves, then the server handles the hits with the places it knew when the
+/// clicks came, the player's first. `t` is the tick the bots go by; `since_hit`, `since_hurt` count up for the player.
+#[allow(clippy::too_many_arguments)]
+pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Opponent], input: &Input, centre: [f64; 3], t: i32, since_hit: &mut i32, since_hurt: &mut i32) -> crate::player::Events {
+    let me = View::of(player);
+    let mut inputs = Vec::with_capacity(opponents.len());
+    for o in opponents.iter_mut() {
+        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit) };
+        inputs.push(o.input(a));
+    }
+    player.begin(input);
+    for (o, i) in opponents.iter_mut().zip(&inputs) {
+        o.player.begin(i);
+    }
+    let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.out { None } else { Some(combat::body(&o.player)) }).collect();
+    let my_box = Some(combat::body(player));
+    let target = if input.attack { combat::click(player, world, &boxes) } else { None };
+    let my_swing = Swing::of(player);
+    let my_pos = player.pos;
+    let their_pos: Vec<[f64; 3]> = opponents.iter().map(|o| o.player.pos).collect();
+    let mut their_hits = Vec::new();
+    for (j, (o, i)) in opponents.iter_mut().zip(&inputs).enumerate() {
+        if i.attack && !o.out && combat::click(&mut o.player, world, &[my_box]).is_some() {
+            their_hits.push((j, Swing::of(&o.player)));
+        }
+    }
+    let ev = player.rest(world, input);
+    for (o, i) in opponents.iter_mut().zip(&inputs) {
+        if !o.out {
+            o.player.rest(world, i);
+        }
+    }
+    *since_hit += 1;
+    *since_hurt += 1;
+    for o in opponents.iter_mut() {
+        o.since_hit += 1;
+    }
+    if let Some(j) = target {
+        let (counted, broke) = combat::hit(&my_swing, &mut opponents[j].player, their_pos[j]);
+        if counted {
+            *since_hit = 0;
+        }
+        if broke {
+            player.server_sprinting = false;
+        }
+    }
+    for (j, s) in their_hits {
+        let (counted, broke) = combat::hit(&s, player, my_pos);
+        if counted {
+            *since_hurt = 0;
+            opponents[j].since_hit = 0;
+        }
+        if broke {
+            opponents[j].player.server_sprinting = false;
+        }
+    }
+    ev
+}
+
+impl Opponent {
+    /// An opponent standing where a round puts it, as after the mod's reset.
+    pub fn new(r: &Rival, rules18: bool) -> Opponent {
+        let mut p = Player::new(r.pos, r.yaw, 0.0, 0);
+        settle(&mut p);
+        p.rules18 = rules18;
+        p.attack_damage = r.damage;
+        p.armor = r.armor;
+        p.kb_enchant = r.kb;
+        p.slot = 1;
+        Opponent { player: p, bot: r.bot, out: false, keys: [false; 7], key_age: [MIN_KEY_TICKS; 7], since_sneak: SNEAK_CLICK_TICKS + 1, since_hit: 99 }
+    }
 }

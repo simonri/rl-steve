@@ -7,7 +7,8 @@ use pyo3::types::PyDict;
 use rayon::prelude::*;
 
 use crate::clutch::{self, Cube, Push};
-use crate::env::{Course, Env, Field, N_OBS, PARTS};
+use crate::duel::{self, Bot, View, ACTIONS, EXTRA, HIST_F};
+use crate::env::{fight_tick, Course, Duel, Env, Field, Opponent, Rival, HISTORY, MOVE_OBS, N_OBS, PARTS};
 use crate::player::{Input, Keys, Player, FACE_NAMES};
 use crate::world::{kind_for, World};
 
@@ -15,6 +16,12 @@ use crate::world::{kind_for, World};
 pub struct Single {
     world: World,
     player: Player,
+    opponents: Vec<Opponent>,
+    centre: [f64; 3],
+    t: i32,
+    since_hit: i32,
+    since_hurt: i32,
+    fall_line: f64, // below this an opponent is out, as in Env.fight_step
 }
 
 #[pymethods]
@@ -30,7 +37,7 @@ impl Single {
         for (x, y, z, name) in cells {
             world.set(x, y, z, kind_for(&name));
         }
-        Single { world, player: Player::new([0.0; 3], 0.0, 0.0, 0) }
+        Single { world, player: Player::new([0.0; 3], 0.0, 0.0, 0), opponents: Vec::new(), centre: [0.0; 3], t: 0, since_hit: 99, since_hurt: 99, fall_line: f64::MIN }
     }
 
     /// A new player standing at a spot, as after the mod's reset: nothing kept from before.
@@ -55,6 +62,26 @@ impl Single {
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before), sprinting: p.sprinting };
         clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch, ..Input::default() }, fall_line)
+    }
+
+    /// The player's gear and hand: attack attribute (1 plus the sword), armor points, Knockback level, slot (0 blocks,
+    /// 1 sword), and whether healing follows 1.8.
+    #[pyo3(signature = (damage, armor, kb, slot, rules18))]
+    fn set_gear(&mut self, damage: f32, armor: i32, kb: i32, slot: u8, rules18: bool) {
+        let p = &mut self.player;
+        (p.attack_damage, p.armor, p.kb_enchant, p.slot, p.rules18) = (damage, armor, kb, slot, rules18);
+    }
+
+    /// An opponent played by a scripted bot (duel.Bot by index), as the round's reset puts it.
+    #[pyo3(signature = (bot, pos, yaw, damage, armor, kb, rules18, centre, fall_line))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_opponent(&mut self, bot: i32, pos: [f64; 3], yaw: f32, damage: f32, armor: i32, kb: i32, rules18: bool, centre: [f64; 3], fall_line: f64) {
+        self.fall_line = fall_line;
+        self.opponents.push(Opponent::new(&Rival { bot: Bot::from_index(bot), pos, yaw, damage, armor, kb }, rules18));
+        self.centre = centre;
+        self.t = 0;
+        self.since_hit = 99;
+        self.since_hurt = 99;
     }
 
     fn set_block(&mut self, x: i32, y: i32, z: i32, name: &str) {
@@ -92,8 +119,21 @@ impl Single {
     }
 
     /// One tick: keys (forward, back, left, right, jump, sneak, sprint), a click, and the turn in degrees.
-    fn tick<'py>(&mut self, py: Python<'py>, keys: [bool; 7], click: bool, yaw: f64, pitch: f64) -> PyResult<Bound<'py, PyDict>> {
-        let ev = self.player.tick(&mut self.world, &Input { keys: to_keys(keys), click, turn_yaw: yaw, turn_pitch: pitch, ..Input::default() });
+    #[pyo3(signature = (keys, click, yaw, pitch, attack=false, slot=None))]
+    fn tick<'py>(&mut self, py: Python<'py>, keys: [bool; 7], click: bool, yaw: f64, pitch: f64, attack: bool, slot: Option<u8>) -> PyResult<Bound<'py, PyDict>> {
+        let input = Input { keys: to_keys(keys), click, turn_yaw: yaw, turn_pitch: pitch, attack, slot };
+        let ev = if self.opponents.is_empty() {
+            self.player.tick(&mut self.world, &input)
+        } else {
+            let ev = fight_tick(&mut self.world, &mut self.player, &mut self.opponents, &input, self.centre, self.t, &mut self.since_hit, &mut self.since_hurt);
+            self.t += 1;
+            for o in self.opponents.iter_mut() {
+                if !o.out && (o.player.health <= 0.0 || o.player.pos[1] < self.fall_line) {
+                    o.out = true;
+                }
+            }
+            ev
+        };
         let d = self.state(py)?;
         if let Some((t, s)) = ev.placed {
             d.set_item("placed", (t, s))?;
@@ -118,6 +158,33 @@ impl Single {
         d.set_item("health", p.health)?;
         d.set_item("hurt_time", p.hurt_time)?;
         d.set_item("crouch_pose", p.crouch_pose)?;
+        d.set_item("slot", p.slot)?;
+        d.set_item("miss_lock", p.miss_lock)?;
+        d.set_item("resist", p.resist)?;
+        d.set_item("attack_damage", p.attack_damage)?;
+        d.set_item("armor", p.armor)?;
+        d.set_item("server_sprinting", p.server_sprinting)?;
+        d.set_item("since_hit", self.since_hit)?;
+        d.set_item("since_hurt", self.since_hurt)?;
+        let players = pyo3::types::PyList::empty(py);
+        for o in &self.opponents {
+            let q = &o.player;
+            let e = PyDict::new(py);
+            e.set_item("pos", q.pos)?;
+            e.set_item("vel", q.dm)?;
+            e.set_item("yaw", q.yaw)?;
+            e.set_item("pitch", q.pitch)?;
+            e.set_item("health", q.health)?;
+            e.set_item("armor", q.armor)?;
+            e.set_item("damage", View::of(q).damage)?;
+            e.set_item("hurt_time", q.hurt_time)?;
+            e.set_item("on_ground", q.on_ground)?;
+            e.set_item("sprinting", q.sprinting)?;
+            e.set_item("crouching", q.crouch_pose)?;
+            e.set_item("out", o.out)?;
+            players.append(e)?;
+        }
+        d.set_item("players", players)?;
         if let Some(h) = p.pick(&self.world) {
             let hit = PyDict::new(py);
             hit.set_item("type", "block")?;
@@ -240,6 +307,21 @@ impl Batch {
             blocks: get(spec, "blocks")?,
             world,
             settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+            rules18: spec.get_item("rules18")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+            duel: match spec.get_item("duel")? {
+                Some(d) if !d.is_none() => {
+                    let d = d.cast::<PyDict>()?;
+                    let opponents: Vec<(i32, [f64; 3], f32, f32, i32, i32)> = get(d, "opponents")?;
+                    Some(Duel {
+                        damage: get(d, "damage")?,
+                        armor: get(d, "armor")?,
+                        kb: get(d, "kb")?,
+                        centre: get(d, "centre")?,
+                        opponents: opponents.into_iter().map(|(b, pos, yaw, damage, armor, kb)| Rival { bot: Bot::from_index(b), pos, yaw, damage, armor, kb }).collect(),
+                    })
+                }
+                _ => None,
+            },
             pushes: match spec.get_item("pushes")? {
                 Some(p) if !p.is_none() => p.extract::<Vec<(i32, i32, usize, f64, f64)>>()?.into_iter().map(to_push).collect(),
                 _ => Vec::new(),
@@ -259,7 +341,7 @@ impl Batch {
     /// One decision in every round at once. Writes what each sees after it, its reward and whether it ended.
     fn step(&mut self, py: Python<'_>, actions: PyReadonlyArray2<i64>, mut obs: PyReadwriteArray2<f32>, mut rewards: PyReadwriteArray1<f32>, mut dones: PyReadwriteArray1<bool>) -> PyResult<()> {
         let acts = actions.as_array();
-        let acts: Vec<[i64; 8]> = acts.rows().into_iter().map(|r| [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]).collect();
+        let acts: Vec<[i64; ACTIONS]> = acts.rows().into_iter().map(|r| std::array::from_fn(|i| r[i])).collect();
         let obs = obs.as_slice_mut()?;
         let rewards = rewards.as_slice_mut()?;
         let dones = dones.as_slice_mut()?;
@@ -363,5 +445,45 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("N_OBS", N_OBS)?;
     m.add_function(wrap_pyfunction!(kind_of, m)?)?;
     m.add_function(wrap_pyfunction!(push_for, m)?)?;
+    m.add_function(wrap_pyfunction!(combat_features, m)?)?;
+    m.add_function(wrap_pyfunction!(bot_action, m)?)?;
+    m.add("MOVE_OBS", MOVE_OBS)?;
+    m.add("EXTRA", EXTRA)?;
+    m.add("ACTIONS", ACTIONS)?;
     Ok(())
+}
+
+/// A player as Python has it: (pos, vel, yaw, pitch, health, armor, damage, hurt_time, on_ground, sprinting, crouching).
+type ViewTuple = ([f64; 3], [f64; 3], f32, f32, f32, i32, f32, i32, bool, bool, bool);
+
+fn to_view(v: &ViewTuple) -> View {
+    View { pos: v.0, vel: v.1, yaw: v.2, pitch: v.3, health: v.4, armor: v.5, damage: v.6, hurt_time: v.7, on_ground: v.8, sprinting: v.9, crouching: v.10 }
+}
+
+/// duel.features for the real game (and AutoEnv): the values after the movement model's, from what the game reports.
+/// me: (slot, miss_lock, resist, damage, armor, server_sprinting, since_hit, since_hurt, duel). history: the last
+/// HISTORY (attack, hotbar / 2) pairs, oldest first.
+#[pyfunction]
+#[pyo3(signature = (pos, yaw, pitch, crouching, me, enemies, k, solid, feet, history))]
+#[allow(clippy::too_many_arguments)]
+fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8, i32, i32, f32, i32, bool, i32, i32, bool), enemies: Vec<ViewTuple>, k: i32,
+                   solid: &str, feet: [i32; 3], history: Vec<[f32; HIST_F]>) -> Vec<f32> {
+    let mut p = Player::new(pos, yaw, pitch, 0);
+    p.crouch_pose = crouching;
+    let m = duel::Me { slot: me.0, miss_lock: me.1, resist: me.2, damage: me.3, armor: me.4, server_sprinting: me.5, since_hit: me.6, since_hurt: me.7, duel: me.8 };
+    let views: Vec<View> = enemies.iter().map(to_view).collect();
+    let mut h = [[0.0; HIST_F]; HISTORY];
+    for (i, v) in history.iter().rev().take(HISTORY).enumerate() {
+        h[HISTORY - 1 - i] = *v;
+    }
+    let mut out = vec![0.0; EXTRA];
+    duel::features(&p, &m, &views, k, &Cube::from_text(feet, solid), &h, &mut out);
+    out
+}
+
+/// duel.action for the real game: a scripted opponent's inputs this tick, in the model's action space.
+#[pyfunction]
+#[pyo3(signature = (bot, me, target, centre, t, since_hit))]
+fn bot_action(bot: i32, me: ViewTuple, target: ViewTuple, centre: [f64; 3], t: i32, since_hit: i32) -> Vec<i64> {
+    duel::action(Bot::from_index(bot), &to_view(&me), &to_view(&target), centre, t, since_hit).to_vec()
 }

@@ -51,6 +51,10 @@ impl Cube {
         Cube { feet, cells: text.bytes().map(|b| b == b'1').collect() }
     }
 
+    pub fn at_world(&self, c: [i32; 3]) -> bool {
+        self.at(c[0], c[1], c[2])
+    }
+
     fn at(&self, x: i32, y: i32, z: i32) -> bool {
         let (i, j, k) = (x - self.feet[0] + RADIUS, y - self.feet[1] + RADIUS, z - self.feet[2] + RADIUS);
         if i < 0 || j < 0 || k < 0 || i >= SIDE || j >= SIDE || k >= SIDE {
@@ -59,7 +63,7 @@ impl Cube {
         self.cells[((i * SIDE + j) * SIDE + k) as usize]
     }
 
-    fn world(&self) -> World {
+    pub fn world(&self) -> World {
         let f = self.feet;
         let mut w = World::new([f[0] - RADIUS, f[1] - RADIUS, f[2] - RADIUS], [f[0] + RADIUS, f[1] + RADIUS, f[2] + RADIUS]);
         for x in -RADIUS..=RADIUS {

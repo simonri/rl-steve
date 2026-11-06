@@ -249,12 +249,17 @@ impl Player {
 
     /// One whole tick. Returns what happened along the way.
     pub fn tick(&mut self, world: &mut World, input: &Input) -> Events {
-        let mut ev = Events::default();
-        // 0. A hit's motion packet from the last server tick, handled before this tick.
+        self.begin(input);
+        self.rest(world, input)
+    }
+
+    /// The start of a tick, up to where the client handles its keys: a hit's motion packet from the last server tick,
+    /// the mod's turn, the hotbar key, and the attack lock counting down. With several players, every one does this
+    /// and its left click (combat.rs) before anyone moves.
+    pub fn begin(&mut self, input: &Input) {
         if let Some(v) = self.pending_knock.take() {
             self.dm = v;
         }
-        // 1. The mod sets the keys and turns the view before the tick.
         self.turn(input.turn_yaw, input.turn_pitch);
         if let Some(s) = input.slot {
             self.slot = s;
@@ -262,6 +267,11 @@ impl Player {
         if self.miss_lock > 0 {
             self.miss_lock -= 1;
         }
+    }
+
+    /// The rest of the tick after `begin`: the right click, then moving.
+    pub fn rest(&mut self, world: &mut World, input: &Input) -> Events {
+        let mut ev = Events::default();
         let next_keys = input.keys;
         // 2. Minecraft.tick: pick, then the click.
         if input.click {
