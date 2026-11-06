@@ -62,7 +62,7 @@ FAMILIES = {
         obstacle=(None, ISLAND, PILLAR, WALL, SLALOM),
         ticks=(40, 30, 20, 15, 10, 7),
         # Harder, and only open once all of the above is at its limit.
-        longer=(1.0, 1.5),
+        longer=(1.0, 1.5, 2.0),  # a diagonal that would need more than a stack gets shorter (skill_env._spec)
         faster=(None, 6, 5, 4),  # ticks per block with almost no spare time: chasing the record. 3 is faster than bridging can go.
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
         goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
@@ -85,7 +85,7 @@ FAMILIES = {
         budget=(ROOMY, NORMAL, TIGHT),
         ticks=(60, 40, 30, 20),
         # Harder, and only open once all of the above is at its limit.
-        steep=(1.0, 1.5, 2.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
+        steep=(1.0, 1.5, 2.0, 3.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
         way=("up", "up or down"),  # down too: building a way down without falling off it
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
         goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
