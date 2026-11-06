@@ -207,7 +207,7 @@ pub struct Env {
     jump_wait: i32,
     was_on_ground: bool,
     history: [[f32; 8]; HISTORY],
-    pub parts: [f64; 16],
+    pub parts: [f64; PARTS.len()],
     pub report: Report,
     hit: Option<Hit>,
     k: i32,
@@ -307,7 +307,7 @@ impl Env {
             jump_wait: 0,
             was_on_ground: true,
             history: [[0.0; 8]; HISTORY],
-            parts: [0.0; 16],
+            parts: [0.0; PARTS.len()],
             report: Report::default(),
             hit: None,
             k,
@@ -657,7 +657,8 @@ impl Env {
             }
         }
         let held = self.player.held;
-        self.player = Player::new(h, self.course.home_yaw, self.course.home_pitch, held);
+        let old = std::mem::replace(&mut self.player, Player::new(h, self.course.home_yaw, self.course.home_pitch, held));
+        self.player.keep_gear(&old); // the inventory and the rules stay; the mod's respawn only moves the player
         settle(&mut self.player);
         self.history = [[0.0; 8]; HISTORY];
         self.release_inputs();

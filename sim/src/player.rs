@@ -149,6 +149,15 @@ impl Player {
         }
     }
 
+    /// Carries over what a respawn keeps: the inventory's gear and slot, and the rules.
+    pub fn keep_gear(&mut self, old: &Player) {
+        self.rules18 = old.rules18;
+        self.attack_damage = old.attack_damage;
+        self.armor = old.armor;
+        self.kb_enchant = old.kb_enchant;
+        self.slot = old.slot;
+    }
+
     pub fn height(&self) -> f64 {
         if self.crouch_pose {
             CROUCH_HEIGHT

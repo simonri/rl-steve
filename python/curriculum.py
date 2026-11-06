@@ -23,6 +23,7 @@ FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-
 CLIFFS = (-12, -8, -4, 0, 2, 4, 6)  # far down or well up: a way down to build, or a climb, inside a stack
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
 EXACT = (1.25, 3)  # a quarter over a walkable bridge's need: little room for a wasted block
+BOTS = ("dummy", "walker", "strafer", "combo", "pusher")  # duel.rs Bot, easiest first
 PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
 
 FAMILIES = {
@@ -94,6 +95,16 @@ FAMILIES = {
         hits=(2, 3),  # the most pushes in a round, each one checked to be savable
         goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
     ),
+    # A fight against scripted opponents (duel.rs), with 1.8 combat as on Hypixel (combat18.py).
+    "duel": dict(
+        bot=BOTS,
+        arena=("platform", "island", "bridge"),  # a wide floor, an island with void all round, a bridge between two islands
+        distance=(4, 7, 11),  # blocks to the opponent at the start
+        yaw=YAW,
+        gear=("wood", "stone", "iron", "theirs better"),  # swords and armor as bought in Bedwars; the last: the opponent is a step ahead
+        kb=(False, True),  # both have a Knockback stick's worth of knockback on the sword
+        count=(1, 2),  # opponents
+    ),
     # Fresh Bedwars maps every round (bedwars_map.py): from the own base across void to another island.
     "bedwars": dict(
         legs=(1, 2, 3, 4),  # gaps to cross: straight over, or by way of one to three small islands
@@ -111,10 +122,10 @@ FAMILIES = {
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
 EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push", "goal", "hits"), "stairs": ("steep", "way", "push", "goal", "hits"),
-          "treenan": ("push", "spots", "hits"), "bedwars": ("push", "hits")}  # dials that wait for the rest of the course kind
+          "treenan": ("push", "spots", "hits"), "bedwars": ("push", "hits"), "duel": ("count",)}  # dials that wait for the rest of the course kind
 # When rounds with every dial at its limit almost never win, these come down first, hardest first.
 STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("hits", "goal", "push", "longer", "faster"), "stairs": ("hits", "goal", "push", "way", "steep"),
-             "treenan": ("hits", "spots", "push"), "bedwars": ("hits", "push")}
+             "treenan": ("hits", "spots", "push"), "bedwars": ("hits", "push"), "duel": ("count",)}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2)), "bedwars": ("treenan", dict(gap=1))}

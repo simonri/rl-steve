@@ -111,6 +111,16 @@ def attack(attacker, victim, sword="wood", sharpness=0, kb_enchant=0, armor_poin
     return motion, counted and level > 0
 
 
+def duel_gear(choice):
+    """(attack attribute, armor points) for the model and its opponents, by the duel course's gear dial."""
+    tiers = {"wood": ("wood", "leather"), "stone": ("stone", "leather"), "iron": ("iron", "iron")}
+    if choice == "theirs better":
+        return (ATTACK_BASE + SWORDS["stone"], bedwars_armor("leather")), (ATTACK_BASE + SWORDS["iron"], bedwars_armor("iron"))
+    sword, armor = tiers[choice]
+    gear = (ATTACK_BASE + SWORDS[sword], bedwars_armor(armor))
+    return gear, gear
+
+
 def vectors():
     """Cases with their answers, for the simulator's and the mod's tests."""
     out = []

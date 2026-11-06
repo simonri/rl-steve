@@ -13,7 +13,7 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 import curriculum
 import mcsim
-from auto_env import MAP_RADIUS, RADIUS, TURN_STEPS, AutoEnv
+from auto_env import MAP_RADIUS, RADIUS, RULES18, TURN_STEPS, AutoEnv
 from skill_env import FIRST_CLEAR, NO_BLOCKS, Y
 
 KINDS = {}
@@ -34,7 +34,7 @@ class CourseMaker(AutoEnv):
         self.dirty = list(FIRST_CLEAR)
         self.camera_every = 0.0
         self.observation_space = gym.spaces.Box(-5.0, 5.0, (AutoEnv.N_OBS,), np.float32)
-        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS)])
+        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2, 3])
         self._np_random, _ = seeding.np_random(seed)
 
     def draw(self, seed=None):
@@ -75,6 +75,9 @@ class CourseMaker(AutoEnv):
             home=[float(v) for v in spec["pos"]], yaw=float(spec["yaw"]), pitch=float(spec["pitch"]), blocks=int(spec["blocks"]), boxes=boxes, cells=cells, lo=lo, hi=hi,
             settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
             pushes=[(int(a), int(b), int(c), float(d), float(e)) for a, b, c, d, e in self.pushes],
+            rules18=RULES18,
+            duel=dict(damage=float(self.duel["damage"]), armor=int(self.duel["armor"]), kb=int(self.duel["kb"]), centre=[float(v) for v in self.duel["centre"]],
+                      opponents=[(int(b), [float(v) for v in p], float(y), float(d), int(a), int(k)) for b, p, y, d, a, k in self.duel["opponents"]]) if self.family == "duel" else None,
         ), dict(family=self.family, tested=self.tested, at=[self.levels[self.family][d] for d in curriculum.FAMILIES[self.family]])
 
 
@@ -106,7 +109,7 @@ class SimVecEnv(VecEnv):
         return self.obs.copy()
 
     def step_async(self, actions):
-        self.actions = np.ascontiguousarray(actions, np.int64).reshape(self.num_envs, 8)
+        self.actions = np.ascontiguousarray(actions, np.int64).reshape(self.num_envs, mcsim.ACTIONS)
 
     def step_wait(self):
         self.batch.step(self.actions, self.obs, self.rewards, self.dones)
@@ -164,6 +167,13 @@ class FakeClient:
         pass
 
     def call(self, op=None, **msg):
+        if op == "gear":
+            self.single.set_gear(float(msg["damage"]), int(msg["armor"]), int(msg["kb"]), int(msg["slot"]), bool(msg["rules18"]))
+            return self._obs(self.single.state())
+        if op == "opponent":
+            self.single.add_opponent(int(msg["bot"]), [float(v) for v in msg["pos"]], float(msg["yaw"]), float(msg["damage"]), int(msg["armor"]), int(msg["kb"]),
+                                     bool(msg["rules18"]), [float(v) for v in msg["centre"]], float(msg["fall_line"]))
+            return self._obs(self.single.state())
         if op == "push":
             self.single.push([float(v) for v in msg["vel"]])
             return {"ok": True}
@@ -211,5 +221,5 @@ class FakeClient:
         self.keys = [bool(a.get(k, False)) for k in ("forward", "back", "left", "right", "jump", "sneak", "sprint")]
         s = None
         for _ in range(ticks):
-            s = self.single.tick(self.keys, bool(a.get("use", False)), float(a.get("yaw", 0.0)), float(a.get("pitch", 0.0)))
+            s = self.single.tick(self.keys, bool(a.get("use", False)), float(a.get("yaw", 0.0)), float(a.get("pitch", 0.0)), bool(a.get("attack", False)), a.get("hotbar"))
         return self._obs(s, s.get("placed"))

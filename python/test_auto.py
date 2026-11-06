@@ -5,6 +5,7 @@ import math
 import numpy as np
 
 import curriculum
+import mcsim
 from auto_env import DEATH_COST, HEAD, KNOWN, LOOK_UP_COST, NO_TURN, PLACE_BONUS, RADIUS, VIEW_SIZE, AutoEnv
 from curriculum import FAMILIES, Curriculum, draw
 from jump_physics import hits_pole, jump_possible
@@ -296,7 +297,7 @@ env.goal_x, env.goal_z, env.dy, env.par, env.used, env.landed = 3, 2, 0, 1, 0, 0
 env.landing_order = [(3, Y + 1, 2)]
 a, b = env._vec(state(yaw=44.0, blocks=world)), env._vec(state(yaw=46.0, blocks=world))
 assert np.abs(a[:HEAD] - b[:HEAD]).max() < 0.15, np.abs(a[:HEAD] - b[:HEAD]).max()
-assert a.shape == (AutoEnv.N_OBS - 8 * HISTORY,) and VIEW_SIZE == 11 ** 3
+assert a.shape == (AutoEnv.N_OBS - 8 * HISTORY - mcsim.EXTRA,) and VIEW_SIZE == 11 ** 3
 # The view reaches 5 blocks all around, also behind and below.
 for block in ((-5, 0, 0), (5, 0, 0), (0, 0, 5), (0, 0, -5), (0, -5, 0), (0, 5, 0)):
     x, y, z = block
@@ -426,7 +427,7 @@ assert env.parts.get("closer than ever", 0.0) == before, "a block on ground alre
 # One decision is one tick, and a click still only happens once per tick.
 env = make(count=2, takeoff="block", seed=12)
 begin(env)
-env.delayed.append(np.zeros(AutoEnv.N_OBS - 8 * HISTORY, np.float32))
+env.delayed.append(np.zeros(AutoEnv.N_OBS - 8 * HISTORY - mcsim.EXTRA, np.float32))
 ticks = len(env.c.steps)
 env.step([0, 0, 0, 1, 0, 0, NO_TURN, NO_TURN])
 assert len(env.c.steps) == ticks + 1
@@ -462,14 +463,14 @@ for name in a._fields:
         assert x.shape == y.shape and torch.allclose(torch.nan_to_num(x.float()), y.float()), name
 assert torch.isnan(a.observations[:, 0]).sum() == (a.mask == 0).sum()
 # The eyes skip marked padding and give it nothing, and see the played ticks as they would alone.
-policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
+policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11, 2, 3]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
 played = torch.rand(3, AutoEnv.N_OBS)
 padded = torch.cat([played, torch.full((2, AutoEnv.N_OBS), float("nan"))])
 with torch.no_grad():
     both, alone = policy.extract_features(padded), policy.extract_features(played)
 assert torch.allclose(both[:3], alone, atol=1e-6) and (both[3:] == 0).all()
 # Copying recordings of different lengths gives a finite loss: their padding goes through the whole model.
-rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, 8), np.int64)) for n in (3, 7)]
+rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, 10), np.int64)) for n in (3, 7)]
 distribution, actions, real = train_auto._whole_rounds(policy, rounds, "cpu")
 assert torch.isfinite((distribution.log_prob(actions) * real).sum())
 print("batches ok")

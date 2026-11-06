@@ -45,6 +45,7 @@ impl Single {
         let mut p = Player::new(pos, yaw, pitch, held);
         p.on_ground = true;
         p.dm = [0.0, -0.0784, 0.0];
+        p.keep_gear(&self.player); // as Env.respawn: the inventory and the rules stay
         self.player = p;
     }
 
