@@ -56,15 +56,15 @@ def overlay(s):
         lines.append(sb.stat("Platforms", f"{env.landed}/{len(env.landing_order)}"))
     elif env.blocks_given:
         lines.append(sb.stat("Blocks", f"{env.obs['held_count']} left"))
-    won, played = score[env.family]
-    if played:
-        lines.append(sb.stat("Solved", f"{won}/{played}", sb.VALUE, "while watched"))
     lines += [sb.BLANK, [["Curriculum", head, True]]]
     for f, row in families.items():
         if row["open"]:
             done = row["level"] >= row["most"]
             lines.append(sb.stat(row["name"], "max" if done else f"{row['level']}/{row['most']}", "green" if done else sb.VALUE))
     lines += [sb.BLANK, sb.stat("Trained", sb.compact(s.get("steps", 0)), sb.VALUE, "steps")]
+    won, played = sum(v[0] for v in score.values()), sum(v[1] for v in score.values())
+    if played:  # all rounds shown since the viewer started, so it only ever grows
+        lines.append(sb.stat("Solved", f"{won}/{played}", sb.VALUE, "rounds shown"))
     env.sidebar([["Minecraft RL Agent", "gold", True]], lines)
 
 
