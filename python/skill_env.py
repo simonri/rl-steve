@@ -245,7 +245,9 @@ class SkillEnv(gym.Env):
         for _ in range(40):
             target = "straight" if r.random() < 0.5 else "diagonal"
             gap = int(r.integers(self.map_gaps[0], self.map_gaps[1] + 1))
-            placed, (gx, gy, gz) = data.layout(target, gap, r, Y)
+            most = getattr(self, "map_rise", 0)
+            rise = int(r.integers(-most, most + 1)) if most else 0  # the other island moved up or down
+            placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise)
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
             low, high = min(Y, gy) + 2, max(Y, gy) + 3
             self.blocked = {(x, z) for (x, y, z) in placed if low <= y <= high}

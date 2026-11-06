@@ -48,6 +48,8 @@ FACES_3D = {"north": (0, 0, -1), "south": (0, 0, 1), "west": (-1, 0, 0), "east":
 FOUR = ((1, 0), (0, 1), (-1, 0), (0, -1))
 MAX_HEIGHT_CHANGE = 10  # above or below the start, on long courses
 FAR_JUMP = (4, 3)  # just inside what the jump math allows from a block
+MOVED_ON = 1.5  # blocks from where it last was to count as going somewhere
+DETOUR_TICKS = 200  # longest it may go around something without getting closer: 10 s
 
 
 CUBE_START = HEAD + KNOWN
@@ -123,10 +125,15 @@ class AutoEnv(SkillEnv):
             self.extras = t["obstacle"]
             self.gap = int((max(t["gap"], 8) if t["obstacle"] else t["gap"]) * t.get("longer", 1.0))
             self.heights, self.directions, self.start = t["heights"], t["directions"], t["start"]
+        elif self.family == "stairs":
+            # The goal as many blocks up as the gap is long: 45 degrees, one step up per block built ahead.
+            self.extras = None
+            self.gap, self.heights, self.directions, self.start = t["rise"], (t["rise"],), t["directions"], t["start"]
         else:
             self.extras = TREENAN
             self.goal_half, self.field_margin, self.fall_margin = 1, 18, 6.0
             self.map_gaps = (10, t["gap"])
+            self.map_rise = t.get("height", 0)
 
     def _spec(self):
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()
@@ -504,6 +511,15 @@ class AutoEnv(SkillEnv):
         self.visited = set()
         super()._begin_episode()
         self.closest_block = math.hypot(self.goal_x, self.goal_z) - 1.0  # the edge of the start platform
+        self._anchor()
+
+    def _anchor(self):
+        """Where it was when it last moved on: being stuck means standing about here, not just being no closer."""
+        self.anchor, self.since_moved = list(self.obs["pos"]), 0
+
+    def _respawn(self):
+        super()._respawn()
+        self._anchor()
 
     def _wait_dead(self):
         """It sees nothing while dead, so only people watching have to wait for it."""
@@ -568,7 +584,13 @@ class AutoEnv(SkillEnv):
             for _ in range(DAMAGE_SETTLE_TICKS):  # damage from this landing arrives a moment later
                 o = self.c.step()
             self.obs = o
-        stalled = not (success or fell) and self.since_best >= STALL_TICKS
+        # Stuck: no closer for 2 s and still about where it was then. A way around something first leads away from the
+        # goal, so moving on counts too, for up to 10 s without getting any closer.
+        if math.dist(o["pos"], self.anchor) > MOVED_ON:
+            self.anchor, self.since_moved = list(o["pos"]), 0
+        else:
+            self.since_moved += 1
+        stalled = not (success or fell) and (self.since_best >= STALL_TICKS and self.since_moved >= STALL_TICKS or self.since_best >= DETOUR_TICKS)
         lost = max(0.0, health - o["health"])
         reward += self._points("fall damage", -(0.5 * lost))
         self.damage += lost

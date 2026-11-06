@@ -65,13 +65,23 @@ FAMILIES = {
         gap=(10, 15, 20, 25, 30),
         budget=(NORMAL, TIGHT, STRICT),
         ticks=(40, 30, 20, 15, 10, 7),
+        height=(0, 2, 4, 6, 8),  # the other island moved up or down by up to this many blocks
+    ),
+    # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
+    "stairs": dict(
+        rise=(3, 5, 8, 12, 16),
+        yaw=YAW,
+        start=("edge", "center"),
+        directions=("axis", "eight"),
+        budget=(ROOMY, NORMAL, TIGHT),
+        ticks=(60, 40, 30, 20),
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
 EXPERT = {"hop": ("far", "mix", "bend", "longer"), "path": ("wide_holes", "longer"), "bridge": ("longer", "faster")}  # dials that wait for the rest of the course kind
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
-FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2))}
+FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2))}
 
 
 class Curriculum:

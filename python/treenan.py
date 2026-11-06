@@ -67,9 +67,10 @@ class Treenan:
             climb = self.start[1] + MAX_CLIMB
             self.spots[name] = [s for s in flat_spots(self.cells, box) if drop <= s[1] <= climb]
 
-    def layout(self, target, gap, rng, base_y):
+    def layout(self, target, gap, rng, base_y, rise=0):
         """Moves the bed island so the start spot is at (0, base_y, 0), and the other island so the gap between
-        the edges facing each other is the given number of blocks. Heights stay as they are on the map."""
+        the edges facing each other is the given number of blocks. Heights are as on the map, with the other island
+        `rise` blocks higher (or lower when negative)."""
         sx, sy, sz = self.start
         move = (-sx, base_y - sy, -sz)
         edge, goal_edge, name = (EDGE_STRAIGHT, EDGE_CENTER, "center") if target == "straight" else (EDGE_DIAGONAL, EDGE_SIDE, "side")
@@ -79,7 +80,7 @@ class Treenan:
         else:
             step = round(gap / math.sqrt(2))
             near = (start_edge[0] + step + 1, start_edge[1] + step + 1)
-        other = (near[0] - goal_edge[0], base_y - sy, near[1] - goal_edge[1])
+        other = (near[0] - goal_edge[0], base_y - sy + rise, near[1] - goal_edge[1])
         placed = {(c[0] + move[0], c[1] + move[1], c[2] + move[2]): s for c, s in self.parts["start"].items()}
         for c, s in self.parts[name].items():
             placed[(c[0] + other[0], c[1] + other[1], c[2] + other[2])] = s

@@ -47,7 +47,7 @@ TARGET_KL = 0.02
 # being able to train anything before it, auto5 never learned to bridge in 250k decisions, where auto4 did in 50k.
 POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_lstm=False, enable_critic_lstm=False,
               net_arch=dict(pi=[256], vf=[256]), activation_fn=torch.nn.SiLU)
-NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan"}
+NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan", "stairs": "Stairs"}
 
 
 def fast_convolutions():
@@ -227,6 +227,14 @@ class Progress(BaseCallback):
 
     def _csv(self, name, header):
         path = self.out / name
+        if path.exists():
+            with open(path) as f:
+                first = f.readline().strip()
+            if first != ",".join(header):  # new course kinds or columns: keep the old log beside the new one
+                n = 1
+                while (self.out / f"{path.stem}_before_{n}.csv").exists():
+                    n += 1
+                path.rename(self.out / f"{path.stem}_before_{n}.csv")
         new = not path.exists()
         f = open(path, "a", newline="")
         w = csv.writer(f)

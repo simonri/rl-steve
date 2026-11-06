@@ -9,7 +9,7 @@
   color-scheme: light;
   --surface: #fcfcfb; --panel: #ffffff; --grid: #e8e7e2; --border: #e0dfd9;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #6f6e69;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #8a5cd1;
   --good: #008300; --critical: #c42b2a;
 }
 @media (prefers-color-scheme: dark) {
@@ -17,7 +17,7 @@
     color-scheme: dark;
     --surface: #1a1a19; --panel: #222220; --grid: #33332f; --border: #3a3a36;
     --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #a09f95;
-    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #a07ee6;
     --good: #4fb04f; --critical: #e66767;
   }
 }
@@ -100,7 +100,7 @@ const col = name => getComputedStyle(document.documentElement).getPropertyValue(
 const NS = "http://www.w3.org/2000/svg";
 let range = Infinity, data = null;
 
-const FAMILY_SERIES = [["hop", "Parkour", "--series-1"], ["path", "Väg", "--series-2"], ["bridge", "Bro", "--series-3"], ["treenan", "Treenan", "--series-4"]];
+const FAMILY_SERIES = [["hop", "Parkour", "--series-1"], ["path", "Väg", "--series-2"], ["bridge", "Bro", "--series-3"], ["treenan", "Treenan", "--series-4"], ["stairs", "Trappa", "--series-5"]];
 const CHARTS = [
   { id: "levels", auto: true, title: "Nivå per banatyp (reglagesteg)", format: v => num(v, 0), series: FAMILY_SERIES.map(([k, name, color]) => ({ name, color, source: "levels", value: r => r[`${k}_level`] })) },
   { id: "clean", auto: true, title: "Rundor utan död per banatyp", max: 1, format: pct, series: FAMILY_SERIES.map(([k, name, color]) => ({ name, color, source: "levels", value: r => r[`${k}_clean`] })) },

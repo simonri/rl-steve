@@ -41,7 +41,7 @@ def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 40
     rng = np.random.default_rng(1)
     worst, ticks, bad = 0.0, 0, 0
-    families = ["hop", "path", "bridge", "bridge", "treenan"]
+    families = ["hop", "path", "bridge", "bridge", "treenan", "stairs"]
     ref = None
     for n in range(rounds):
         levels = curriculum.Curriculum().levels

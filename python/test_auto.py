@@ -467,6 +467,21 @@ assert w["hop"] == 3.0 and w["path"] == 1.0 and w["bridge"] == 2.0, w
 rng = np.random.default_rng(0)
 picked = Counter(curriculum.pick_family(c.levels, rng, (), w) for _ in range(3000))
 assert picked["hop"] > 2.5 * picked["path"], picked
+# A staircase climbs one block per block: the goal is as high as the gap is long, straight ahead.
+from sim_env import CourseMaker
+lv = Curriculum().levels
+lv["stairs"]["rise"] = 2
+m = CourseMaker(lv)
+m.set_exam("stairs")
+spec, meta = m.draw(seed=3)
+gap = max(abs(spec["goal"][0]), abs(spec["goal"][1])) - 4
+assert meta["family"] == "stairs" and spec["dy"] == 8 and gap == 8, (spec["goal"], spec["dy"])
+# The other Treenan island can sit higher or lower than the map has it.
+lv["treenan"]["height"] = 4
+m = CourseMaker(lv)
+m.set_exam("treenan")
+rises = {m.draw(seed=s)[0]["dy"] for s in range(12)}
+assert len(rises) > 3, rises
 # Shift costs nothing on parkour: it can stop at an edge.
 assert "shift without blocks" not in open(auto_env.__file__).read()
 print("practice ok")

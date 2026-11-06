@@ -30,6 +30,8 @@ const JUMP_WAIT: i32 = 10;
 const MIN_KEY_TICKS: i32 = 2;
 const SNEAK_CLICK_TICKS: i32 = 2;
 const STALL_TICKS: i32 = 40;
+const MOVED_ON: f64 = 1.5; // blocks from where it last was to count as going somewhere
+const DETOUR_TICKS: i32 = 200; // longest it may go around something without getting closer: 10 s
 const MAX_DEATHS: i32 = 2;
 const DAMAGE_SETTLE_TICKS: i32 = 3;
 const REWARD_SCALE: f64 = 0.1;
@@ -140,6 +142,8 @@ pub struct Env {
     visited: HashSet<(i32, i32)>,
     best: f64,
     since_best: i32,
+    anchor: [f64; 3],
+    since_moved: i32,
     ground_distance: f64,
     used: i32,
     deaths: i32,
@@ -209,6 +213,8 @@ impl Env {
             visited: HashSet::new(),
             best: 0.0,
             since_best: 0,
+            anchor: course.home,
+            since_moved: 0,
             ground_distance: 0.0,
             used: 0,
             deaths: 0,
@@ -421,7 +427,16 @@ impl Env {
             }
             self.hit = self.player.pick(&self.world);
         }
-        let stalled = !(success || fell) && self.since_best >= STALL_TICKS;
+        // Stuck: no closer for 2 s and still about where it was then. A way around something first leads away from the
+        // goal, so moving on counts too, for up to 10 s without getting any closer.
+        let p = self.player.pos;
+        if ((p[0] - self.anchor[0]).powi(2) + (p[1] - self.anchor[1]).powi(2) + (p[2] - self.anchor[2]).powi(2)).sqrt() > MOVED_ON {
+            self.anchor = p;
+            self.since_moved = 0;
+        } else {
+            self.since_moved += 1;
+        }
+        let stalled = !(success || fell) && (self.since_best >= STALL_TICKS && self.since_moved >= STALL_TICKS || self.since_best >= DETOUR_TICKS);
         let lost = (health - self.player.health).max(0.0) as f64;
         reward += self.points(P_DAMAGE, -(0.5 * lost));
         self.damage += lost;
@@ -484,6 +499,8 @@ impl Env {
         self.release_inputs();
         self.best = self.distance();
         self.since_best = 0;
+        self.anchor = h;
+        self.since_moved = 0;
         self.hit = self.player.pick(&self.world);
     }
 
