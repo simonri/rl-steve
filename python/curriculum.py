@@ -99,8 +99,8 @@ FAMILIES = {
         target=("diamond", "enemy", "mid"),  # a diamond island, beside a defended bed, or a middle island that can be raised
         turns=("axis", "any"),  # islands only along the grid, or in any direction
         start=("spawn", "anywhere"),  # by the own bed, or anywhere on the base
-        budget=(ROOMY, NORMAL, TIGHT, STRICT),
-        ticks=(40, 30, 20, 15),
+        budget=(ROOMY, NORMAL, TIGHT, STRICT, EXACT),  # par follows a walkable way, so a quarter over it is always enough
+        ticks=(40, 30, 20, 15, 10, 7, 5),  # the model already finished its hardest maps inside 5 in 99 of 100
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
 }
