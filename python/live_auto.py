@@ -16,6 +16,7 @@ from torch.distributions import Distribution
 import scoreboard as sb
 from auto_env import AutoEnv
 from curriculum import FAMILIES, Curriculum, is_open
+from camera import Follow
 from skill_env import pace
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +49,7 @@ def first_connect():
 
 env = first_connect()
 model, mtime = None, 0.0
+cam = Follow()  # follows the player for whoever watches
 score = defaultdict(lambda: [0, 0])  # course kinds added to a run later count from zero instead of stopping the viewer
 
 
@@ -90,6 +92,7 @@ def overlay(s):
 def episode(s):
     """Plays one round. Returns None when the last watcher left partway through."""
     obs, _ = env.reset()
+    cam.new_round(env)
     overlay(s)
     next_t = time.perf_counter()
     done, decisions, info = False, 0, {}
@@ -100,6 +103,8 @@ def episode(s):
         obs, _, term, trunc, info = env.step(act)
         done = term or trunc
         decisions += 1
+        if decisions % 2 == 0:  # ten moves a second: smooth to watch, little for the game to do
+            env.c.call(op="watch_at", camera=cam.update(env))
         if decisions % 10 == 0:
             if not watched():
                 return None

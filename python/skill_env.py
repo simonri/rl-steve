@@ -784,7 +784,7 @@ class SkillEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self._use_task(self._pick_stage())
-        spec = self._spec()
+        spec = self.spec = self._spec()  # kept for whoever watches: the camera keeps clear of what it built
         self._prepare_arena()
         self.home = dict(pos=spec["pos"], yaw=spec["yaw"], pitch=spec["pitch"])
         self.obs = self.c.reset(**spec)
