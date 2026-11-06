@@ -70,7 +70,7 @@ FAMILIES = {
     "treenan": dict(
         gap=(10, 15, 20, 25, 30),
         budget=(NORMAL, TIGHT, STRICT),
-        ticks=(40, 30, 20, 15, 10, 7),
+        ticks=(40, 30, 20, 15, 10, 7, 5, 4),  # the model already finished its hardest rounds inside 5 every time and inside 4 in about nine of ten
         height=(0, 2, 4, 6, 8, 10, 12),  # the other island moved up or down by up to this many blocks; a gap that then needs more than a stack gets shorter
         start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
         spots=("grass", "any top"),  # the goal on any flat top of the other island, up to 3 higher, not only its grass
