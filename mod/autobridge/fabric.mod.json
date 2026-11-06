@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "mcbridge_autobridge",
+  "version": "0.2.0",
+  "name": "Bridge Helpers",
+  "description": "G turns on shift at the edge and clicking while right click is held. Only with blocks in hand, on a server on this machine.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": { "client": ["dev.mcbridge.auto.AutoBridgeMod"] },
+  "depends": { "fabricloader": ">=0.20.1", "minecraft": "~26.3", "java": ">=25", "fabric-api": "*" }
+}

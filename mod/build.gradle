@@ -1,0 +1,45 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+version = '0.1.0'
+group = 'dev.mcbridge'
+base { archivesName = 'mcbridge' }
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
+java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
+
+// Writes the exact java command for the dev client, so Python can start several
+// instances without going through Gradle's build lock.
+tasks.register('writeClientCommand') {
+    dependsOn 'classes', 'configureClientLaunch', 'downloadAssets'
+    doLast {
+        def run = tasks.named('runClient', JavaExec).get()
+        def out = new File(projectDir, 'build/client-command.json')
+        def cfg = [
+            java: run.javaLauncher.isPresent() ? run.javaLauncher.get().executablePath.toString() : System.getProperty('java.home') + '/bin/java',
+            jvmArgs: run.allJvmArgs,
+            classpath: run.classpath.files.collect { it.absolutePath },
+            mainClass: run.mainClass.get(),
+            args: run.args,
+            workingDir: run.workingDir.absolutePath,
+        ]
+        out.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(cfg))
+        println "wrote ${out}"
+    }
+}
+
+// The bridging helpers alone, for putting in a normal client's mods folder.
+tasks.register('autoBridgeJar', Jar) {
+    dependsOn 'classes'
+    archiveFileName = 'mcbridge-helpers-0.2.0.jar'
+    from(sourceSets.main.output) { include 'dev/mcbridge/auto/**' }
+    from('autobridge/fabric.mod.json')
+    from('autobridge/en_us.json') { into 'assets/mcbridge_autobridge/lang' }
+}

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "mcbridge",
+  "version": "0.1.0",
+  "name": "MCBridge",
+  "description": "Lockstep bridge from the real Minecraft client to Python.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": { "client": ["dev.mcbridge.McBridge"] },
+  "mixins": ["mcbridge.mixins.json"],
+  "depends": { "fabricloader": ">=0.20.1", "minecraft": "~26.3", "java": ">=25", "fabric-api": "*" }
+}

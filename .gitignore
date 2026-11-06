@@ -1,0 +1,18 @@
+# Training output, recordings, game folders and logs: large and regenerated
+runs/
+*.log
+mod/logs/
+mod/run
+mod/fabricloader.log
+
+# Build output and caches
+mod/build/
+mod/.gradle/
+.gradle/
+__pycache__/
+*.pyc
+.venv/
+.tools/
+
+# Local tool state
+.claude/

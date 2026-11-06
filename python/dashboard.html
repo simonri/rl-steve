@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bridging Training</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb; --panel: #ffffff; --grid: #e8e7e2; --border: #e0dfd9;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #6f6e69;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --good: #008300; --critical: #c42b2a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #1a1a19; --panel: #222220; --grid: #33332f; --border: #3a3a36;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #a09f95;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --good: #4fb04f; --critical: #e66767;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface); color: var(--text-primary); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 18px; }
+h1 { font-size: 20px; font-weight: 650; margin: 0; }
+h2 { font-size: 14px; font-weight: 600; margin: 0; }
+#meta { color: var(--text-secondary); }
+#live { margin-left: auto; color: var(--text-secondary); }
+#live.stale { color: var(--critical); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tile, .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.tile { padding: 12px 14px; min-width: 0; }
+.tile .label { color: var(--text-secondary); font-size: 12px; }
+.tile .value { font-size: 28px; font-weight: 650; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--text-muted); font-size: 12px; }
+.panel { padding: 14px; min-width: 0; }
+.gate { margin-bottom: 12px; }
+.gate-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 16px; margin-top: 10px; }
+.gate-item { display: flex; gap: 8px; align-items: baseline; font-variant-numeric: tabular-nums; }
+.mark { font-weight: 700; width: 14px; flex: none; }
+.mark.ok { color: var(--good); } .mark.no { color: var(--critical); }
+.muted { color: var(--text-muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 10px; align-items: center; }
+.controls span { color: var(--text-secondary); margin-right: 4px; }
+button { font: inherit; color: var(--text-secondary); background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; min-height: 34px; }
+button[aria-pressed="true"] { color: var(--text-primary); border-color: var(--text-secondary); font-weight: 600; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; margin-bottom: 6px; }
+.legend { display: flex; gap: 12px; color: var(--text-secondary); font-size: 12px; align-items: center; }
+.key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; border-radius: 1px; }
+svg { display: block; width: 100%; height: 190px; touch-action: pan-y; }
+svg text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#tip { position: fixed; pointer-events: none; z-index: 5; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 3px 14px rgb(0 0 0 / .16); display: none; max-width: 240px; }
+#tip .head { color: var(--text-secondary); margin-bottom: 4px; }
+#tip .row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#tip strong { font-variant-numeric: tabular-nums; }
+.tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; margin-top: 12px; }
+.scroll { overflow-x: auto; margin-top: 8px; max-height: 340px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th { position: sticky; top: 0; background: var(--panel); text-align: left; color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+th, td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Bridging Training</h1>
+    <span id="meta"></span>
+    <span id="live" role="status"></span>
+  </header>
+  <section class="tiles" id="tiles" aria-label="Nuläge"></section>
+  <section class="panel gate" aria-label="Krav för nästa steg">
+    <h2 id="gate-title">Krav för nästa steg</h2>
+    <div class="gate-list" id="gate"></div>
+  </section>
+  <div class="controls" id="range"><span>Visa</span></div>
+  <section class="charts" id="charts"></section>
+  <section class="panel" style="margin-top:12px" aria-label="Poäng per regel">
+    <h2>Poäng per regel, snitt per runda</h2>
+    <div id="parts" style="margin-top:10px"></div>
+  </section>
+  <section class="tables">
+    <div class="panel"><h2>Senaste testerna</h2><div class="scroll"><table id="tests"></table></div></div>
+    <div class="panel"><h2>Steg</h2><div class="scroll"><table id="stages"></table></div></div>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+// Used until the training has published its own requirements for the current stage.
+let PASS = { success: 0.85, blocks: 1.5, unused: 1, inRow: 2, blockGoalFrom: Infinity };
+const RANGES = [["Allt", Infinity], ["Senaste miljonen", 1e6], ["Senaste 200 000", 2e5], ["Senaste 50 000", 5e4]];
+const pct = v => `${Math.round(v * 100)} %`;
+const num = (v, d = 2) => v == null || Number.isNaN(v) ? "–" : v.toLocaleString("sv-SE", { minimumFractionDigits: d, maximumFractionDigits: d });
+const mn = v => `${num(v / 1e6, 1)} mn`;
+const int = v => Math.round(v).toLocaleString("sv-SE");
+const col = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const NS = "http://www.w3.org/2000/svg";
+let range = Infinity, data = null;
+
+const FAMILY_SERIES = [["hop", "Parkour", "--series-1"], ["path", "Väg", "--series-2"], ["bridge", "Bro", "--series-3"], ["treenan", "Treenan", "--series-4"]];
+const CHARTS = [
+  { id: "levels", auto: true, title: "Nivå per banatyp (reglagesteg)", format: v => num(v, 0), series: FAMILY_SERIES.map(([k, name, color]) => ({ name, color, source: "levels", value: r => r[`${k}_level`] })) },
+  { id: "clean", auto: true, title: "Rundor utan död per banatyp", max: 1, format: pct, series: FAMILY_SERIES.map(([k, name, color]) => ({ name, color, source: "levels", value: r => r[`${k}_clean`] })) },
+  { id: "exam", auto: true, title: "Prov utan slump, alla reglage på gränsen", max: 1, format: pct, series: FAMILY_SERIES.map(([k, name, color]) => ({ name, color, source: "levels", value: r => r[`${k}_exam`] })) },
+  { id: "success", title: "Andel lyckade", unit: "%", max: 1, format: pct, series: [
+      { name: "Test utan slump", color: "--series-1", source: "tests", value: t => t.success },
+      { name: "Träning med slump", color: "--series-2", value: r => r.success },
+      { name: "Hopptest", color: "--series-3", source: "jumps", value: t => t.success } ] },
+  { id: "failures", title: "Hur rundor misslyckas", max: 1, format: pct, series: [
+      { name: "Dog minst en gång", color: "--series-3", value: r => r.fell },
+      { name: "Fastnade", color: "--series-4", value: r => r.stalled } ] },
+  { id: "shift", title: "Tid med shift nedtryckt", max: 1, format: pct, series: [ { name: "Shift", color: "--series-1", value: r => r.shift } ] },
+  { id: "speed", title: "Fart (block/s)", format: v => num(v), series: [ { name: "Fart", color: "--series-1", value: r => r.blocks_per_s || null } ] },
+  { id: "blocks", title: "Blockanvändning (gånger riktmärket)", format: v => `${num(v)}×`, min: 1, target: PASS.blocks, targetLabel: "Krav", series: [ { name: "Block", color: "--series-1", value: r => r.block_use || null } ] },
+  { id: "unused", title: "Onödiga block per lyckad runda", format: v => num(v), series: [ { name: "Onödiga", color: "--series-1", value: r => r.block_use ? r.unused : null } ] },
+  { id: "damage", title: "Fallskada per runda (hälsopoäng)", format: v => num(v), series: [ { name: "Skada", color: "--series-1", value: r => r.damage } ] },
+];
+
+function el(tag, props = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) k === "class" ? node.className = v : node[k] = v;
+  node.append(...kids);
+  return node;
+}
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+
+for (const [label, value] of RANGES) {
+  const b = el("button", { textContent: label });
+  b.setAttribute("aria-pressed", value === range);
+  b.onclick = () => {
+    range = value;
+    for (const other of document.querySelectorAll("#range button")) other.setAttribute("aria-pressed", other === b);
+    drawCharts();
+  };
+  document.getElementById("range").append(b);
+}
+for (const c of CHARTS) {
+  const legend = el("div", { class: "legend" });
+  if (c.series.length > 1) for (const s of c.series) {
+    const key = el("span", { class: "key" });
+    key.style.background = `var(${s.color})`;
+    legend.append(el("span", {}, key, s.name));
+  }
+  const panel = el("div", { class: "panel", id: `chart-${c.id}` }, el("div", { class: "chart-head" }, el("h2", { textContent: c.title }), legend));
+  const svg = svgEl("svg", { role: "img", "aria-label": c.title });
+  panel.append(svg);
+  document.getElementById("charts").append(panel);
+  c.svg = svg;
+}
+
+function thin(points, limit) {
+  if (points.length <= limit) return points;
+  const step = points.length / limit;
+  return Array.from({ length: limit }, (_, i) => points[Math.floor(i * step)]).concat(points.at(-1));
+}
+
+function drawChart(c) {
+  const svg = c.svg;
+  const W = svg.clientWidth || 500, H = 190, L = 44, R = 14, T = 8, B = 24;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.replaceChildren();
+  const end = Math.max(data.status.steps || 0, ...data.progress.slice(-1).map(r => r.steps));
+  const from = range === Infinity ? 0 : Math.max(0, end - range);
+  // Right after a stage change the training window is empty. That is not a real score of zero.
+  const measured = data.progress.filter(r => r.success + r.fell + r.stalled > 0);
+  const series = c.series.map(s => ({ ...s, points: (s.source === "levels" ? (data.levels || []) : s.source === "tests" ? data.tests : s.source === "jumps" ? (data.jumps || []) : measured)
+    .map(r => ({ x: r.steps, y: s.value(r) })).filter(p => p.y != null && p.x >= from) }));
+  const shown = series.flatMap(s => s.points.map(p => p.y));
+  if (!shown.length) {
+    const t = svgEl("text", { x: W / 2, y: H / 2, "text-anchor": "middle" });
+    t.textContent = "Ingen data i det här intervallet";
+    svg.append(t);
+    return;
+  }
+  const top = c.max ?? Math.max(c.target || 0, ...shown) * 1.08;
+  const bottom = c.min !== undefined ? Math.min(c.min, ...shown) : 0;
+  const xMin = from, xMax = Math.max(end, from + 1);
+  const px = x => L + (x - xMin) / (xMax - xMin) * (W - L - R);
+  const py = y => T + (1 - (y - bottom) / (top - bottom || 1)) * (H - T - B);
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = bottom + (top - bottom) * i / ticks, y = py(v);
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y, y2: y, stroke: col("--grid"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: L - 6, y: y + 4, "text-anchor": "end" });
+    t.textContent = c.max === 1 ? pct(v) : num(v, top - bottom < 4 ? 1 : 0);
+    svg.append(t);
+  }
+  const xTicks = W < 420 ? 3 : 5;
+  for (let i = 0; i <= xTicks; i++) {
+    const v = xMin + (xMax - xMin) * i / xTicks;
+    const t = svgEl("text", { x: px(v), y: H - 6, "text-anchor": i === 0 ? "start" : i === xTicks ? "end" : "middle" });
+    t.textContent = v >= 1e6 ? `${num(v / 1e6, 1)} mn` : `${Math.round(v / 1e3)} k`;
+    svg.append(t);
+  }
+  let lastLabel = -Infinity;
+  for (const s of data.stages) {
+    if (s.steps < from) continue;
+    const x = px(s.steps);
+    svg.append(svgEl("line", { x1: x, x2: x, y1: T, y2: H - B, stroke: col("--border"), "stroke-width": 1 }));
+    if (x - lastLabel >= 18) {
+      const t = svgEl("text", { x: x + 3, y: T + 9 });
+      t.textContent = s.stage + 1;
+      svg.append(t);
+      lastLabel = x;
+    }
+  }
+  if (c.target) {
+    const y = py(c.target);
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y, y2: y, stroke: col("--text-muted"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: W - R, y: y - 4, "text-anchor": "end" });
+    t.textContent = `${c.targetLabel} ${num(c.target, 1)}×`;
+    svg.append(t);
+  }
+  for (const s of series) {
+    const d = thin(s.points, 700).map((p, i) => `${i ? "L" : "M"}${px(p.x).toFixed(1)} ${py(p.y).toFixed(1)}`).join("");
+    svg.append(svgEl("path", { d, fill: "none", stroke: col(s.color), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const last = s.points.at(-1);
+    if (last) svg.append(svgEl("circle", { cx: px(last.x), cy: py(last.y), r: 4, fill: col(s.color), stroke: col("--panel"), "stroke-width": 2 }));
+  }
+  const cross = svgEl("line", { y1: T, y2: H - B, stroke: col("--text-muted"), "stroke-width": 1, visibility: "hidden" });
+  svg.append(cross);
+  const tip = document.getElementById("tip");
+  const hide = () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  svg.onpointerleave = hide;
+  svg.onpointermove = e => {
+    const box = svg.getBoundingClientRect();
+    const x = xMin + (e.clientX - box.left - L) / (W - L - R) * (xMax - xMin);
+    const rows = series.map(s => {
+      if (!s.points.length) return null;
+      const p = s.points.reduce((a, b) => Math.abs(b.x - x) < Math.abs(a.x - x) ? b : a);
+      return { s, p };
+    }).filter(Boolean);
+    if (!rows.length) return hide();
+    const at = rows[0].p.x;
+    cross.setAttribute("x1", px(at)); cross.setAttribute("x2", px(at));
+    cross.setAttribute("visibility", "visible");
+    const head = el("div", { class: "head", textContent: `${int(at)} beslut` });
+    tip.replaceChildren(head, ...rows.map(({ s, p }) => {
+      const key = el("span", { class: "key" });
+      key.style.background = `var(${s.color})`;
+      return el("div", { class: "row" }, key, el("strong", { textContent: c.format(p.y) }), el("span", { textContent: s.name }));
+    }));
+    tip.style.display = "block";
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = `${Math.min(innerWidth - w - 8, Math.max(8, e.clientX + 14))}px`;
+    tip.style.top = `${Math.max(8, e.clientY - h - 10)}px`;
+  };
+}
+function drawCharts() {
+  if (!data) return;
+  const auto = !!data.status.families;
+  for (const c of CHARTS) {
+    const old = ["success", "blocks", "unused"].includes(c.id);
+    document.getElementById(`chart-${c.id}`).style.display = (c.auto && !auto) || (old && auto) ? "none" : "";
+    if (!(c.auto && !auto) && !(old && auto)) drawChart(c);
+  }
+}
+
+function renderDials(s) {
+  document.getElementById("gate-title").textContent = "Reglage per banatyp";
+  const box = document.getElementById("gate");
+  box.style.display = "block";
+  box.replaceChildren(...Object.values(s.families).map(f => {
+    const state = !f.open ? "låst" : f.done ? "klar" : `${pct(f.clean)} utan död`;
+    const head = el("div", {}, el("strong", { textContent: `${f.name}: ${f.level} av ${f.most}` }), ` · ${state}` + (f.exam != null ? ` · prov ${pct(f.exam)}` : ""));
+    head.style.margin = "10px 0 4px";
+    const rows = Object.entries(f.dials).map(([name, d]) => {
+      const bar = el("span");
+      bar.style.cssText = `display:block;height:8px;border-radius:4px;background:var(--series-1);width:${d.most ? Math.max(2, d.level / d.most * 100) : 100}%`;
+      const track = el("span", {}, bar);
+      track.style.cssText = "display:block;background:var(--grid);border-radius:4px";
+      const row = el("div", {}, el("span", { textContent: name }), track, el("span", { textContent: `${d.level}/${d.most}` }), el("span", { class: "muted", textContent: d.value }), el("span", { class: "muted", textContent: d.rounds ? `${pct(d.rate)} av ${d.rounds}` : "–" }));
+      row.style.cssText = "display:grid;grid-template-columns:80px minmax(60px,1fr) 44px minmax(70px,130px) 80px;gap:8px;align-items:center;padding:2px 0;font-variant-numeric:tabular-nums;font-size:13px";
+      return row;
+    });
+    return el("div", {}, head, ...rows);
+  }));
+}
+
+function tile(label, value, note) {
+  return el("div", { class: "tile" }, el("div", { class: "label", textContent: label }), el("div", { class: "value", textContent: value }), el("div", { class: "note", textContent: note || "" }));
+}
+
+function rate() {
+  const rows = data.progress.slice(-30);
+  let steps = 0, secs = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const dt = rows[i].seconds - rows[i - 1].seconds;
+    if (dt > 0) { steps += rows[i].steps - rows[i - 1].steps; secs += dt; }
+  }
+  return secs ? steps / secs : null;
+}
+
+function render() {
+  const s = data.status;
+  if (s.pass_success != null) PASS = { success: s.pass_success, blocks: s.pass_blocks, unused: s.pass_unused, inRow: s.pass_in_a_row, blockGoalFrom: s.block_goal_from };
+  const test = data.tests.at(-1);
+  const taskNote = `Gap ${s.gap ?? "–"}, ${s.heights ?? "–"} höjdlägen, ${s.ticks_per_block ?? "–"} ticks/block`;
+  const r = rate();
+  document.getElementById("meta").textContent = `Körning ${data.run}`;
+  const live = document.getElementById("live");
+  const stale = data.age != null && data.age > 90;
+  live.className = stale ? "stale" : "";
+  live.textContent = data.done ? "Alla steg klara" : data.age == null ? "Ingen status" : stale ? `Ingen ny data på ${Math.round(data.age)} s` : `Uppdaterad för ${Math.round(data.age)} s sedan`;
+  document.getElementById("tiles").replaceChildren(
+    tile("Steg", `${(s.stage ?? 0) + 1} / ${s.stages ?? "–"}`, taskNote),
+    tile("Senaste test", test ? pct(test.success) : "–", test ? `${test.wins}/${test.games} rundor, utan slump` : ""),
+    tile("Träning", pct(s.success ?? 0), `Dog ${pct(s.fell ?? 0)}, fastnade ${pct(s.stalled ?? 0)}`),
+    tile("Fart", num(s.speed), s.shift != null ? `Shift ${pct(s.shift)} av tiden` : "block/s"),
+    tile("Blockanvändning", `${num(s.blocks)}×`, `Onödiga ${num(s.unused)} per runda`),
+    tile("Beslut", s.steps >= 1e6 ? `${num(s.steps / 1e6)} mn` : int(s.steps || 0), r ? `${int(r)} beslut/s` : ""),
+  );
+  if (s.families) {
+    document.getElementById("tiles").replaceChildren(
+      tile("Total nivå", `${s.stage} / ${s.stages}`, "Reglagesteg, höjs automatiskt"),
+      ...Object.values(s.families).filter(f => f.open).map(f => tile(f.name, `${f.level} / ${f.most}`, `${pct(f.clean)} utan död` + (f.exam != null ? `, prov ${pct(f.exam)}` : ""))),
+      tile("Dog", pct(s.fell ?? 0), `Fastnade ${pct(s.stalled ?? 0)}`),
+      tile("Brofart", `${num(s.bridge_speed)}`, `block/s, rekord ${num(s.bridge_record)}`),
+      tile("Beslut", s.steps >= 1e6 ? `${num(s.steps / 1e6)} mn` : int(s.steps || 0), r ? `${int(r)} beslut/s` : ""),
+    );
+    renderDials(s);
+  }
+  const stageNow = s.stage ?? 0;
+  const atStage = test && test.stage === stageNow ? test : null;
+  const items = [
+    [`Minst ${pct(PASS.success)} i mål`, atStage ? pct(atStage.success) : "inget test än", atStage && atStage.success >= PASS.success],
+  ];
+  if (stageNow >= PASS.blockGoalFrom) {
+    items.push([`Högst ${num(PASS.blocks, 1)}× block`, atStage ? `${num(atStage.blocks)}×` : "–", atStage && atStage.blocks <= PASS.blocks]);
+    items.push([`Högst ${PASS.unused} onödigt block`, atStage && atStage.unused != null ? num(atStage.unused) : "–", atStage && atStage.unused != null && atStage.unused <= PASS.unused]);
+  }
+  const row = atStage && atStage.passes != null ? atStage.passes : 0;
+  items.push([`${PASS.inRow} godkända test i rad`, `${row} av ${PASS.inRow}`, row >= PASS.inRow]);
+  if (!s.families) {
+    document.getElementById("gate-title").textContent = `Krav för nästa steg, från senaste testet`;
+    document.getElementById("gate").replaceChildren(...items.map(([label, value, ok]) => el("div", { class: "gate-item" },
+      el("span", { class: `mark ${ok ? "ok" : "no"}`, textContent: ok ? "✓" : "✕", title: ok ? "Uppfyllt" : "Inte uppfyllt" }),
+      el("span", {}, `${label}: `, el("strong", { textContent: value })))));
+  }
+
+  const parts = Object.entries(s.parts || {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const largest = Math.max(0.001, ...parts.map(([, v]) => Math.abs(v)));
+  document.getElementById("parts").replaceChildren(...(parts.length ? parts.map(([rule, value]) => {
+    const bar = el("span");
+    bar.style.cssText = `display:block;height:8px;border-radius:4px;background:var(${value >= 0 ? "--series-3" : "--series-2"});width:${Math.max(1, Math.abs(value) / largest * 100)}%`;
+    const track = el("span", {}, bar);
+    track.style.cssText = "display:block;flex:1;min-width:40px";
+    const row = el("div", {}, el("span", { textContent: rule }), el("strong", { textContent: `${value >= 0 ? "+" : "−"}${num(Math.abs(value))}` }), track);
+    row.style.cssText = "display:grid;grid-template-columns:minmax(120px,190px) 64px 1fr;gap:8px;align-items:center;padding:3px 0;font-variant-numeric:tabular-nums";
+    return row;
+  }) : [el("span", { class: "muted", textContent: "Ingen data än" })]));
+  const testRows = data.tests.slice(-30).reverse();
+  document.getElementById("tests").replaceChildren(
+    el("thead", {}, el("tr", {}, ...["Beslut", "Steg", "I mål", "Andel", "Block", "Onödiga", "I rad"].map(h => el("th", { textContent: h })))),
+    el("tbody", {}, ...testRows.map(t => el("tr", {}, ...[int(t.steps), t.stage + 1, `${t.wins}/${t.games}`, pct(t.success), `${num(t.blocks)}×`, num(t.unused), t.passes ?? "–"].map(v => el("td", { textContent: v })))))
+  );
+  const stageRows = [...data.stages].reverse();
+  document.getElementById("stages").replaceChildren(
+    el("thead", {}, el("tr", {}, ...["Steg", "Startade vid", "Uppgift"].map(h => el("th", { textContent: h })))),
+    el("tbody", {}, ...stageRows.map(t => el("tr", {}, ...[t.stage + 1, int(t.steps), t.task].map(v => el("td", { textContent: v })))))
+  );
+  drawCharts();
+}
+
+async function poll() {
+  try {
+    const res = await fetch(`api/data${location.search}`, { cache: "no-store" });
+    data = await res.json();
+    render();
+  } catch {
+    const live = document.getElementById("live");
+    live.className = "stale";
+    live.textContent = "Tappade kontakten med servern";
+  }
+}
+poll();
+setInterval(poll, 3000);
+addEventListener("resize", drawCharts);
+</script>
+</body>
+</html>

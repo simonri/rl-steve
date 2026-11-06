@@ -1,0 +1,9 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.mcbridge.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["MinecraftMixin", "MinecraftInvoker", "MouseHandlerMixin", "RenderSystemMixin"],
+  "mixins": ["ServerTickRateManagerAccessor", "EventLoopInvoker"],
+  "injectors": { "defaultRequire": 1 }
+}
