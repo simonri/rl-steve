@@ -82,7 +82,7 @@ th, td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--grid); white-sp
     <h2>Poäng per regel, snitt per runda</h2>
     <div id="parts" style="margin-top:10px"></div>
   </section>
-  <section class="tables">
+  <section class="tables" id="tables">
     <div class="panel"><h2>Senaste testerna</h2><div class="scroll"><table id="tests"></table></div></div>
     <div class="panel"><h2>Steg</h2><div class="scroll"><table id="stages"></table></div></div>
   </section>
@@ -327,6 +327,7 @@ function render() {
     );
     renderDials(s);
   }
+  document.getElementById("tables").hidden = !data.tests.length && !data.stages.length;  // the step tables only exist for runs with fixed steps
   const stageNow = s.stage ?? 0;
   const atStage = test && test.stage === stageNow ? test : null;
   const items = [
@@ -369,19 +370,35 @@ function render() {
   drawCharts();
 }
 
+// A phone drops a request now and then, and sleeps a tab it does not show: each request has its own time limit, a miss
+// keeps the last numbers on screen, only three in a row say the contact is lost, and a hidden tab does not ask at all.
+let misses = 0, busy = false;
 async function poll() {
+  if (busy || document.hidden) return;
+  busy = true;
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 15000);
   try {
-    const res = await fetch(`api/data${location.search}`, { cache: "no-store" });
+    const res = await fetch(`api/data${location.search}`, { cache: "no-store", signal: stop.signal });
+    if (!res.ok) throw new Error(res.status);
     data = await res.json();
+    misses = 0;
     render();
   } catch {
-    const live = document.getElementById("live");
-    live.className = "stale";
-    live.textContent = "Tappade kontakten med servern";
+    misses += 1;
+    if (misses >= 3) {
+      const live = document.getElementById("live");
+      live.className = "stale";
+      live.textContent = "Tappade kontakten med servern, försöker igen";
+    }
+  } finally {
+    clearTimeout(timer);
+    busy = false;
   }
 }
 poll();
-setInterval(poll, 3000);
+setInterval(poll, 5000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 addEventListener("resize", drawCharts);
 </script>
 </body>

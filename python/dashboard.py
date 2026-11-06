@@ -2,7 +2,9 @@
 import argparse
 import ast
 import csv
+import gzip
 import json
+import threading
 import re
 import time
 from urllib.parse import parse_qs, urlsplit
@@ -16,6 +18,8 @@ TEST = re.compile(r"^test at (\d+): stage (\d+) (\d+)/(\d+) blocks ([\d.]+)x(?: 
 STAGE = re.compile(r"^--> stage (\d+) (\(.*\)) at (\d+) steps")
 JUMPTEST = re.compile(r"^jump test at (\d+): (\d+)/(\d+)")
 PASSED = re.compile(r"^all stages passed at (\d+)")
+POINTS = 1200  # per timeline: more than a phone screen has pixels across, a few hundred kB in all
+FRESH = 4.0  # seconds one answer is reused for everyone asking
 COLUMNS = ("steps", "seconds", "stage", "gap", "heights", "ticks_per_block", "success", "fell", "stalled", "damage",
            "blocks_per_s", "block_use", "unused", "episodes")
 
@@ -102,16 +106,56 @@ def read_levels(name):
     folder = MODELS / name
     older = sorted(folder.glob("levels_before_*.csv"), key=lambda p: int(p.stem.rsplit("_", 1)[1]) if p.stem.rsplit("_", 1)[1].isdigit() else 0)
     rows = []
-    for path in [*older, folder / "levels.csv"]:
+    for path in older:
         try:
-            with open(path, newline="") as f:
-                for row in csv.DictReader(f):
-                    rows.append({k: float(v) if v else None for k, v in row.items() if k})
+            rows += _levels_rows(path)
         except (OSError, ValueError):
             continue
+    try:
+        with open(folder / "levels.csv", newline="") as f:
+            rows += [{k: float(v) if v else None for k, v in row.items() if k} for row in csv.DictReader(f)]
+    except (OSError, ValueError):
+        pass
     columns = {k for r in rows for k in r}
     rows = [{k: r.get(k) for k in columns} for r in rows]
     return current_timeline(rows)
+
+
+def thin(rows, n=POINTS, recent=60):
+    """At most n rows: the newest `recent` as they are (the page works out the speed from them), the rest spread
+    evenly over the timeline before them."""
+    if len(rows) <= n:
+        return rows
+    older, new = rows[:-recent], rows[-recent:]
+    keep = n - recent
+    step = len(older) / keep
+    return [older[int(i * step)] for i in range(keep)] + new
+
+
+_older_levels = {}  # (path, mtime, size) -> rows: the old level logs never change
+
+
+def _levels_rows(path):
+    st = path.stat()
+    key = (str(path), st.st_mtime, st.st_size)
+    if key not in _older_levels:
+        with open(path, newline="") as f:
+            _older_levels[key] = [{k: float(v) if v else None for k, v in row.items() if k} for row in csv.DictReader(f)]
+    return _older_levels[key]
+
+
+_cache, _lock = {}, threading.Lock()
+
+
+def answer(run):
+    """The gzipped JSON for a run, made at most every FRESH seconds however many phones and tabs ask."""
+    with _lock:
+        hit = _cache.get(run)
+        if hit and time.time() - hit[0] < FRESH:
+            return hit[1]
+        body = gzip.compress(json.dumps(snapshot(run), separators=(",", ":")).encode(), compresslevel=6)
+        _cache[run] = (time.time(), body)
+        return body
 
 
 def snapshot(name):
@@ -123,15 +167,19 @@ def snapshot(name):
     except (OSError, ValueError):
         status, age = {}, None
     tests, stages, done, jumps = read_log(run)
-    return dict(run=run, status=status, age=age, progress=read_progress(run), tests=tests, stages=stages, done=done, jumps=jumps, levels=read_levels(run))
+    return dict(run=run, status=status, age=age, progress=thin(read_progress(run)), tests=tests, stages=stages, done=done, jumps=jumps, levels=thin(read_levels(run)))
 
 
 class Handler(BaseHTTPRequestHandler):
     run_name = None
 
-    def _send(self, body, kind):
+    def _send(self, body, kind, zipped=False):
+        if zipped and "gzip" not in self.headers.get("Accept-Encoding", ""):
+            body, zipped = gzip.decompress(body), False
         self.send_response(200)
         self.send_header("Content-Type", kind)
+        if zipped:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -142,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/data":
             asked = parse_qs(url.query).get("run", [None])[0]
             run = asked if asked and (MODELS / asked / "status.json").exists() else self.run_name
-            self._send(json.dumps(snapshot(run)).encode(), "application/json")
+            self._send(answer(run), "application/json", zipped=True)
         elif url.path == "/":
             self._send((HERE / "dashboard.html").read_bytes(), "text/html; charset=utf-8")
         else:
@@ -158,4 +206,6 @@ if __name__ == "__main__":
     p.add_argument("--name", help="training run; the newest one when left out")
     a = p.parse_args()
     Handler.run_name = a.name
+    ThreadingHTTPServer.request_queue_size = 64  # a phone reconnecting opens several at once; 5 turned some away
+    ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
