@@ -455,3 +455,18 @@ rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, 8),
 distribution, actions, real = train_auto._whole_rounds(policy, rounds, "cpu")
 assert torch.isfinite((distribution.log_prob(actions) * real).sum())
 print("batches ok")
+# A course kind that fails its hardest rounds is played more than one that wins them.
+from collections import Counter
+import auto_env
+c = Curriculum()
+for _ in range(30):
+    c.all_rounds["hop"].append(False)
+    c.all_rounds["path"].append(True)
+w = c.practice()
+assert w["hop"] == 3.0 and w["path"] == 1.0 and w["bridge"] == 2.0, w
+rng = np.random.default_rng(0)
+picked = Counter(curriculum.pick_family(c.levels, rng, (), w) for _ in range(3000))
+assert picked["hop"] > 2.5 * picked["path"], picked
+# Shift costs nothing on parkour: it can stop at an edge.
+assert "shift without blocks" not in open(auto_env.__file__).read()
+print("practice ok")

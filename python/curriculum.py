@@ -13,6 +13,7 @@ ALL_DIALS_MIN_ROUNDS = 10
 SHARE_ALL_DIALS, SHARE_ONE_DIAL = 0.3, 0.5  # of the rest, every dial is drawn freely below its limit
 NEAR_TOP, SHARE_ALL_DIALS_NEAR_TOP, SHARE_ONE_DIAL_NEAR_TOP = 0.75, 0.6, 0.3  # the real test is everything at once, so close to the top it gets most of the practice
 MASTERED_AT = 0.9  # share of rounds with every dial at its limit
+WEAK_BOOST = 2.0  # a kind that never wins with every dial at its limit is played 3x as often as one that always does
 FINISHED_WEIGHT = 0.3  # how often a mastered course kind is still played, compared with one in progress
 
 YAW = (15, 45, 90, 180)  # degrees the start can be turned away from the way to go
@@ -127,6 +128,15 @@ class Curriculum:
         self.all_rounds[family].clear()
         return dial, level
 
+    def practice(self):
+        """How much each course kind is played: more the less often it wins with every dial at its limit, which is
+        what the exam asks. Up to 1 + WEAK_BOOST times as often as one that always wins."""
+        weights = {}
+        for f, rounds in self.all_rounds.items():
+            rate = sum(rounds) / len(rounds) if len(rounds) >= ALL_DIALS_MIN_ROUNDS else 0.5
+            weights[f] = round(1.0 + WEAK_BOOST * (1.0 - rate), 2)
+        return weights
+
     def mastered(self):
         return [f for f, rounds in self.all_rounds.items() if finished(self.levels, f) and len(rounds) == WINDOW and sum(rounds) / WINDOW >= MASTERED_AT]
 
@@ -158,10 +168,10 @@ def open_dials(levels, family):
     return dials
 
 
-def pick_family(levels, rng, mastered=()):
-    """Only a course kind that is both at its top and nearly always won gets less practice."""
+def pick_family(levels, rng, mastered=(), practice=None):
+    """A course kind at its top and nearly always won gets less practice; one that fails its hardest rounds gets more."""
     names = [f for f in FAMILIES if is_open(levels, f)]
-    weights = [FINISHED_WEIGHT if f in mastered else 1.0 for f in names]
+    weights = [FINISHED_WEIGHT if f in mastered else (practice or {}).get(f, 1.0) for f in names]
     return names[int(rng.choice(len(names), p=[w / sum(weights) for w in weights]))]
 
 

@@ -36,7 +36,6 @@ const REWARD_SCALE: f64 = 0.1;
 
 const TICK_COST: f64 = 0.002;
 const EMPTY_CLICK_COST: f64 = 0.05;
-const JUMP_SHIFT_COST: f64 = 0.05;
 const LOOK_UP_COST: f64 = 0.05;
 const LANDING_BONUS: f64 = 1.0;
 const BLOCK_COST: f64 = 0.02;
@@ -56,7 +55,6 @@ pub const PARTS: [&str; 14] = [
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
-const P_SHIFT: usize = 2;
 const P_LOOK_UP: usize = 3;
 const P_LANDED: usize = 4;
 const P_PROGRESS: usize = 5;
@@ -370,9 +368,7 @@ impl Env {
         if use_ && held == 0 {
             reward += self.points(P_EMPTY_CLICK, -EMPTY_CLICK_COST);
         }
-        if self.course.no_blocks && self.keys[K_SNEAK] {
-            reward += self.points(P_SHIFT, -JUMP_SHIFT_COST);
-        }
+        // Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
         if self.player.pitch < 0.0 && self.hit.is_none() {
             reward += self.points(P_LOOK_UP, -LOOK_UP_COST * -(self.player.pitch as f64) / 90.0);
         }

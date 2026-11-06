@@ -17,8 +17,8 @@ import numpy as np
 
 import curriculum
 from jump_physics import hits_pole, jump_possible
-from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, JUMP_SHIFT_COST, LANDING_BONUS, MAX_DEATHS,
-                       NO_BLOCKS, POLE_HEIGHT, RESPAWN_TICKS, RUN, RUN_HOLES, SNEAK_CLICK_TICKS, STALL_TICKS, STAYED_HOME_COST, TICK_COST, TREENAN,
+from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, LANDING_BONUS, MAX_DEATHS,
+                       POLE_HEIGHT, RESPAWN_TICKS, RUN, RUN_HOLES, SNEAK_CLICK_TICKS, STALL_TICKS, STAYED_HOME_COST, TICK_COST, TREENAN,
                        WASTE_COST, Y, SkillEnv, pace, rotate)
 
 RADIUS = 5  # blocks the model sees in every direction: ahead, behind, to the sides, up and down
@@ -79,8 +79,10 @@ class AutoEnv(SkillEnv):
     def set_stage(self, stage):
         pass
 
-    def set_levels(self, levels, mastered=()):
-        self.levels, self.mastered = levels, mastered
+    practice = None  # how much each course kind is played, from curriculum.Curriculum.practice
+
+    def set_levels(self, levels, mastered=(), practice=None):
+        self.levels, self.mastered, self.practice = levels, mastered, practice
 
     def set_exam(self, family):
         self.exam_family = family
@@ -100,7 +102,7 @@ class AutoEnv(SkillEnv):
     # ---- Choosing the round ----
 
     def _pick_stage(self):
-        family = self.exam_family or curriculum.pick_family(self.levels, self.np_random, self.mastered)
+        family = self.exam_family or curriculum.pick_family(self.levels, self.np_random, self.mastered, self.practice)
         settings, tested = curriculum.draw(self.levels, family, self.np_random, "all" if self.exam_family else None)
         return family, settings, tested
 
@@ -524,8 +526,7 @@ class AutoEnv(SkillEnv):
         reward = self._points("time", -TICK_COST)
         if use and held == 0:
             reward += self._points("click without blocks", -EMPTY_CLICK_COST)
-        if self.extras in NO_BLOCKS and keys["sneak"]:
-            reward += self._points("shift without blocks", -JUMP_SHIFT_COST)
+        # Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
         aims_at_block = (o.get("hit") or {}).get("type") == "block"
         if o["pitch"] < 0 and not aims_at_block:  # looking above level at nothing in reach
             reward += self._points("looking up", -LOOK_UP_COST * -o["pitch"] / 90)

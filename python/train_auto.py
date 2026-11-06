@@ -214,7 +214,7 @@ class Progress(BaseCallback):
         self.damage, self.speeds, self.shift, self.parts = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.exams = {}
         self.exams_random = {}
-        self.pushed_mastered = []
+        self.pushed_mastered, self.pushed_practice = [], None
         self.bridge_speeds = deque(maxlen=WINDOW)
         # Blocks per second, best clean bridge of at least 8 blocks. Kept across restarts.
         try:
@@ -252,7 +252,7 @@ class Progress(BaseCallback):
         for round_parts in self.parts:
             for rule, value in round_parts.items():
                 parts[rule] = parts.get(rule, 0.0) + value
-        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels,
+        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(),
                     success=self.mean(self.results), fell=self.mean(self.falls), stalled=self.mean(self.stalls), damage=self.mean(self.damage), speed=self.mean(self.speeds),
                     shift=self.mean(self.shift), bridge_speed=self.mean(self.bridge_speeds), bridge_record=self.bridge_record, parts={k: round(v / max(len(self.parts), 1), 3) for k, v in parts.items()}, seconds=time.time() - self.t0)
 
@@ -318,9 +318,10 @@ class Progress(BaseCallback):
                 dial, level = change
                 print(f"dial {family}.{dial} -> {level}/{len(FAMILIES[family][dial]) - 1} ({FAMILIES[family][dial][level]}) at {self.num_timesteps}, {self.cur.total()}/{self.cur.most()} in all", flush=True)
         mastered = self.cur.mastered()
-        if moved or mastered != self.pushed_mastered:
-            self.pushed_mastered = mastered
-            self.vec.env_method("set_levels", self.cur.levels, mastered)
+        practice = {f: round(w, 1) for f, w in self.cur.practice().items()}
+        if moved or mastered != self.pushed_mastered or practice != self.pushed_practice:
+            self.pushed_mastered, self.pushed_practice = mastered, practice
+            self.vec.env_method("set_levels", self.cur.levels, mastered, practice)
         self.show()
         if self.num_timesteps - self.last_log >= 4000:
             self.last_log = self.num_timesteps
