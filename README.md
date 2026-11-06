@@ -1,6 +1,6 @@
-# Self-Taught Steve: Steve lär sig Minecraft själv med reinforcement learning
+# Minecraft RL Agent
 
-Parkour, bridging och snart Bedwars, i riktiga Minecraft 26.3 från speltillstånd och utan pixlar. Steve tränar i en egen simulator skriven i Rust.
+En agent som lär sig spela riktiga Minecraft 26.3 med deep reinforcement learning (PPO med LSTM-minne). Den ser speltillståndet, inte pixlar, och tränas i en egen simulator skriven i Rust. Uppgifter: parkour och bridging, med Bedwars som mål.
 
 - `mod/`: Fabric-mod som stegar klient och inbyggd server ett tick i taget från Python.
 - `python/`: anslutning, Gymnasium-miljö, träning, uppspelning, dashboard och tester.

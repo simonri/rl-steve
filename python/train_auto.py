@@ -294,7 +294,7 @@ class Progress(BaseCallback):
                           [f"{rate:.0%}", sb.higher_is_better(rate, 0.7, 0.4)]])
         lines += [sb.BLANK, sb.stat("Died", f"{self.mean(self.falls):.0%}", sb.lower_is_better(self.mean(self.falls), 0.2, 0.5)),
                   sb.stat("Steps", sb.compact(self.num_timesteps), sb.VALUE)]
-        self.vec.env_method("sidebar", [["SELF-TAUGHT STEVE ", "white", True], [title, "yellow" if title == "TESTING" else "aqua", True]], lines, indices=0)
+        self.vec.env_method("sidebar", [["MINECRAFT RL AGENT ", "white", True], [title, "yellow" if title == "TESTING" else "aqua", True]], lines, indices=0)
 
     def _on_step(self):
         if self.first_step is None:

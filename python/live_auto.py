@@ -46,17 +46,20 @@ def watched():
 
 
 def overlay(s):
-    lines = [[["Now ", sb.LABEL], [s.get("families", {}).get(env.family, {}).get("name", env.family), "light_purple"]]]
+    """What viewers see: what the agent is, the task it is on now, how far the curriculum has come, and how this
+    viewing session has gone."""
+    lines = [[["Deep RL agent (PPO + LSTM)", sb.LABEL]], sb.BLANK]
+    lines.append(sb.stat("Task", s.get("families", {}).get(env.family, {}).get("name", env.family), "light_purple"))
     if env.family == "hop":
-        lines.append(sb.stat("Blocks", f"{env.landed}/{len(env.landing_order)}", sb.VALUE))
+        lines.append(sb.stat("Platforms", f"{env.landed}/{len(env.landing_order)}"))
     elif env.blocks_given:
-        lines.append(sb.stat("Blocks left", f"{env.obs['held_count']}/{env.blocks_given}", sb.VALUE))
-    lines.append(sb.BLANK)
+        lines.append(sb.stat("Blocks left", f"{env.obs['held_count']}/{env.blocks_given}"))
+    lines += [sb.BLANK, [["Level", sb.LABEL], ["  solved this session", sb.DIM]]]
     for f, row in s.get("families", {}).items():
         if row["open"]:
-            lines.append(sb.stat(row["name"], f"{row['level']}/{row['most']}", sb.VALUE, f"here {score[f][0]}/{score[f][1]}"))
-    lines.append(sb.stat("Model", sb.compact(s.get("steps", 0)), sb.VALUE, "steps"))
-    env.sidebar([["SELF-TAUGHT STEVE", "gold", True]], [[["RL", "aqua", True], [": learns by trial and error", sb.LABEL]], sb.BLANK] + lines)
+            lines.append(sb.stat(row["name"], f"{row['level']}/{row['most']}", sb.VALUE, f" {score[f][0]}/{score[f][1]}"))
+    lines += [sb.BLANK, sb.stat("Training", sb.compact(s.get("steps", 0)), sb.VALUE, "steps")]
+    env.sidebar([["Minecraft RL Agent", "gold", True]], lines)
 
 
 def episode(s):
