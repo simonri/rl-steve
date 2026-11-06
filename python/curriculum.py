@@ -65,12 +65,13 @@ FAMILIES = {
         longer=(1.0, 1.5),
         faster=(None, 6, 5, 4),  # ticks per block with almost no spare time: chasing the record. 3 is faster than bridging can go.
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
     ),
     "treenan": dict(
         gap=(10, 15, 20, 25, 30),
         budget=(NORMAL, TIGHT, STRICT),
         ticks=(40, 30, 20, 15, 10, 7),
-        height=(0, 2, 4, 6, 8),  # the other island moved up or down by up to this many blocks
+        height=(0, 2, 4, 6, 8, 10, 12),  # the other island moved up or down by up to this many blocks; a gap that then needs more than a stack gets shorter
         start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
         spots=("grass", "any top"),  # the goal on any flat top of the other island, up to 3 higher, not only its grass
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
@@ -87,11 +88,12 @@ FAMILIES = {
         steep=(1.0, 1.5, 2.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
         way=("up", "up or down"),  # down too: building a way down without falling off it
         push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
+        goal=("platform", "single block"),  # the goal a lone block in the air, not a 5x5 platform: build right up to it
     ),
     # Fresh Bedwars maps every round (bedwars_map.py): from the own base across void to another island.
     "bedwars": dict(
-        legs=(1, 2, 3),  # gaps to cross: straight over, or by way of one or two small islands
-        gap=(4, 6, 8, 10, 12),  # the most void between two islands
+        legs=(1, 2, 3, 4),  # gaps to cross: straight over, or by way of one to three small islands
+        gap=(4, 6, 8, 10, 12, 14, 16),  # the most void between two islands; maps that would need more than a stack get shorter gaps
         height=(0, 1, 2, 4, 6),  # the most one island can lie above or below the last
         clutter=("none", "some", "many"),  # walls, pillars and trees on the islands
         target=("diamond", "enemy", "mid"),  # a diamond island, beside a defended bed, or a middle island that can be raised
@@ -103,10 +105,10 @@ FAMILIES = {
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
-EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push"), "stairs": ("steep", "way", "push"),
+EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push", "goal"), "stairs": ("steep", "way", "push", "goal"),
           "treenan": ("push", "spots"), "bedwars": ("push",)}  # dials that wait for the rest of the course kind
 # When rounds with every dial at its limit almost never win, these come down first, hardest first.
-STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("push", "longer", "faster"), "stairs": ("push", "way", "steep"),
+STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("goal", "push", "longer", "faster"), "stairs": ("goal", "push", "way", "steep"),
              "treenan": ("spots", "push"), "bedwars": ("push",)}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.

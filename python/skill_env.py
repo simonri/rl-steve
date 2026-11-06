@@ -170,7 +170,8 @@ class SkillEnv(gym.Env):
     map_data = None
     map_cells = frozenset()
     next_cells = {}
-    goal_half, field_margin, fall_margin, walk_par = 0, 6, 1.5, 0  # a win is standing on the goal block itself, not just near it
+    goal_half, field_margin, fall_margin, walk_par = 0, 6, 1.5, 0
+    goal_size = "platform"  # a win is standing on the goal block itself, not just near it
     ticks_per_decision = TICKS_PER_DECISION
     max_sneak_ticks = MAX_SNEAK_TICKS
     turn_choices = len(YAW_STEPS)
@@ -315,7 +316,7 @@ class SkillEnv(gym.Env):
             scale = reach / max(abs(ux), abs(uz))
             self.goal_x = int(round(ux * scale))
             self.goal_z = int(round(uz * scale))
-            worst = self.blocks_needed(self.goal_x, self.goal_z, max(max(self.heights), 0)) + detour
+            worst = self.blocks_needed(self.goal_x, self.goal_z, max(max(self.heights), 0)) + detour + self._single_extra(self.goal_x, self.goal_z)
             if not building or not self.budget[0] or reach <= 9 or math.ceil(worst * self.budget[0]) + self.budget[1] + getattr(self, "push_spare", 0) <= 64:
                 break
             reach -= 1
@@ -351,7 +352,7 @@ class SkillEnv(gym.Env):
                 extra_boxes += [[x, Y - 1, z, x, Y + POLE_HEIGHT, z] for x, z in self.poles]
             self.blocked = self._off_path(path, holes)
         self._build_field()
-        self.par = len(path) if path is not None else max(1, self.blocks_needed(gx, gz, self.dy) + self.detour)
+        self.par = len(path) if path is not None else max(1, self.blocks_needed(gx, gz, self.dy) + self.detour + self._single_extra(gx, gz))
         self.blocks_given = min(64, math.ceil(self.par * self.budget[0]) + self.budget[1])
         m = 8
         box = [min(-1, gx - 2) - m, min(Y, gy) - m, min(-1, gz - 2) - m, max(1, gx + 2) + m, max(Y, gy) + m, max(1, gz + 2) + m]
@@ -368,7 +369,7 @@ class SkillEnv(gym.Env):
             camera=self.camera_for(gx, gz, gy),
             camera_every=self.camera_every,
             beam=[gx + 0.5, gy + 1.2, gz + 0.5],
-            platforms=[[-1, Y, -1, 1, Y, 1], [gx - 2, gy, gz - 2, gx + 2, gy, gz + 2], *extra_boxes],
+            platforms=[[-1, Y, -1, 1, Y, 1], [gx, gy, gz, gx, gy, gz] if self.goal_size == "single block" else [gx - 2, gy, gz - 2, gx + 2, gy, gz + 2], *extra_boxes],
             pos=[px, Y + 1, pz],
             yaw=float(yaw % 360), pitch=pitch, blocks=self.blocks_given, block_radius=R,
         )
@@ -610,6 +611,10 @@ class SkillEnv(gym.Env):
                 dx, dz = cell[0] - x, cell[1] - z
         norm = math.hypot(dx, dz) or 1.0
         return dx / norm, dz / norm
+
+    def _single_extra(self, gx, gz):
+        """A lone goal block covers 2 less on each side than the 5x5 platform blocks_needed counts on."""
+        return (2 * (gx != 0) + 2 * (gz != 0)) if self.goal_size == "single block" else 0
 
     @staticmethod
     def blocks_needed(goal_x, goal_z, dy):

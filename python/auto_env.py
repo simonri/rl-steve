@@ -124,6 +124,7 @@ class AutoEnv(SkillEnv):
         t = self.task
         self.shape_cells = {}  # blocks of other shapes than a full block, put in after the reset built the course
         self.map_kind = "treenan"
+        self.goal_size = t.get("goal", "platform")
         self.kind, self.blocked, self.detour, self.field = None, set(), 0, None
         self.goal_half, self.field_margin, self.fall_margin, self.walk_par = 0, 6, 1.5, 0
         self.ticks_per_block, self.budget = t.get("faster") or t["ticks"], t.get("budget", (0.0, 0))
