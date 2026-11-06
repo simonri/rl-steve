@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use crate::clutch::{self, Cube, Push};
 use crate::player::{Hit, Input, Keys, Player, FACE_STEP};
 use crate::world::World;
 
@@ -49,11 +50,13 @@ const SPEED_BONUS: f64 = 3.0;
 const DEATH_COST: f64 = 4.0;
 const STUCK_COST: f64 = 4.0;
 const STAYED_HOME_COST: f64 = 2.0;
+const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
+const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 14] = [
+pub const PARTS: [&str; 16] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "placed toward the goal", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -68,6 +71,8 @@ const P_SPEED: usize = 10;
 const P_DEATH: usize = 11;
 const P_STUCK: usize = 12;
 const P_HOME: usize = 13;
+const P_CLUTCH: usize = 14;
+const P_SAVED: usize = 15;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -112,6 +117,8 @@ pub struct Course {
     pub world: World,
     /// Blocks were put in after the reset, and the game takes one tick with no keys to show them.
     pub settle: bool,
+    /// Pushes, as a hit would give them, in the order they come (clutch.rs).
+    pub pushes: Vec<Push>,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -128,6 +135,7 @@ pub struct Report {
     pub shift_share: f64,
     pub t: i32,
     pub blocks_per_s: f64,
+    pub pushes: i32,
 }
 
 pub struct Env {
@@ -154,11 +162,15 @@ pub struct Env {
     jump_wait: i32,
     was_on_ground: bool,
     history: [[f32; 8]; HISTORY],
-    pub parts: [f64; 14],
+    pub parts: [f64; 16],
     pub report: Report,
     hit: Option<Hit>,
     k: i32,
     tick_count: i64,
+    next_push: usize,
+    pushed: bool,        // a push came and it has not landed again yet
+    push_airborne: bool, // it has left the ground since
+    pushes_given: i32,
 }
 
 const K_FORWARD: usize = 0;
@@ -239,11 +251,15 @@ impl Env {
             jump_wait: 0,
             was_on_ground: true,
             history: [[0.0; 8]; HISTORY],
-            parts: [0.0; 14],
+            parts: [0.0; 16],
             report: Report::default(),
             hit: None,
             k,
             tick_count,
+            next_push: 0,
+            pushed: false,
+            push_airborne: false,
+            pushes_given: 0,
             course,
         };
         env.best = env.distance();
@@ -307,7 +323,7 @@ impl Env {
     }
 
     fn fell(&self) -> bool {
-        self.player.pos[1] < ((Y + 1).min(Y + 1 + self.course.dy)) as f64 - self.course.fall_margin
+        self.player.pos[1] < self.fall_line()
     }
 
     fn on_start_platform(&self) -> bool {
@@ -365,11 +381,14 @@ impl Env {
         self.history[HISTORY - 1] = [mv as f32 / 2.0, strafe as f32 / 2.0, sneak as i32 as f32, use_ as i32 as f32 / 2.0, jump as i32 as f32, sprint as i32 as f32, yaw as f32 / 10.0, pitch as f32 / 10.0];
         let held = self.player.held;
         let health = self.player.health;
+        let before = self.game_keys();
         self.press([mv == 1, mv == 2, strafe == 1, strafe == 2, sneak, jump, sprint]);
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
-        let ev = self.game_tick(&Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch] });
+        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch] };
+        self.maybe_push(before, &input);
+        let ev = self.game_tick(&input);
         self.t += 1;
         let on_ground = self.player.on_ground;
         // _track_jump
@@ -393,6 +412,14 @@ impl Env {
         // Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
         if self.player.pitch < 0.0 && self.hit.is_none() {
             reward += self.points(P_LOOK_UP, -LOOK_UP_COST * -(self.player.pitch as f64) / 90.0);
+        }
+        if self.pushed {
+            if !on_ground {
+                self.push_airborne = true;
+            } else if self.push_airborne {
+                self.pushed = false;
+                reward += self.points(P_CLUTCH, CLUTCH_BONUS);
+            }
         }
         let n = self.course.landing.len();
         if self.course.hop {
@@ -461,6 +488,9 @@ impl Env {
         if success {
             reward += self.points(P_GOAL, GOAL_REWARD * if clean { 1.0 } else { GOAL_AFTER_DEATH });
             reward += self.points(P_SPEED, SPEED_BONUS * (1.0 - self.t as f64 / self.course.limit as f64).max(0.0));
+            if self.course.blocks > 0 && self.used < self.course.par {
+                reward += self.points(P_SAVED, SAVED_BLOCK_BONUS * (self.course.par - self.used) as f64);
+            }
         }
         if fell {
             reward += self.points(P_DEATH, -DEATH_COST);
@@ -494,6 +524,7 @@ impl Env {
             landed: self.landed as i32,
             shift_share: self.sneak_ticks as f64 / self.t.max(1) as f64,
             t: self.t,
+            pushes: self.pushes_given,
             blocks_per_s: if success { (self.course.goal[0] as f64).hypot(self.course.goal[1] as f64) / (self.t as f64 / 20.0).max(0.05) } else { 0.0 },
         };
         (reward * REWARD_SCALE, done)
@@ -519,6 +550,34 @@ impl Env {
         self.anchor = h;
         self.since_moved = 0;
         self.hit = self.player.pick(&self.world);
+        self.pushed = false;
+    }
+
+    /// AutoEnv._maybe_push: the next planned push, the first tick it fits and can be saved.
+    fn maybe_push(&mut self, before: Keys, input: &Input) {
+        let pushes = &self.course.pushes;
+        while self.next_push < pushes.len() && self.t > pushes[self.next_push].until {
+            self.next_push += 1;
+        }
+        if self.next_push >= pushes.len() || self.pushed || !self.player.on_ground || self.t < pushes[self.next_push].from {
+            return;
+        }
+        let p = &self.player;
+        let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
+        let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: before };
+        let goal = [self.course.goal[0] as f64 + 0.5, self.course.goal[1] as f64 + 0.5];
+        if let Some(v) = clutch::decide(&cube, &state, input, goal, self.fall_line(), &pushes[self.next_push]) {
+            clutch::apply(&mut self.player, v);
+            self.next_push += 1;
+            self.pushed = true;
+            self.push_airborne = false;
+            self.pushes_given += 1;
+        }
+    }
+
+    fn fall_line(&self) -> f64 {
+        ((Y + 1).min(Y + 1 + self.course.dy)) as f64 - self.course.fall_margin
     }
 
     // ---- What it sees ----

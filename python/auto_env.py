@@ -52,6 +52,10 @@ FAR_JUMP = (4, 3)  # just inside what the jump math allows from a block
 SLAB = "minecraft:stone_slab[type=bottom,waterlogged=false]"
 MOVED_ON = 1.5  # blocks from where it last was to count as going somewhere
 DETOUR_TICKS = 200  # longest it may go around something without getting closer: 10 s
+CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
+SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
+PUSH_FALL_MARGIN = 4.0  # with pushes a clutch lands below the bridge, so a fall counts a little further down
+PUSH_WAIT = 60  # ticks a planned push waits for a moment it fits, then it is dropped
 
 
 CUBE_START = HEAD + KNOWN
@@ -74,6 +78,8 @@ class AutoEnv(SkillEnv):
     jump_wait, was_on_ground = 0, True
     exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
     exam_all = True
+    can_push = True
+    pushes = ()
 
     def __init__(self, port, levels=None, render=False):
         self.levels = levels or curriculum.Curriculum().levels
@@ -121,6 +127,11 @@ class AutoEnv(SkillEnv):
         self.ticks_per_block, self.budget = t.get("faster") or t["ticks"], t.get("budget", (0.0, 0))
         self.landing_order, self.course, self.poles = [], [], []
         self.landed = 0
+        # Pushes: when in the round (a share of the time limit), which way and how hard. Placed in time once the limit is known.
+        level = curriculum.PUSHES.index(t.get("push"))
+        r = self.np_random
+        self.push_draws = [(float(r.uniform(0.1, 0.6)), float(r.random()), float(r.uniform(0, 22.5))) for _ in range(1 + int(r.random() < 0.5))] if level else []
+        self.push_level = level
         self.gap, self.heights, self.directions, self.yaw_range, self.start = 8, (0,), "axis", t.get("yaw", 180), "center"
         if self.family == "hop":
             self.extras = HOPS
@@ -396,6 +407,18 @@ class AutoEnv(SkillEnv):
                     beam=[gx + 0.5, gy + 1.2, gz + 0.5], pos=[0.5 + float(r.uniform(-0.3, 0.3)), Y + 1, 0.5 + float(r.uniform(-0.3, 0.3))],
                     yaw=float(r.uniform(0, 360)), pitch=float(r.uniform(-30, 89)), blocks=self.blocks_given, block_radius=RADIUS)
 
+    def _plan_pushes(self):
+        """The round's pushes as (from tick, until tick, strongest level, which way, compass offset). Needs the time limit."""
+        self.pushes = []
+        if not self.push_draws:
+            return
+        self.fall_margin = max(self.fall_margin, PUSH_FALL_MARGIN)
+        for share, turn, jitter in sorted(self.push_draws):
+            start = 20 + int(share * self.limit)
+            if self.pushes:
+                start = max(start, self.pushes[-1][1] + 40)  # one at a time
+            self.pushes.append((start, start + PUSH_WAIT, self.push_level - 1, turn, jitter))
+
     def _safe_poles(self, poles):
         """Poles never stand in the way of a real jump, or on a block of the course."""
         solid = {(b[0], b[2]) for b in self.course} | {(x, z) for x in range(-1, 2) for z in range(-1, 2)}
@@ -621,6 +644,8 @@ class AutoEnv(SkillEnv):
 
     def _begin_episode(self):
         self.visited = set()
+        self._plan_pushes()
+        self.next_push, self.pushed, self.push_airborne, self.pushes_given = 0, False, False, 0
         super()._begin_episode()
         self.closest_block = self._climb(math.hypot(self.goal_x, self.goal_z) - 1.0, self.dy)  # the edge of the start platform
         self._anchor()
@@ -632,6 +657,35 @@ class AutoEnv(SkillEnv):
     def _respawn(self):
         super()._respawn()
         self._anchor()
+        self.pushed = False
+
+    def _maybe_push(self, before, keys, clicked, turn_yaw, turn_pitch):
+        """The next planned push, the first tick it fits and can be saved (clutch.rs decides, in both the game and the
+        simulator). A game without the mod's push gets none."""
+        plan = self.pushes
+        while self.next_push < len(plan) and self.t > plan[self.next_push][1]:
+            self.next_push += 1
+        o = self.obs
+        if self.next_push >= len(plan) or self.pushed or not o["on_ground"] or self.t < plan[self.next_push][0] or not self.can_push:
+            return
+        if len(o.get("solid", "")) != (2 * RADIUS + 1) ** 3:
+            return
+        import mcsim
+        order = ("forward", "back", "left", "right", "jump", "sneak", "sprint")
+        fall_line = min(Y + 1, Y + 1 + self.dy) - self.fall_margin
+        v = mcsim.push_for(o["solid"], list(o["feet"]), list(o["pos"]), list(o["vel"]), o["yaw"], o["pitch"], o["held_count"], [bool(before[k]) for k in order],
+                           [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5], fall_line, plan[self.next_push])
+        if v is None:
+            return
+        try:
+            self.c.call(op="push", vel=list(v))
+        except RuntimeError as e:  # an older mod: no pushes in this game
+            print(f"no pushes: {e}", flush=True)
+            AutoEnv.can_push = False
+            return
+        self.next_push += 1
+        self.pushes_given += 1
+        self.pushed, self.push_airborne = True, False
 
     def _wait_dead(self):
         """It sees nothing while dead, so only people watching have to wait for it."""
@@ -643,11 +697,14 @@ class AutoEnv(SkillEnv):
 
     def _tick(self, move, strafe, sneak, use, jump, sprint, yaw, pitch):
         held, health = self.obs["held_count"], self.obs["health"]
+        before = dict(self.keys)
         keys = self._press(dict(forward=move == 1, back=move == 2, left=strafe == 1, right=strafe == 2, sneak=bool(sneak), jump=bool(jump), sprint=bool(sprint)))
         self.since_sneak = 0 if keys["sneak"] else self.since_sneak + 1
         self.sneak_ticks += keys["sneak"]
         clicked = self._click(use) and self.since_sneak <= SNEAK_CLICK_TICKS
-        self.obs = o = self.c.step(use=clicked, yaw=self._aim(TURN_STEPS[yaw]), pitch=self._aim(TURN_STEPS[pitch]), **keys)
+        turn_yaw, turn_pitch = self._aim(TURN_STEPS[yaw]), self._aim(TURN_STEPS[pitch])
+        self._maybe_push(before, keys, clicked, turn_yaw, turn_pitch)
+        self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys)
         self.t += 1
         self._track_jump(o, keys["jump"])
         self._visit(o)
@@ -658,6 +715,12 @@ class AutoEnv(SkillEnv):
         aims_at_block = (o.get("hit") or {}).get("type") == "block"
         if o["pitch"] < 0 and not aims_at_block:  # looking above level at nothing in reach
             reward += self._points("looking up", -LOOK_UP_COST * -o["pitch"] / 90)
+        if self.pushed:
+            if not o["on_ground"]:
+                self.push_airborne = True
+            elif self.push_airborne:
+                self.pushed = False
+                reward += self._points("clutched", CLUTCH_BONUS)
         if self.family == "hop":
             if self.landed < len(self.landing_order) and o["on_ground"] and self._is_on(o, self.landing_order[self.landed]):
                 self.landed += 1
@@ -711,6 +774,10 @@ class AutoEnv(SkillEnv):
         if success:
             reward += self._points("goal", GOAL_REWARD * (1.0 if clean else GOAL_AFTER_DEATH))
             reward += self._points("speed", SPEED_BONUS * max(0.0, 1.0 - self.t / self.limit))
+            # Every block counts: one placed where it could already walk, or jumped instead of built, is worth as much
+            # as one over the need. Only on courses with blocks, and never more than the need.
+            if self.blocks_given > 0 and self.used < self.par:
+                reward += self._points("blocks saved", SAVED_BLOCK_BONUS * (self.par - self.used))
         if fell:
             reward += self._points("death", -DEATH_COST)
         if stalled:
@@ -729,7 +796,7 @@ class AutoEnv(SkillEnv):
         term = success or stalled or out_of_lives or timed_out
         info = {"success": success, "clean": clean, "fell": self.deaths > 0, "deaths": self.deaths, "respawned": respawned, "stalled": stalled,
                 "damage": self.damage, "blocks_used": self.used, "blocks_needed": self.par, "family": self.family, "tested": self.tested,
-                "landed": self.landed, "shift_share": self.sneak_ticks / max(self.t, 1), "parts": dict(self.parts)}
+                "landed": self.landed, "pushes": self.pushes_given, "shift_share": self.sneak_ticks / max(self.t, 1), "parts": dict(self.parts)}
         if success:
             info["blocks_per_s"] = math.hypot(self.goal_x, self.goal_z) / max(self.t / 20, 0.05)
         return float(reward) * self.reward_scale, term, False, info

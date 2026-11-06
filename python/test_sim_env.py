@@ -40,14 +40,14 @@ def actions(rng, n):
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 40
     rng = np.random.default_rng(1)
-    worst, ticks, bad = 0.0, 0, 0
+    worst, ticks, bad, pushes = 0.0, 0, 0, 0
     families = ["hop", "path", "bridge", "bridge", "treenan", "stairs", "bedwars", "bedwars"]
     ref = None
     for n in range(rounds):
         levels = curriculum.Curriculum().levels
         family = families[n % len(families)]
         for d, values in curriculum.FAMILIES[family].items():
-            if d not in curriculum.EXPERT.get(family, ()) or d in ("shapes", "steep", "way"):
+            if d not in curriculum.EXPERT.get(family, ()) or d in ("shapes", "steep", "way", "push"):
                 levels[family][d] = int(rng.integers(len(values)))
         if ref is None:
             ref = reference_env(levels)
@@ -81,12 +81,13 @@ def main():
                 break
             if done[0]:
                 rep = batch.report(0)
-                for key in ("success", "clean", "fell", "deaths", "stalled", "blocks_used", "landed"):
+                pushes += info["pushes"]
+                for key in ("success", "clean", "fell", "deaths", "stalled", "blocks_used", "landed", "pushes"):
                     assert rep[key] == info[key], (n, key, rep[key], info[key])
                 for k, v in info["parts"].items():
                     assert abs(rep["parts"].get(k, 0.0) - v) < 1e-6, (n, k, rep["parts"].get(k), v)
                 break
-    print(f"{rounds} rounds, {ticks} ticks, largest difference {worst:.2e}, rounds that differ {bad}")
+    print(f"{rounds} rounds, {ticks} ticks, {pushes} pushes, largest difference {worst:.2e}, rounds that differ {bad}")
     assert bad == 0
     print("sim env ok")
 

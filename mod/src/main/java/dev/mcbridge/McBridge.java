@@ -714,6 +714,15 @@ public final class McBridge implements ClientModInitializer {
                 ok(cmd);
                 return false;
             }
+            case "push" -> {
+                // A hit's knockback, as ClientboundSetEntityMotionPacket and the hurt event give it: new motion before
+                // the next tick, and the red flash. Python decides it (clutch.rs), so it can always be saved.
+                JsonArray v = cmd.getAsJsonArray("vel");
+                mc.player.setDeltaMovement(v.get(0).getAsDouble(), v.get(1).getAsDouble(), v.get(2).getAsDouble());
+                mc.player.animateHurt(0.0F);
+                ok(cmd);
+                return false;
+            }
             case "sidebar" -> {
                 Component title = styled(cmd.getAsJsonArray("title"));
                 List<Component> lines = new ArrayList<>();

@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::prelude::*;
 
+use crate::clutch::{self, Cube, Push};
 use crate::env::{Course, Env, Field, N_OBS, PARTS};
 use crate::player::{Input, Keys, Player, FACE_NAMES};
 use crate::world::{kind_for, World};
@@ -38,6 +39,22 @@ impl Single {
         p.on_ground = true;
         p.dm = [0.0, -0.0784, 0.0];
         self.player = p;
+    }
+
+    /// A hit's knockback, as clutch.rs gives it.
+    fn push(&mut self, vel: [f64; 3]) {
+        clutch::apply(&mut self.player, vel);
+    }
+
+    /// Whether the scripted clutch saves this push in the whole world, not just the cube the model sees: the check
+    /// that a push the cube allowed really can be saved.
+    #[pyo3(signature = (vel, before, keys, click, turn_yaw, turn_pitch, fall_line))]
+    #[allow(clippy::too_many_arguments)]
+    fn can_save(&self, vel: [f64; 3], before: [bool; 7], keys: [bool; 7], click: bool, turn_yaw: f64, turn_pitch: f64, fall_line: f64) -> bool {
+        let p = &self.player;
+        let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before) };
+        clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch }, fall_line)
     }
 
     fn set_block(&mut self, x: i32, y: i32, z: i32, name: &str) {
@@ -223,6 +240,10 @@ impl Batch {
             blocks: get(spec, "blocks")?,
             world,
             settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
+            pushes: match spec.get_item("pushes")? {
+                Some(p) if !p.is_none() => p.extract::<Vec<(i32, i32, usize, f64, f64)>>()?.into_iter().map(to_push).collect(),
+                _ => Vec::new(),
+            },
         };
         self.envs[i] = Some(Env::new(course, self.tick_count));
         Ok(())
@@ -278,6 +299,7 @@ impl Batch {
         d.set_item("landed", r.landed)?;
         d.set_item("shift_share", r.shift_share)?;
         d.set_item("ticks", r.t)?;
+        d.set_item("pushes", r.pushes)?;
         if r.success {
             d.set_item("blocks_per_s", r.blocks_per_s)?;
         }
@@ -317,11 +339,29 @@ fn kind_of(name: &str) -> u8 {
     kind_for(name)
 }
 
+fn to_push(p: (i32, i32, usize, f64, f64)) -> Push {
+    Push { from: p.0, until: p.1, level: p.2, turn: p.3, jitter: p.4 }
+}
+
+/// clutch.decide for the real game: the push to give now, from what the mod reports, or None.
+/// keys are (forward, back, left, right, jump, sneak, sprint): `before` as held last tick, `keys` for this one.
+#[pyfunction]
+#[pyo3(signature = (solid, feet, pos, vel, yaw, pitch, held, before, keys, click, turn_yaw, turn_pitch, goal, fall_line, push))]
+#[allow(clippy::too_many_arguments)]
+fn push_for(solid: &str, feet: [i32; 3], pos: [f64; 3], vel: [f64; 3], yaw: f32, pitch: f32, held: i32, before: [bool; 7], keys: [bool; 7], click: bool, turn_yaw: f64,
+            turn_pitch: f64, goal: [f64; 2], fall_line: f64, push: (i32, i32, usize, f64, f64)) -> Option<[f64; 3]> {
+    let cube = Cube::from_text(feet, solid);
+    let state = clutch::State { pos, vel, yaw, pitch, held, keys: to_keys(before) };
+    let first = Input { keys: to_keys(keys), click, turn_yaw, turn_pitch };
+    clutch::decide(&cube, &state, &first, goal, fall_line, &to_push(push))
+}
+
 #[pymodule]
 fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Single>()?;
     m.add_class::<Batch>()?;
     m.add("N_OBS", N_OBS)?;
     m.add_function(wrap_pyfunction!(kind_of, m)?)?;
+    m.add_function(wrap_pyfunction!(push_for, m)?)?;
     Ok(())
 }

@@ -21,6 +21,7 @@ YAW = (15, 45, 90, 180)  # degrees the start can be turned away from the way to 
 ISLAND, PILLAR, WALL, SLALOM = "island", "pillar", "wall", "slalom"
 FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-8, -6, -4, -3, -1, 0, 1, 3)
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
+PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
 
 FAMILIES = {
     "hop": dict(
@@ -62,6 +63,7 @@ FAMILIES = {
         # Harder, and only open once all of the above is at its limit.
         longer=(1.0, 1.5),
         faster=(None, 6, 5, 4, 3),  # ticks per block with almost no spare time: chasing the record. The game itself sets the ceiling.
+        push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
     "treenan": dict(
         gap=(10, 15, 20, 25, 30),
@@ -69,6 +71,7 @@ FAMILIES = {
         ticks=(40, 30, 20, 15, 10, 7),
         height=(0, 2, 4, 6, 8),  # the other island moved up or down by up to this many blocks
         start=("bed", "anywhere"),  # anywhere on the bed island, with its trees and walls between it and the edge
+        push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
     # A bridge that climbs one block per block ahead, 45 degrees: a staircase built while walking up it.
     "stairs": dict(
@@ -81,6 +84,7 @@ FAMILIES = {
         # Harder, and only open once all of the above is at its limit.
         steep=(1.0, 1.5, 2.0),  # blocks up per block ahead: steeper than 45 degrees means towering on the way
         way=("up", "up or down"),  # down too: building a way down without falling off it
+        push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
     # Fresh Bedwars maps every round (bedwars_map.py): from the own base across void to another island.
     "bedwars": dict(
@@ -93,12 +97,15 @@ FAMILIES = {
         start=("spawn", "anywhere"),  # by the own bed, or anywhere on the base
         budget=(ROOMY, NORMAL, TIGHT, STRICT),
         ticks=(40, 30, 20, 15),
+        push=PUSHES,  # hits that knock it off: it has to clutch, placing a block to land on (clutch.rs)
     ),
 }
 # A dial stays at its easiest until another dial on the same course has reached a level.
-EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster"), "stairs": ("steep", "way")}  # dials that wait for the rest of the course kind
+EXPERT = {"hop": ("far", "mix", "bend", "longer", "shapes"), "path": ("wide_holes", "longer", "shapes"), "bridge": ("longer", "faster", "push"), "stairs": ("steep", "way", "push"),
+          "treenan": ("push",), "bedwars": ("push",)}  # dials that wait for the rest of the course kind
 # When rounds with every dial at its limit almost never win, these come down first, hardest first.
-STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("longer", "faster"), "stairs": ("way", "steep")}
+STEP_BACK = {"hop": ("longer", "bend", "mix", "far", "shapes"), "path": ("longer", "wide_holes", "shapes"), "bridge": ("push", "longer", "faster"), "stairs": ("push", "way", "steep"),
+             "treenan": ("push",), "bedwars": ("push",)}
 DIAL_NEEDS = {("bridge", "obstacle"): ("gap", 1)}  # obstacles need a gap of 8 to fit in
 # A course kind stays closed until another one has come this far.
 FAMILY_NEEDS = {"treenan": ("bridge", dict(gap=3, directions=2)), "stairs": ("bridge", dict(gap=2)), "bedwars": ("treenan", dict(gap=1))}

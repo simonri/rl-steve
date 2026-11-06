@@ -44,6 +44,7 @@ class CourseMaker(AutoEnv):
         self._use_task(self._pick_stage())
         spec = self._spec()
         self.limit = self.time_limit()
+        self._plan_pushes()
         boxes = [list(map(int, b)) for b in spec["platforms"]]
         placed = dict(self.next_cells) if self.extras == "treenan" else {}
         placed.update(self.shape_cells)  # slabs and other shapes, put in after the course is built
@@ -66,6 +67,7 @@ class CourseMaker(AutoEnv):
             landing=[list(map(int, c)) for c in self.landing_order], par=int(self.par), limit=int(self.limit), no_blocks=self.extras in NO_BLOCKS, field=field,
             home=[float(v) for v in spec["pos"]], yaw=float(spec["yaw"]), pitch=float(spec["pitch"]), blocks=int(spec["blocks"]), boxes=boxes, cells=cells, lo=lo, hi=hi,
             settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
+            pushes=[(int(a), int(b), int(c), float(d), float(e)) for a, b, c, d, e in self.pushes],
         ), dict(family=self.family, tested=self.tested)
 
 
@@ -155,6 +157,9 @@ class FakeClient:
         pass
 
     def call(self, op=None, **msg):
+        if op == "push":
+            self.single.push([float(v) for v in msg["vel"]])
+            return {"ok": True}
         if op == "paste":
             for x, y, z, i in msg["blocks"]:
                 if msg.get("now"):  # into the round being played
