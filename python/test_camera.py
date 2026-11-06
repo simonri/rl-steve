@@ -42,7 +42,7 @@ def main():
             new = cam.update(env)
             if t == 0:  # the opening shot holds the start and the goal
                 goal = (env.goal_x + 0.5, 101 + env.dy, env.goal_z + 0.5)
-                skyless += 30 <= cam.shot[4] <= 45  # looking 30 to 40 degrees down, as people watch
+                skyless += 18 <= cam.shot[4] <= 32  # looking about 25 degrees down, as people watch
                 framed += all(h <= H_HALF and v <= V_FOV / 2 for h, v in (cam._angles(cam.shot, p) for p in ((0.5, 101.0, 0.5), goal)))
             elif new is not None:
                 cuts += 1
@@ -59,10 +59,10 @@ def main():
             far += math.dist(at[:3], head) > MAX_DIST * 1.2
             if term or trunc:
                 break
-    print(f"{rounds} rounds, {ticks} ticks: start and goal in the opening shot {framed}/{rounds}, 30-45 degrees down {skyless}/{rounds}, cuts after it {cuts}, camera inside a block {inside}, view blocked {hidden}, too far {far}")
+    print(f"{rounds} rounds, {ticks} ticks: start and goal in the opening shot {framed}/{rounds}, 18-32 degrees down {skyless}/{rounds}, cuts after it {cuts}, camera inside a block {inside}, view blocked {hidden}, too far {far}")
     assert inside == 0, "the camera sat inside a block"
     assert framed == rounds, "an opening shot left out the start or the goal"
-    assert skyless >= rounds * 0.8, "opening shots not looking 30 to 45 degrees down"
+    assert skyless >= rounds * 0.8, "opening shots not looking about 25 degrees down"
     assert hidden <= ticks * 0.1, "the view to the player was blocked too often"
     assert cuts <= rounds, "the camera cut more than once a round on average"
     assert far <= ticks * 0.02, "the camera was too far away too often"
