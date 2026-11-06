@@ -97,13 +97,20 @@ def read_log(name):
 
 def read_levels(name):
     """Level and share of clean rounds per course kind over time, on runs with automatic difficulty."""
+    # A new course kind or dial changes the columns, and the log before it is kept as levels_before_N.csv: read
+    # those first, oldest first, so the history goes all the way back. Columns a file lacks are empty there.
+    folder = MODELS / name
+    older = sorted(folder.glob("levels_before_*.csv"), key=lambda p: int(p.stem.rsplit("_", 1)[1]) if p.stem.rsplit("_", 1)[1].isdigit() else 0)
     rows = []
-    try:
-        with open(MODELS / name / "levels.csv", newline="") as f:
-            for row in csv.DictReader(f):
-                rows.append({k: float(v) if v else None for k, v in row.items()})
-    except (OSError, ValueError):
-        pass
+    for path in [*older, folder / "levels.csv"]:
+        try:
+            with open(path, newline="") as f:
+                for row in csv.DictReader(f):
+                    rows.append({k: float(v) if v else None for k, v in row.items() if k})
+        except (OSError, ValueError):
+            continue
+    columns = {k for r in rows for k in r}
+    rows = [{k: r.get(k) for k in columns} for r in rows]
     return current_timeline(rows)
 
 
