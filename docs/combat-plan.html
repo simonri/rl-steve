@@ -1,0 +1,207 @@
+<title>Stridsplanen</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* One reading column; tables and diagrams scroll in their own boxes. Red marks the fight, blue the server, green the model. */
+:root {
+  --bg: #f6f7f4; --panel: #ffffff; --fg: #17201b; --muted: #56615a; --line: #d9ddd6;
+  --wool: #b8322a; --server: #2f5fb3; --model: #1f8a5b; --sim: #9a6a12;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --text: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --panel: #1a201d; --fg: #e8ece8; --muted: #a2ada6; --line: #2e3632;
+  --wool: #e2605a; --server: #7ea3ea; --model: #55c08e; --sim: #d7a64a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a201d; --fg: #e8ece8; --muted: #a2ada6; --line: #2e3632;
+  --wool: #e2605a; --server: #7ea3ea; --model: #55c08e; --sim: #d7a64a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--text); }
+main { max-width: 860px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 8px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(30px, 6vw, 44px); font-weight: 750; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 750; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); }
+h3 { font-size: 18px; font-weight: 600; margin-top: 18px; }
+p, li { max-width: 68ch; }
+p { margin: 8px 0; }
+ul, ol { margin: 6px 0; padding-left: 22px; }
+li { margin: 3px 0; }
+.lede { font-size: 18px; color: var(--muted); margin-top: 10px; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--wool); }
+.mono { font-family: var(--mono); font-size: 0.88em; }
+.wrap { overflow-x: auto; margin: 12px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font: 600 12px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.where { font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; white-space: nowrap; }
+.where.server { color: var(--server); border: 1px solid var(--server); }
+.where.sim { color: var(--sim); border: 1px solid var(--sim); }
+.where.model { color: var(--model); border: 1px solid var(--model); }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+pre.mermaid { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; margin: 12px 0; }
+.step { display: grid; grid-template-columns: 56px 1fr; gap: 4px 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.step:last-child { border-bottom: 0; }
+.step .n { font: 750 30px/1 var(--display); color: var(--wool); }
+.step > div { min-width: 0; }
+.done-when { font-size: 14.5px; color: var(--muted); }
+@media (max-width: 480px) { .step { grid-template-columns: 40px 1fr; } .step .n { font-size: 24px; } }
+</style>
+
+<main>
+  <div class="eyebrow">Plan · strid i 1.8-stil</div>
+  <h1>Stridsplanen</h1>
+  <p class="lede">Allt som behövs för att agenten ska slåss som på Hypixel Bedwars: reglerna på vår 26.3-server, simulatorn, vad modellen ser och gör, motståndarna, poängen, svårighetstrappan och ordningen. Den bygger på arkitekturplanen: strid tränas först som en egen modell och slås sedan ihop med förflyttningen.</p>
+
+  <h2>Reglerna: 1.8 på en 26.3-server</h2>
+  <p>26.3 har laddningstid mellan slag, svepslag och andra knuffvärden. Hypixel kör 1.8-strid. Vi bygger in 1.8-reglerna på serversidan i vår mod, så att riktiga spelet och simulatorn har exakt samma regler. Lunar påverkas inte: reglerna sitter på servern.</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Regel</th><th>1.8 / Hypixel</th><th>26.3 i dag</th></tr></thead>
+    <tbody>
+      <tr><td>Laddningstid mellan slag</td><td>Ingen. Varje klick är ett fullt slag; takten avgörs av hur fort man klickar.</td><td>Svärd laddar 0,625 s; slag före det gör mindre skada.</td></tr>
+      <tr><td>Odödlighet efter träff</td><td>10 tick (av 20) där nya slag bara räknas om de gör mer skada än det förra</td><td>Samma princip, kontrolleras mot spelet</td></tr>
+      <tr><td>Knuff</td><td>Farten halveras, sedan 0,4 bort och 0,4 upp. Ett slag i sprint lägger till 0,5 och bryter angriparens sprint (därav w-tap).</td><td>Annan formel (som clutchen använder i dag)</td></tr>
+      <tr><td>Kritisk träff</td><td>Vid fall (inte på marken, inte i vatten): ×1,5</td><td>Kräver dessutom full laddning</td></tr>
+      <tr><td>Svepslag</td><td>Finns inte</td><td>Finns</td></tr>
+      <tr><td>Räckvidd</td><td>3 block, mot en hitbox som är 0,1 större åt alla håll</td><td>3 block (entity interaction range)</td></tr>
+      <tr><td>Blockera med svärd</td><td>Högerklick halverar skadan och saktar ner (blockhit)</td><td>Finns inte. Vi tar det i ett senare steg, se beslut nedan.</td></tr>
+      <tr><td>Läkning</td><td>Full mättnad: snabb läkning som i Bedwars</td><td>Peaceful: 1 per sekund. Byts mot Bedwars-läkning.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Värdena tas från 1.8.9:s källkod (MCP) och Hypixels beteende, inte ur minnet. Varje regel kontrolleras på servern genom att vi spelar in riktiga dueller och jämför tick för tick, på samma sätt som rörelserna.</p>
+
+  <h3>Bedwars-utrustning</h3>
+  <div class="wrap"><table>
+    <thead><tr><th>Sak</th><th>Nivåer</th></tr></thead>
+    <tbody>
+      <tr><td>Svärd</td><td>Trä (start), sten, järn, diamant. Lagets uppgradering Sharpness.</td></tr>
+      <tr><td>Rustning</td><td>Läder (start, lagfärg), ringbrynja, järn, diamant. Lagets uppgradering Protection.</td></tr>
+      <tr><td>Knockback-pinne</td><td>Knockback I</td></tr>
+      <tr><td>Senare</td><td>Pil och båge, eldklot, TNT, guldäpple, osynlighet, hoppdryck</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Vad som byggs var</h2>
+  <div class="wrap"><table>
+    <thead><tr><th>Del</th><th>Var</th><th>Vad</th></tr></thead>
+    <tbody>
+      <tr><td>1.8-regler</td><td><span class="where server">server</span></td><td>Mod på serversidan: ingen laddningstid (attack speed till max), 1.8-skada, krit, knuff och odödlighet, inget svep.</td></tr>
+      <tr><td>Se andra spelare</td><td><span class="where server">server</span></td><td>Modden rapporterar spelare inom 24 block: läge, fart, blick, hälsa, rustning, vad de håller i, om de nyss slog eller blev slagna.</td></tr>
+      <tr><td>Slå och byta föremål</td><td><span class="where server">server</span></td><td>Finns redan i modden (<span class="mono">attack</span>, <span class="mono">hotbar</span>). Kontrolleras att de går i takt med stegningen.</td></tr>
+      <tr><td>Motståndare i riktiga spelet</td><td><span class="where server">server</span></td><td>En andra bot (bot1) för inspelning och test, plus du. Varje motståndare har sin egen anslutning.</td></tr>
+      <tr><td>Flera spelare</td><td><span class="where sim">simulator</span></td><td>Flera spelare i samma värld, med knuffar mellan kroppar och synlighet.</td></tr>
+      <tr><td>Träff</td><td><span class="where sim">simulator</span></td><td>Siktlinje från ögonen mot motståndarens hitbox (före block), räckvidd, i vilket tick servern räknar slaget.</td></tr>
+      <tr><td>Skada och knuff</td><td><span class="where sim">simulator</span></td><td>1.8-formlerna ovan, rustning, odödlighet, sprint som bryts, läkning.</td></tr>
+      <tr><td>Föremål</td><td><span class="where sim">simulator</span></td><td>Hotbar med svärd, block och pinne. Byte tar ett tick, som i spelet.</td></tr>
+      <tr><td>Botar</td><td><span class="where sim">simulator</span></td><td>Skriptade motståndare i Rust (se nedan), lika snabba som simulatorn.</td></tr>
+      <tr><td>Nytt i det den ser</td><td><span class="where model">modell</span></td><td>Se nästa avsnitt.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Modellen</h2>
+  <h3>Det den ser</h3>
+  <ul>
+    <li><strong>De 3 närmaste motståndarna</strong>, var och en som en egen rad:
+      <ul>
+        <li>läge och fart relativt agenten (både i rundans riktning och i blickens riktning);</li>
+        <li>vart motståndaren tittar, och om den tittar på agenten;</li>
+        <li>hälsa, rustning och vad den håller i;</li>
+        <li>på marken, sprintar, tick sedan den blev slagen respektive slog;</li>
+        <li>fri sikt eller inte.</li>
+      </ul>
+      Saknas en motståndare är raden tom med en flagga. Ordningen är efter avstånd.</li>
+    <li><strong>Egen strid:</strong> hälsa (finns), rustning, odödlighet kvar, tick sedan eget senaste slag och träff.</li>
+    <li><strong>Hotbar:</strong> vad som ligger på varje plats och vilken som är vald.</li>
+  </ul>
+  <h3>Det den gör</h3>
+  <ul>
+    <li><strong>Slå</strong> (vänsterklick) som en egen knapp. Högst ett slag per tick, alltså 20 i sekunden. Se beslutet om klickgräns.</li>
+    <li><strong>Välja plats i hotbaren</strong>: svärd, block eller pinne.</li>
+    <li>Siktet sköts av dagens vridsteg (upp till 60° per tick, fint nära noll), som räcker för att följa en spelare.</li>
+  </ul>
+  <h3>Nätet</h3>
+  <p>Varje motståndarrad går genom ett litet gemensamt nät, och resultaten slås ihop så att ordningen inte spelar roll (samma nät för alla, sedan max och medel). Det läggs ihop med dagens blockkub, karta och egen kropp, och går genom samma minne (LSTM). Från dagens modell flyttas allt som passar över: block, karta och kropp börjar alltså inte från noll.</p>
+
+<pre class="mermaid">
+flowchart LR
+  E1["Motståndare 1"] --> ENC["Samma lilla nät<br/>för varje motståndare"]
+  E2["Motståndare 2"] --> ENC
+  E3["Motståndare 3"] --> ENC
+  ENC --> POOL["Max och medel"]
+  CUBE["Blockkub + karta<br/>(från dagens modell)"] --> JOIN["Ihop"]
+  SELF["Egen kropp, hotbar,<br/>uppdrag"] --> JOIN
+  POOL --> JOIN
+  JOIN --> LSTM["Minne (LSTM)"]
+  LSTM --> ACT["Gå, hoppa, sprint, smyg,<br/>vrid, placera, slå, hotbar"]
+</pre>
+
+  <h2>Motståndarna</h2>
+  <p>Först skriptade botar, som en trappa. När agenten slår den bästa boten möter den sig själv.</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Bot</th><th>Vad den gör</th></tr></thead>
+    <tbody>
+      <tr><td>Dummy</td><td>Står still. Lär agenten att gå fram och träffa.</td></tr>
+      <tr><td>Gångare</td><td>Går mot agenten och slår i jämn takt.</td></tr>
+      <tr><td>Strafare</td><td>Cirklar runt agenten, siktar bra, slår i sprint.</td></tr>
+      <tr><td>Kombo</td><td>W-tap för extra knuff, krit-hopp, håller avståndet.</td></tr>
+      <tr><td>Kanttryckare</td><td>Försöker knuffa ut agenten i tomrummet, med pinnen när den har en.</td></tr>
+      <tr><td>Broanfallare</td><td>Bygger bro mot agenten och slåss på bron.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Självspel:</strong> agenten tränar mot en blandning av sina egna äldre versioner. De som den har svårast mot väljs oftare. Botarna finns kvar i blandningen, så den inte glömmer hur man slår enkla motståndare. Vi mäter alltid mot samma fasta botar, så att vi ser om den blir bättre på riktigt.</p>
+
+  <h2>Poängen</h2>
+  <div class="wrap"><table>
+    <thead><tr><th>Händelse</th><th>Poäng</th><th>Varför</th></tr></thead>
+    <tbody>
+      <tr><td>Vinna duellen</td><td class="num">+10</td><td>Det enda som räknas till slut</td></tr>
+      <tr><td>Förlora</td><td class="num">−10</td><td>Samma storlek, så det lönar sig inte att fly</td></tr>
+      <tr><td>Skada på motståndaren</td><td class="num">+0,3 per hälsopoäng</td><td>Leder vägen till vinst</td></tr>
+      <tr><td>Egen skada</td><td class="num">−0,3 per hälsopoäng</td><td>Lika stor, så byte av slag är noll</td></tr>
+      <tr><td>Motståndaren i tomrummet efter agentens knuff</td><td class="num">räknas som vinst</td><td>Så vinner man på broar</td></tr>
+      <tr><td>Tid</td><td class="num">som i dag</td><td>Ingen nytta av att dra ut på det</td></tr>
+    </tbody>
+  </table></div>
+  <p>Inga poäng för saker som går att samla på (till exempel slag i luften eller närhet). Allt ovan betalas en gång per händelse.</p>
+
+  <h2>Svårighetstrappan: duell</h2>
+  <p>En ny bantyp, "duell", med samma system för svårighetsnivåer som i dag:</p>
+  <ul>
+    <li><strong>motståndare:</strong> dummy, gångare, strafare, kombo, kanttryckare, självspel;</li>
+    <li><strong>arena:</strong> stor plattform, ö med kanter, bro mellan två öar;</li>
+    <li><strong>utrustning:</strong> lika, eller motståndaren ett steg bättre;</li>
+    <li><strong>start:</strong> avstånd och vinkel;</li>
+    <li><strong>pinne:</strong> av, eller båda har knockback-pinne;</li>
+    <li><strong>antal:</strong> en motståndare, sedan två.</li>
+  </ul>
+  <p>Varje duell går att vinna: lika utrustning, lika hälsa, och boten är aldrig snabbare än regler och klickgräns tillåter.</p>
+
+  <h2>Ordningen</h2>
+  <div class="step"><div class="n">1</div><div><h3>1.8-regler och inspelning i riktiga spelet</h3>
+    <p>Reglerna i modden, spelare i observationen, en andra bot (bot1). Spela in dueller där bot1 och bot0 slår på varandra med kända inmatningar.</p>
+    <p class="done-when">Klart när slag, skada, knuff och odödlighet i inspelningarna stämmer med 1.8-värdena. Kräver en omstart av bot0.</p></div></div>
+  <div class="step"><div class="n">2</div><div><h3>Strid i simulatorn</h3>
+    <p>Flera spelare, träff, skada, knuff, odödlighet, hotbar. Jämförs med inspelningarna tick för tick.</p>
+    <p class="done-when">Klart när minst 99 % av tickarna stämmer, som för rörelserna.</p></div></div>
+  <div class="step"><div class="n">3</div><div><h3>Botar och duellbanor</h3>
+    <p>De skriptade botarna i Rust, bantypen duell och den nya modellen med motståndare och slag.</p>
+    <p class="done-when">Klart när en tom modell lär sig slå dummyn och gångaren.</p></div></div>
+  <div class="step"><div class="n">4</div><div><h3>Träning mot botar, sedan självspel</h3>
+    <p>Svårighetstrappan upp till kanttryckaren, sedan blandningen av äldre versioner.</p>
+    <p class="done-when">Klart när den vinner 9 av 10 mot alla botar och klarar sig mot dig i en svärdsduell.</p></div></div>
+  <div class="step"><div class="n">5</div><div><h3>Ihop med förflyttningen</h3>
+    <p>Den gemensamma modellen lär sig härma båda experterna och tränar sedan på strid på bro och i torn.</p>
+    <p class="done-when">Klart när den tar sig över en bro mot en bot som försvarar, oftare än den faller.</p></div></div>
+
+  <h2>Beslut jag behöver från dig</h2>
+  <ul>
+    <li><strong>Klickgräns:</strong> modellen kan slå 20 gånger i sekunden. En bra spelare klickar 10–14. Ska vi ha en gräns, till exempel 12 i sekunden i snitt och aldrig två slag i rad oftare än varannan tick? Utan gräns vinner den på klickfart, inte på skicklighet.</li>
+    <li><strong>Reaktionstid:</strong> i dag ser agenten spelet utan fördröjning. En människa reagerar efter ungefär 150–250 ms. Ska vi lägga in en fördröjning i strid, så att den vinner på taktik och inte på reflexer?</li>
+    <li><strong>Blockhit:</strong> blockera med svärdet som i 1.8. Det finns inte i 26.3 och måste byggas helt själv. Tar vi det senare, eller direkt?</li>
+    <li><strong>Bot1:</strong> okej att starta en andra klient på maskinen för inspelningar och tester? Den använder ungefär 2 GB minne.</li>
+  </ul>
+
+  <div class="note"><p><strong>Risker.</strong> Träffar avgörs på servern med en tick fördröjning. Simulatorn måste räkna slaget i samma tick som servern, annars lär sig modellen sikta en tick fel. Därför spelas allt in och jämförs innan träningen börjar, som med rörelserna. Självspel kan gå i cirklar (A slår B, B slår C, C slår A). Därför tränar den mot en blandning av äldre versioner, och vi mäter alltid mot fasta botar.</p></div>
+</main>
