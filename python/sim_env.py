@@ -106,7 +106,7 @@ class SimVecEnv(VecEnv):
         if self.opponents is not None:
             self.opponents.new_round(i, meta)
             if self.opponents.players[i] is not None:  # a model plays its opponent: training keeps it out of the curriculum
-                self.meta[i] = dict(meta, opponent=self.opponents.players[i])
+                self.meta[i] = dict(meta, opponent=self.opponents.players[i], foes=len(spec["duel"]["opponents"]))
 
     def reset(self):
         for i in range(self.num_envs):

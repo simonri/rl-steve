@@ -32,5 +32,16 @@ with tempfile.TemporaryDirectory() as d:
     assert [x["name"] for x in refs[1:]] == list(rating.BOT_REFERENCES)
     assert set(result["scores"]) == {x["name"] for x in refs} and all(0 <= v <= 1 for v in result["scores"].values())
     again = rating.Rating(Path(d), n=4).rate(model, 6_000_000)  # the references stay as they were
-    assert json.loads((Path(d) / "references" / "references.json").read_text()) == refs
+    assert json.loads((Path(d) / "references" / "references.json").read_text()) == refs or again.get("added")
+    # A model that outgrows the references adds a frozen copy at its Elo; the anchor stays, the oldest others go.
+    r = rating.Rating(Path(d), n=4)
+    for m in range(10, 10 + rating.MAX_SNAPSHOTS + 1):
+        r.add_snapshot(model, m * 1_000_000, 1000.0 + 100 * m)
+    snaps = [x for x in r.references if x["kind"] == "snapshot"]
+    assert len(snaps) == rating.MAX_SNAPSHOTS and snaps[0]["name"] == refs[0]["name"], [x["name"] for x in snaps]
+    assert snaps[-1]["elo"] == 1000.0 + 100 * (10 + rating.MAX_SNAPSHOTS) and (Path(d) / "references" / snaps[-1]["file"]).exists()
+    assert len(list((Path(d) / "references").glob("*.zip"))) == rating.MAX_SNAPSHOTS
+    assert rating.Rating(Path(d), n=4).references == r.references  # kept across restarts
+    # The bonus weight reads only the copies a rating fought (one added just after has no score yet).
+    assert ta.bonus_weight_from(dict(scores={refs[0]["name"]: 0.5}), r.references) == 1.0
 print("rating ok", result["elo"])

@@ -107,6 +107,13 @@ def main():
     nxt = [t for s, t in draws if s["bot"] == "medium walker"]
     assert 0.15 < len(nxt) / len(draws) < 0.25 and all(t is None for t in nxt), len(nxt)
     assert not any(s["bot"] == "medium walker" for s, _ in (curriculum.draw(lv, "duel", rng, practice_next=False) for _ in range(500)))
+    # Hop practises its longer courses and bends the same way, even while those dials are down.
+    hop = curriculum.FAMILIES["hop"]
+    assert not any(s["longer"] != hop["longer"][0] for s, _ in (curriculum.draw(lv, "hop", rng) for _ in range(500))), "not before the rest of hop"
+    lv["hop"] = {d: len(v) - 1 for d, v in hop.items()} | {"longer": 0, "bend": 0}
+    draws = [curriculum.draw(lv, "hop", rng) for _ in range(2000)]
+    ahead = [t for s, t in draws if s["longer"] == hop["longer"][1] or s["bend"] == hop["bend"][1]]
+    assert 0.15 < len(ahead) / len(draws) < 0.25 and all(t is None for t in ahead), len(ahead)
     # A win is only a win alive and standing: a fighter that runs on after its hit, off the island, never wins while it
     # is in the air or falling, and falling off after the dummy is a loss.
     import skill_env

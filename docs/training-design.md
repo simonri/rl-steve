@@ -35,6 +35,10 @@ versioner av modellen. Resultatet blir ett Elo-tal och en vinstmatris.
   ([arXiv 1912.06680](https://arxiv.org/abs/1912.06680)); DeepMinds fotboll utvärderade mot 13 agenter som aldrig
   användes i träningen ([arXiv 2105.12196](https://arxiv.org/abs/2105.12196)).
 - Vårt val (extrapolation): utvärdering på en egen liten uppsättning rundor, så att träningen inte blir långsammare.
+- När modellen tar över 0,85 i snitt mot referenserna läggs en fryst kopia av den till, med modellens Elo just då
+  (`rating.ADD_AT`). Annars säger en rating bara "mycket bättre": i auto7 svängde Elo 1350–1660 när den slog nästan
+  alla. Ankaret och de tre nyaste kopiorna behålls. Självspelets poängtal till poolen räknas bara från 1 mot 1:
+  mot två förlorar den de flesta rundor oavsett vilken version som spelar den första.
 
 ## Belöning
 

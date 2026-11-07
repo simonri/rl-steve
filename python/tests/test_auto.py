@@ -254,7 +254,7 @@ assert c.levels["hop"]["offset"] == 1
 # Close to the top, most rounds put every dial at its limit at once.
 near = Curriculum({"hop": {d: len(v) - 1 for d, v in FAMILIES["hop"].items() if d not in curriculum.EXPERT["hop"]}})
 rng3 = np.random.default_rng(2)
-drawn = [draw(near.levels, "hop", rng3)[1] for _ in range(1000)]
+drawn = [draw(near.levels, "hop", rng3, practice_next=False)[1] for _ in range(1000)]  # beside hop's FRONTIER practice
 assert 520 < drawn.count("all") < 680, drawn.count("all")
 drawn = [draw(Curriculum().levels, "hop", rng3)[1] for _ in range(1000)]
 assert 220 < drawn.count("all") < 380, drawn.count("all")

@@ -25,6 +25,12 @@ BOT_REFERENCES = ("slow walker", "medium walker", "walker", "strafer", "combo", 
 FIGHT = dict(arena=0, distance=1, yaw=1, gear=0, kb=0, count=0)
 ROUNDS = 32  # per reference and rating
 ANCHOR_ELO = 1000.0
+# When the model scores more than this against the references on average, a frozen copy of it joins them, rated at
+# the model's Elo then: against references it nearly always beats, a rating only says "much better" (scores are capped
+# at 0.98) and swung 1350-1660 from rating to rating in auto7. The new one is a little underrated, since the Elo it
+# gets comes from those capped scores; it is the scale's next step, not an exact value.
+ADD_AT = 0.85
+MAX_SNAPSHOTS = 4  # the anchor and the three newest: each costs ROUNDS fights a rating
 
 
 def elo_from_score(score, against):
@@ -113,4 +119,24 @@ class Rating:
             self.index.write_text(json.dumps(self.references, indent=1))
         scores = {r["name"]: self._score(model.policy, r, device) for r in self.references}
         elo = fit_elo([(scores[r["name"]], r["elo"], ROUNDS) for r in self.references])
-        return dict(elo=round(elo, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps)
+        result = dict(elo=round(elo, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps)
+        if sum(scores.values()) / len(scores) > ADD_AT:
+            result["added"] = self.add_snapshot(model, steps, elo)
+        return result
+
+    def add_snapshot(self, model, steps, elo):
+        """A frozen copy of the model now joins the references at Elo `elo`; past MAX_SNAPSHOTS the oldest after the
+        anchor goes. Ratings already given stay as they were."""
+        name = f"auto@{steps // 1_000_000}M"
+        if any(r["name"] == name for r in self.references):
+            return None
+        model.save(self.folder / name)
+        self.references.append(dict(name=name, kind="snapshot", file=name + ".zip", elo=round(elo, 1)))
+        snaps = [r for r in self.references if r["kind"] == "snapshot"]
+        while len(snaps) > MAX_SNAPSHOTS:
+            gone = snaps.pop(1)
+            self.references.remove(gone)
+            self.policies.pop(gone["name"], None)
+            (self.folder / gone["file"]).unlink(missing_ok=True)
+        self.index.write_text(json.dumps(self.references, indent=1))
+        return name

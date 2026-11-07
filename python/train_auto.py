@@ -306,7 +306,8 @@ def bonus_weight_from(rated, references):
     0.9. Only the frozen copies count: the scripted bots are already beaten ~90% and measure nothing of these plays.
     The 0.5 and 0.4 are ours, not from a paper.
     """
-    snapshots = [r["name"] for r in references if r["kind"] == "snapshot"]
+    # The copies this rating fought: one added right after it (rating.ADD_AT) has no score yet.
+    snapshots = [r["name"] for r in references if r["kind"] == "snapshot" and r["name"] in rated["scores"]]
     if not snapshots:
         return 1.0
     score = sum(rated["scores"][n] for n in snapshots) / len(snapshots)
@@ -451,8 +452,11 @@ class Progress(BaseCallback):
                 # family's rates, which measure the scripted opponents (docs/training-design.md#self-play).
                 points = 1.0 if info["success"] else 0.0 if info["deaths"] > 0 else 0.5
                 kind = "latest" if info["opponent"] == "latest" else "pool"
-                self.self_play.setdefault(kind, deque(maxlen=WINDOW)).append(points)
-                if self.pool is not None and kind == "pool":
+                one = info.get("foes", 1) == 1
+                # Against two (the model-played one and a bot) the model loses most rounds whoever the first one is:
+                # those say little about how hard a version is, so only one-against-one rounds count for the pool.
+                self.self_play.setdefault(kind if one else kind + " 1v2", deque(maxlen=WINDOW)).append(points)
+                if self.pool is not None and kind == "pool" and one:
                     self.pool.record(info["opponent"], points)
                 self.parts.append(info["parts"])
                 continue
@@ -559,6 +563,8 @@ class Progress(BaseCallback):
         if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
             self.rated = self.rating.rate(self.model, self.num_timesteps)
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
+            if self.rated.get("added"):
+                print(f"rating: {self.rated['added']} added to the references at Elo {self.rated['elo']}", flush=True)
             w = bonus_weight_from(self.rated, self.rating.references)
             if w < self.bonus_weight:  # only falls: a bad rating does not bring the bonuses back
                 self.set_bonus_weight(w)

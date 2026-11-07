@@ -296,7 +296,9 @@ def finished(levels, family):
 
 # Dials whose next level keeps being practised in a share of rounds, whatever their own level: a new opponent takes
 # longer to learn than the 30 rounds a dial is judged on, and a dial that goes back down would otherwise stop showing it.
-FRONTIER = {"duel": ("bot",)}
+# Hop's last two dials went up and down for 40M decisions (auto7, 160-207M): each time one went down, the longer
+# courses were no longer played at all, so what was learned of them faded before the next try.
+FRONTIER = {"duel": ("bot",), "hop": ("longer", "bend")}
 FRONTIER_SHARE = 0.2
 
 
@@ -307,7 +309,8 @@ def draw(levels, family, rng, tested=None, practice_next=True):
     if practice_next and tested is None and FRONTIER.get(family) and rng.random() < FRONTIER_SHARE:
         # Practice at the next level of a frontier dial: not a test, so it does not count for the dial either way.
         dial = FRONTIER[family][int(rng.integers(len(FRONTIER[family])))]
-        if current[dial] + 1 < len(dials[dial]):
+        # Only a dial that is open: hop's last dials wait until the rest of hop is at its top.
+        if current[dial] + 1 < len(dials[dial]) and dial in open_dials(levels, family):
             settings = {d: v[int(rng.integers(current[d] + 1))] for d, v in dials.items()}
             settings[dial] = dials[dial][current[dial] + 1]
             return settings, None
