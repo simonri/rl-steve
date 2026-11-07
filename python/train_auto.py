@@ -85,6 +85,9 @@ def transfer(policy, old_state):
             for n in sizes:
                 w[i : i + n] = torch.tensor(NEW_ACTION_BIAS.get(int(n), (0.0,) * int(n)))
                 i += int(n)
+        elif t.dim() == 1 and t.shape[0] > old.shape[0] and name.endswith(("body_mean", "body_std")):
+            w = t.clone()  # the inputs grew at the end: the old ones keep their standardization, the new start at none
+            w[: old.shape[0]] = old
         elif t.dim() == 2 and t.shape[0] == old.shape[0] and t.shape[1] > old.shape[1]:
             w = torch.zeros_like(t)
             w[:, : old.shape[1]] = old
@@ -100,6 +103,57 @@ def transfer(policy, old_state):
 # platform before it has learned anything (indices into the action logits); the fighting inputs as NEW_ACTION_BIAS.
 MOVE_BIAS = ((10, 1.5), (11, -1.5), (12, 1.5), (13, -1.5), (14 + NO_TURN, 1.5), (14 + len(TURN_STEPS) + NO_TURN, 1.5))
 MOVE_ACTIONS = 8  # the movement model's inputs; the fighting ones come after them
+
+
+def policy_kwargs(critic_memory=False, entities=False, normalize_inputs=False):
+    """POLICY with the network options a run was made with (train_sim keeps them in the run's net.json):
+    critic_memory gives the value its own memory (an LSTM, as the policy has); entities gives opponents and hotbar slots
+    their own small shared networks (spatial.SpatialNet); normalize_inputs needs no change here (SpatialNet always has
+    its standardization, the identity until measured)."""
+    kw = dict(POLICY)
+    kw["enable_critic_lstm"] = bool(critic_memory)
+    if entities:
+        kw["features_extractor_kwargs"] = dict(kw.get("features_extractor_kwargs", {}), entities=True)
+    return kw
+
+
+def saved_keys(path):
+    """The names of the weights a saved model has."""
+    return set(SplitPPO.load(path, device="cpu", custom_objects=QUIET_LOAD).policy.state_dict())
+
+
+# The value's own parts: while VALUE_WARMUP runs (a new critic memory), only these learn.
+CRITIC_PARTS = ("lstm_critic", "mlp_extractor.value_net", "value_net")
+
+
+def freeze_all_but_value(policy, on):
+    """While `on`, only the value learns: a new critic memory starts out wrong, and its advantages would push the
+    policy around until it has caught up. The policy, eyes and memory keep their weights."""
+    for name, p in policy.named_parameters():
+        p.requires_grad_(not on or name.startswith(CRITIC_PARTS))
+
+
+@torch.no_grad()
+def measure_inputs(model, vec, ticks=200, floor=0.25):
+    """The mean and spread of what the body part sees, from `ticks` ticks of every round played by the model.
+    Spreads below `floor` are raised to it: a value that is nearly always 0 (a rare item) must not be blown up."""
+    from auto_env import CUBE_START, HISTORY_START
+
+    policy = model.policy
+    obs = vec.reset()
+    n = vec.num_envs
+    lstm = policy.lstm_actor
+    memory = (torch.zeros(lstm.num_layers, n, lstm.hidden_size, device=model.device), torch.zeros(lstm.num_layers, n, lstm.hidden_size, device=model.device))
+    starts = torch.ones(n, device=model.device)
+    seen = []
+    for _ in range(ticks):
+        seen.append(np.concatenate([obs[:, :CUBE_START], obs[:, HISTORY_START:]], axis=1))
+        dist, memory = policy.get_distribution(torch.as_tensor(obs, device=model.device), memory, starts)
+        vec.step_async(dist.get_actions(deterministic=False).cpu().numpy())
+        obs, _, dones, _ = vec.step_wait()
+        starts = torch.as_tensor(dones, dtype=torch.float32, device=model.device)
+    x = np.concatenate(seen)
+    return torch.as_tensor(x.mean(0), dtype=torch.float32), torch.as_tensor(np.maximum(x.std(0), floor), dtype=torch.float32)
 
 
 def init_action_bias(policy):
@@ -363,6 +417,7 @@ class Progress(BaseCallback):
         self.rounds = 0
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
+        self.value_warmup = 0  # until this many decisions only the value learns (a new critic memory: freeze_all_but_value)
         self.rate_every = 0  # decisions between ratings (train_sim: every other exam, a rating now takes minutes)
         self.last_rated = None
         self.bench_every = None  # decisions between fixed benchmarks (benchmark.py), when train_sim sets it
@@ -464,7 +519,7 @@ class Progress(BaseCallback):
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
         tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores,
-                                    last_bench=self.last_bench, last_rated=self.last_rated)))
+                                    last_bench=self.last_bench, last_rated=self.last_rated, value_warmup=self.value_warmup)))
         os.replace(tmp, self.out / "latest.json")
         if self.pool is not None:
             self.pool.save()  # the versions' scores
@@ -584,6 +639,7 @@ class Progress(BaseCallback):
 
     def _on_rollout_end(self):
         self.rollout_ended = time.time()
+        freeze_all_but_value(self.model.policy, self.num_timesteps < self.value_warmup)
         self.timings.append(("collect", self.rollout_ended - self.rollout_started))
         torch.set_num_threads(self.learn_threads)  # learning on big batches does use them, and the games wait anyway
         if self.num_timesteps - self.last_exam < EXAM_EVERY:

@@ -9,6 +9,9 @@ from torch import nn
 
 from auto_env import CUBE_SIZE, CUBE_START, HISTORY_START, MAP_CHANNELS, MAP_SIDE, MAP_START, RADIUS
 
+ENEMIES, ENEMY_F = 3, 20  # duel.rs: the three nearest opponents, 20 values each, first in the fight part
+HOTBAR_SLOTS, HOTBAR_KIND_F = 9, 40  # items.rs: per slot its kind (39) and count, then the selected slot (9), last
+
 
 class SpatialExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, per_part: int = 128):
@@ -60,7 +63,7 @@ class SpatialNet(BaseFeaturesExtractor):
     so a single block, or which side of an edge it stands on, is still seen exactly. The parts then meet in a few
     residual steps. What it remembers between ticks is added after this, in MemoryPolicy."""
 
-    def __init__(self, observation_space: gym.spaces.Box, per_part: int = 128, width: int = 256, depth: int = 2):
+    def __init__(self, observation_space: gym.spaces.Box, per_part: int = 128, width: int = 256, depth: int = 2, entities: bool = False):
         super().__init__(observation_space, features_dim=width)
         side = 2 * RADIUS + 1
         self.cube_side, self.map_side = side, MAP_SIDE
@@ -84,16 +87,69 @@ class SpatialNet(BaseFeaturesExtractor):
         self.cube_out = nn.Sequential(nn.Linear(cube_out, per_part), nn.LayerNorm(per_part))
         self.map_out = nn.Sequential(nn.Linear(map_out, per_part), nn.LayerNorm(per_part))
         self.body = nn.Sequential(nn.Linear(body, per_part), nn.LayerNorm(per_part))
+        # What the body part sees, standardized: (x - mean) / std. Identity until train_sim measures the inputs
+        # (--normalize-inputs) and folds the measured values into the first layer, so the model answers as before.
+        self.register_buffer("body_mean", torch.zeros(body))
+        self.register_buffer("body_std", torch.ones(body))
         self.join = nn.Linear(3 * per_part, width)
         self.think = nn.Sequential(*(Residual(width, 2 * width) for _ in range(depth)), nn.LayerNorm(width))
+        # Opponents and hotbar slots each through one small shared network, then pooled: the same thing learnt about
+        # one opponent or slot holds for every one, whatever the order or the count (OpenAI Five, AlphaStar). Added to
+        # the body part through a layer that starts at zero, so a model moved over answers exactly as before.
+        self.entities = entities
+        if entities:
+            self.enemy = nn.Sequential(nn.Linear(ENEMY_F, 64), nn.SiLU(), nn.Linear(64, 64), nn.SiLU())
+            self.slot = nn.Sequential(nn.Linear(HOTBAR_KIND_F, 32), nn.SiLU())
+            self.entity_out = nn.Linear(64 + 2 * 32, per_part)
+            nn.init.zeros_(self.entity_out.weight)
+            nn.init.zeros_(self.entity_out.bias)
 
     def forward(self, obs):
         n = obs.shape[0]
         cube = obs[:, CUBE_START : CUBE_START + CUBE_SIZE].reshape(n, 1, self.cube_side, self.cube_side, self.cube_side)
         grid = obs[:, MAP_START : HISTORY_START].reshape(n, MAP_CHANNELS, self.map_side, self.map_side)
-        body = torch.cat([obs[:, :CUBE_START], obs[:, HISTORY_START:]], dim=1)
-        parts = torch.cat([self.cube_out(self.cube(cube)), self.map_out(self.map(grid)), self.body(body)], dim=1)
+        body = (torch.cat([obs[:, :CUBE_START], obs[:, HISTORY_START:]], dim=1) - self.body_mean) / self.body_std
+        lin = self.body[0](body)
+        if self.entities:
+            lin = lin + self.entity_out(self._entities(obs))
+        parts = torch.cat([self.cube_out(self.cube(cube)), self.map_out(self.map(grid)), self.body[1](lin)], dim=1)
         return self.think(self.join(nn.functional.silu(parts)))
+
+    def _entities(self, obs):
+        """Opponents: each through `enemy`, max-pooled over those there (its first value says it is). Hotbar: each
+        slot through `slot`, summed, and the selected slot's own."""
+        n = obs.shape[0]
+        start = obs.shape[1] - (HOTBAR_SLOTS * HOTBAR_KIND_F + HOTBAR_SLOTS)
+        extra0 = start - (ENEMIES * ENEMY_F + 9 + 4 + 5)  # duel.rs EXTRA: enemies, self, command, clicks, hotbar
+        foes = obs[:, extra0 : extra0 + ENEMIES * ENEMY_F].reshape(n, ENEMIES, ENEMY_F)
+        there = foes[:, :, :1] > 0.5
+        e = self.enemy(foes)
+        e = torch.where(there, e, torch.full_like(e, -1e4)).max(dim=1).values
+        e = torch.where(there.any(dim=1), e, torch.zeros_like(e))
+        slots = obs[:, start : start + HOTBAR_SLOTS * HOTBAR_KIND_F].reshape(n, HOTBAR_SLOTS, HOTBAR_KIND_F)
+        selected = obs[:, start + HOTBAR_SLOTS * HOTBAR_KIND_F :]
+        h = self.slot(slots)
+        return torch.cat([e, h.sum(dim=1), (h * selected.unsqueeze(2)).sum(dim=1)], dim=1)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # A model saved before the standardization had no such values: it loads with none (mean 0, std 1).
+        state_dict.setdefault(prefix + "body_mean", self.body_mean.clone())
+        state_dict.setdefault(prefix + "body_std", self.body_std.clone())
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+    @torch.no_grad()
+    def fold_normalization(self, mean, std):
+        """Standardize the body part with these measured values, and change the first layer so the model answers
+        exactly as before: W (x - m) / s + b' = W x + b when the layer's columns become W s and b' = b + W m."""
+        lin = self.body[0]
+        old_mean, old_std = self.body_mean.clone(), self.body_std.clone()
+        # Undo the old standardization in the weights, then apply the new one.
+        w_raw = lin.weight / old_std  # weights on raw x
+        b_raw = lin.bias - (lin.weight * (old_mean / old_std)).sum(dim=1)
+        lin.weight.copy_(w_raw * std)
+        lin.bias.copy_(b_raw + (w_raw * mean).sum(dim=1))
+        self.body_mean.copy_(mean)
+        self.body_std.copy_(std)
 
 
 from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy  # noqa: E402
@@ -133,6 +189,11 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
         super().__init__(*args, **kwargs)
         if type(self.action_dist) is MultiCategoricalDistribution:
             self.action_dist.__class__ = WeightedMultiCategorical  # same state, the entropy weighed per action
+        # The library initializes every layer again after building (orthogonal); the entity layer has to start at zero.
+        for extractor in {id(e): e for e in (self.features_extractor, getattr(self, "pi_features_extractor", None), getattr(self, "vf_features_extractor", None)) if e is not None}.values():
+            if getattr(extractor, "entities", False):
+                torch.nn.init.zeros_(extractor.entity_out.weight)
+                torch.nn.init.zeros_(extractor.entity_out.bias)
 
     def extract_features(self, obs, features_extractor=None):
         real = ~torch.isnan(obs[:, 0])

@@ -140,6 +140,45 @@ svagare spelare utan som en expert som ibland får kramp, och det lär modellen 
 stället för att slå en bra motståndare. Det är inte testat i litteraturen åt något håll; äldre versioner är det
 beprövade sättet.
 
+## Att veta att den blir bättre
+
+<a id="mata"></a>
+### Mätning med felmarginal
+
+Måtten vi styrde efter var till stor del brus (auto7, november 2026): reglagen rörde sig 96 gånger upp och 89 ned,
+132 av dem `hop.longer` och `hop.bend` fram och tillbaka; proven (32 rundor) svängde lika mycket som slumpen själv
+(±0,08); Elo svängde 300 poäng mellan ratingar. Därför:
+
+- **Fast prov** (`python/benchmark.py`): samma rundor varje gång (fasta seeds), tre fasta svårigheter per sort och en
+  runda där hon måste hitta blocken, 128 rundor var som räknas en gång, både med slump och utan, med 95 %-intervall
+  (Wilson). Var 10:e miljon beslut till `benchmark.jsonl`. Proven på aktuell nivå blir svårare när kursen går
+  framåt, så de visar inte framsteg över tid; det fasta provet gör det.
+- **Färdigheter som poängen inte visar** (`Env.Skills`): slag per sekund, missar, crits, långa slag, svärdsträffar,
+  och hur ofta och hur snabbt den hittar blocken. Räknas bara, syns aldrig i indata och ger inga poäng.
+- **Kursen beslutar med marginal:** ett reglage höjs bara när vinstandelen säkert är över 0,6 och sänks bara när den
+  säkert är under 0,35 (95 % ensidigt, Wilson, upp till 60 rundor), i stället för 70 % på 30 rundor.
+- **Elo ur alla matcher:** varje rating spelar varje referens i tre sorters dueller, 64 rundor var, och alla
+  matcher sparas. Alla ratingar anpassas tillsammans (Bradley–Terry, ankaret 1000, en svag dragning mot 1000 så
+  att ett rent svep inte springer iväg) och får ett intervall. Förr fick varje referens ett fast Elo från en brusig
+  rating, och felen staplades.
+- Källa för grundprincipen: Agarwal m.fl. 2021, "Deep RL at the Edge of the Statistical Precipice": få rundor och
+  inga intervall är den vanligaste orsaken till övertolkade RL-resultat.
+
+<a id="natet"></a>
+### Nätverksval som prövas (alla startar exakt som den gamla modellen)
+
+- **Minne i värdet** (`--critic-memory`): värdet hade inget minne och gissade bara utifrån nuet, i strider med dold
+  information. Dess nya minne startar som en kopia av policyns, och de första 1M besluten lär sig bara värdet, så
+  att dess fel inte puttar policyn.
+- **Standardiserade indata** (`--normalize-inputs`): värdena hade mycket olika skala. Medel och spridning mäts en
+  gång och vävs in i första lagret, så svaren är oförändrade; spridningar under 0,25 höjs dit, så att ett nästan
+  alltid tomt värde inte blåses upp. Andrychowicz m.fl. 2021 ("What Matters in On-Policy RL") fann normalisering
+  av indata bland det viktigaste för PPO.
+- **Egna nät för motståndare och hotbar** (`--entities`): varje motståndare och varje plats går genom samma lilla
+  nät och slås ihop (max och summa), som i OpenAI Five och AlphaStar: det som lärs om en motståndare gäller alla,
+  i vilken ordning och hur många de än är. Läggs till genom ett lager som startar på noll.
+- Inte prövat nu: bredare nät och separat värdenät; spelandet tar redan 6–7 av 10 s per omgång.
+
 ## Det vi inte gör (nu)
 
 <a id="ingen-e3b"></a>

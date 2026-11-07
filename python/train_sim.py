@@ -41,6 +41,10 @@ def main():
     p.add_argument("--start-from-recordings", type=int, default=0)
     p.add_argument("--sim-threads", type=int, default=6, help="cores for the simulator")
     p.add_argument("--seed", type=int, default=0)
+    # Network options (docs/training-design.md#natet), kept in the run's net.json so a continued run builds the same.
+    p.add_argument("--critic-memory", action="store_true", help="the value gets its own memory (LSTM)")
+    p.add_argument("--normalize-inputs", action="store_true", help="the body part's inputs standardized, measured once")
+    p.add_argument("--entities", action="store_true", help="opponents and hotbar slots through their own shared networks")
     a = p.parse_args()
     os.environ.setdefault("RAYON_NUM_THREADS", str(a.sim_threads))
     Distribution.set_default_validate_args(False)
@@ -62,11 +66,16 @@ def main():
         print(f"{out / 'latest.zip'} exists: continuing this run, not {a.resume}", flush=True)
         a.resume = None
     vec = SimVecEnv(a.envs, curriculum.levels, seed=a.seed)
+    net_file = out / "net.json"
+    net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities)
+    net_file.write_text(json.dumps(net))
+    print(f"network: {net}", flush=True)
     kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=ta.GAMMA, gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
-                  ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.POLICY, seed=a.seed)
+                  ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"]), seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     ta.fast_convolutions()
     resumed_steps = 0
+    warmup = saved_state.get("value_warmup", 0)
     if continuing or a.resume:
         # The eyes and hands may have grown since that model was saved: what was there is kept exactly.
         grew, steps = ta.load_weights(model, out / "latest.zip" if continuing else a.resume)
@@ -75,6 +84,15 @@ def main():
             # A model that has learned for a while goes on at its calmer learning rate and exploration: from step 0
             # the schedule's first ones undid much of what it could (bridging fell from 0.82 to 0.66 in 500k).
             resumed_steps = model.num_timesteps = steps
+            if net["critic_memory"] and not any(k.startswith("lstm_critic") for k in ta.saved_keys(a.resume)):
+                # The value's new memory starts as a copy of the policy's, and only the value learns for 1M decisions.
+                model.policy.lstm_critic.load_state_dict(model.policy.lstm_actor.state_dict())
+                warmup = steps + 1_000_000
+                print(f"critic memory: a copy of the policy's; only the value learns until {warmup}", flush=True)
+            if net["normalize_inputs"] and bool((model.policy.features_extractor.body_std == 1).all()):
+                mean, std = ta.measure_inputs(model, vec)
+                model.policy.features_extractor.fold_normalization(mean.to(model.device), std.to(model.device))
+                print(f"inputs standardized from {200 * a.envs} ticks; the model answers as before", flush=True)
         torch.cuda.empty_cache()
     else:
         ta.init_action_bias(model.policy)
@@ -88,6 +106,7 @@ def main():
         model.num_timesteps = resumed_steps
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     progress = ta.Progress(vec, out, curriculum, 2)
+    progress.value_warmup = warmup
     progress.rating = Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
     progress.bench_every = 10_000_000  # the fixed benchmark (benchmark.py): a few minutes, about every hour
     progress.rate_every = 4_000_000  # a rating plays 3 kinds of fight x 64 rounds per reference: every other exam
