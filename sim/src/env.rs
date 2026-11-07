@@ -77,9 +77,10 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 25] = [
+pub const PARTS: [&str; 26] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
     "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aim", "missed swing", "long hit", "critical hit", "took blocks",
+    "swing at nobody",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -105,6 +106,7 @@ const P_SWING: usize = 21;
 const P_LONG_HIT: usize = 22;
 const P_CRIT: usize = 23;
 const P_TOOK_BLOCKS: usize = 24;
+const P_BLIND_SWING: usize = 25;
 /// A course to build on that starts with something else in hand (AutoEnv._with_hotbar, RANDOM_HAND): the first time in
 /// the round it has blocks in hand pays this, once. Finding them in the hotbar is the one new thing such a round asks.
 const TOOK_BLOCKS_BONUS: f64 = 0.5;
@@ -647,6 +649,9 @@ impl Env {
         if use_ && in_hand == 0 {
             reward += self.points(P_EMPTY_CLICK, -EMPTY_CLICK_COST);
         }
+        if attack {
+            reward += self.points(P_BLIND_SWING, -shaping::BLIND_SWING_COST); // a course has nobody to hit
+        }
         if !self.took_blocks && self.player.held() > 0 {
             self.took_blocks = true;
             self.skills.took_blocks_at = self.t;
@@ -814,6 +819,12 @@ impl Env {
         reward += self.points(P_LONG_HIT, long);
         reward += self.points(P_CRIT, crit);
         reward += self.points(P_SWING, swing);
+        if input.attack {
+            let foes: Vec<(&Player, bool)> = self.opponents.iter().map(|o| (&o.player, !o.out)).collect();
+            if !shaping::anyone_in_view(&self.player, &foes) {
+                reward += self.points(P_BLIND_SWING, -shaping::BLIND_SWING_COST);
+            }
+        }
         // Only to opponents still in the fight: one knocked out keeps falling and the void hurts it, which is not a hit.
         let dealt: f32 = self.opponents.iter().zip(&health_before).filter(|(o, _)| !o.out).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);

@@ -32,10 +32,12 @@ refs_ = [dict(name="a", kind="snapshot"), dict(name="b", kind="snapshot"), dict(
 assert not rating.outgrown(dict(a=0.95, b=0.5, walker=1.0), refs_)
 assert rating.outgrown(dict(a=0.95, b=0.8, walker=0.2), refs_)
 assert rating.outgrown(dict(a=0.95, b=0.5), refs_, fresh=("b",)), "b made now: a is the newest copy that counts"
-# The bonus weight reads only copies it did not just make, and follows the average of WEIGHT_OVER ratings.
-assert ta.snapshot_score(dict(scores=dict(a=0.5, b=0.9), fresh=["b"]), refs_) == 0.5
-assert ta.snapshot_score(dict(scores=dict(walker=1.0)), refs_) is None
-assert ta.weight_for(0.5) == 1.0 and ta.weight_for(0.9) == 0.0 and abs(ta.weight_for(0.7) - 0.5) < 1e-9
+# The bonus weight is the share of the duel curriculum still ahead.
+cur_ = curriculum.Curriculum()
+assert ta.bonus_weight_for(cur_) == 1.0 - cur_.total("duel") / cur_.most("duel")
+for d, values in curriculum.FAMILIES["duel"].items():
+    cur_.levels["duel"][d] = len(values) - 1
+assert ta.bonus_weight_for(cur_) == 0.0
 
 # The joint fit: one that wins 10 to 1 against the anchor is about 400 above it; one that only ever met that one, and
 # won 10 to 1 against it, about 400 above that, with a wider interval (it is known only through the other).
@@ -74,6 +76,4 @@ with tempfile.TemporaryDirectory() as d:
     assert snaps[-1]["elo"] == 1000.0 + 100 * (10 + rating.MAX_SNAPSHOTS) and (Path(d) / "references" / snaps[-1]["file"]).exists()
     assert len(list((Path(d) / "references").glob("*.zip"))) == rating.MAX_SNAPSHOTS
     assert rating.Rating(Path(d), n=4).references == r.references  # kept across restarts
-    # The bonus weight reads only the copies a rating fought (one added just after has no score yet).
-    assert ta.bonus_weight_from(dict(scores={refs[0]["name"]: 0.5}), r.references) == 1.0
 print("rating ok", result["elo"])

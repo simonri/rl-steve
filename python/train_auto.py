@@ -466,37 +466,16 @@ class SplitPPO(RecurrentPPO):
             return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
 
 
-def bonus_weight_from(rated, references):
-    """How much a fight's event bonuses (long hit, critical hit, missed swing) should count, from a rating.
+def bonus_weight_for(cur):
+    """How much a fight's event bonuses (long hit, critical hit, missed swing) count: the share of the duel
+    curriculum still ahead, full at its first level, nothing once every duel dial is at its limit.
 
     They are a crutch for finding those plays; what counts is damage and winning (docs/training-design.md#nedtrappning).
-    So they fade as the model gets stronger: full while it scores 0.5 against the frozen copies of itself, nothing at
-    0.9. Only the frozen copies count: the scripted bots are already beaten ~90% and measure nothing of these plays.
-    The 0.5 and 0.4 are ours, not from a paper.
-    """
-    score = snapshot_score(rated, references)
-    return 1.0 if score is None else weight_for(score)
-
-
-def snapshot_score(rated, references):
-    """The model's average score against the frozen copies of itself this rating fought, or None. A copy made from
-    the model in this very rating (the anchor's first, rated["fresh"]) is left out: against itself it scores about
-    0.5 whatever it is, which says nothing; one added right after the rating (rating.ADD_AT) has no score yet."""
-    fresh = set(rated.get("fresh", ()))
-    snapshots = [r["name"] for r in references if r["kind"] == "snapshot" and r["name"] in rated["scores"] and r["name"] not in fresh]
-    if not snapshots:
-        return None
-    return sum(rated["scores"][n] for n in snapshots) / len(snapshots)
-
-
-def weight_for(score):
-    """Full at 0.5 against its frozen copies, nothing at 0.9 (ours, not from a paper)."""
-    return float(min(max(1.0 - (score - 0.5) / 0.4, 0.0), 1.0))
-
-
-# The bonus weight follows the average of this many ratings, not one: with 32 rounds a score is about +-0.09, the weight
-# +-0.22, and since it only falls it followed the lowest of a noisy series (auto7 went from 1.0 to 0.22 on one rating).
-WEIGHT_OVER = 3
+    Before, the weight fell as the model beat frozen copies of itself. From scratch that came far too early: at 14M
+    auto8 beat its 2M and 6M copies 90 % of the time because they were beginners, and the weight fell to 0.03 with the
+    duel curriculum at 9 of 20. How far the fights themselves have come says when the crutch can go."""
+    most = cur.most("duel")
+    return float(min(max(1.0 - cur.total("duel") / most, 0.0), 1.0)) if most else 0.0
 
 
 class Progress(BaseCallback):
@@ -523,8 +502,7 @@ class Progress(BaseCallback):
         self.last_bench = None
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
         self.rated = None  # its last result: Elo and score per reference
-        self.bonus_weight = 1.0  # how much a fight's event bonuses count (weight_for, shaping.rs); only falls
-        self.snapshot_scores = []  # the last WEIGHT_OVER ratings' scores against the frozen copies
+        self.bonus_weight = 1.0  # how much a fight's event bonuses count (bonus_weight_for, shaping.rs)
         self.pool = None  # pool.Pool: older versions to fight (train_sim sets it, with the vec's opponents)
         self.self_play = {}  # opponent ("latest" or a version) -> recent points, for status
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
@@ -630,7 +608,7 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "levels.json")
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
-        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores,
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight,
                                     last_bench=self.last_bench, last_rated=self.last_rated, value_warmup=self.value_warmup,
                                     still_until=self.still_until, phase_ins=self.phase_ins)))
         os.replace(tmp, self.out / "latest.json")
@@ -663,7 +641,7 @@ class Progress(BaseCallback):
             # (resume_last_exam, from latest.json), so restarts do not keep putting them off.
             self.first_step = self.last_save = self.num_timesteps
             self.last_exam = self.resume_last_exam if self.resume_last_exam is not None else self.num_timesteps
-            self.set_bonus_weight(self.bonus_weight)  # a resumed run's weight (train_sim sets it from latest.json)
+            self.set_bonus_weight(bonus_weight_for(self.cur))
         moved = False
         for done, info in zip(self.locals["dones"], self.locals["infos"]):
             if not done:
@@ -706,6 +684,11 @@ class Progress(BaseCallback):
                 moved = True
                 dial, level = change
                 print(f"dial {family}.{dial} -> {level}/{len(FAMILIES[family][dial]) - 1} ({FAMILIES[family][dial][level]}) at {self.num_timesteps}, {self.cur.total()}/{self.cur.most()} in all", flush=True)
+        if moved:
+            w = bonus_weight_for(self.cur)
+            if abs(w - self.bonus_weight) >= 0.01:
+                self.set_bonus_weight(w)
+                print(f"event bonus weight now {w:.2f} (duel curriculum {self.cur.total('duel')}/{self.cur.most('duel')})", flush=True)
         mastered = self.cur.mastered()
         practice = {f: round(w, 1) for f, w in self.cur.practice().items()}
         if moved or mastered != self.pushed_mastered or practice != self.pushed_practice:
@@ -797,14 +780,6 @@ class Progress(BaseCallback):
                   + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
             if self.rated.get("added"):
                 print(f"rating: {self.rated['added']} added to the references at Elo {self.rated['elo']}", flush=True)
-            score = snapshot_score(self.rated, self.rating.references)
-            if score is not None:
-                self.snapshot_scores = (self.snapshot_scores + [score])[-WEIGHT_OVER:]
-            enough = len(self.snapshot_scores) == WEIGHT_OVER
-            w = weight_for(sum(self.snapshot_scores) / len(self.snapshot_scores)) if enough else 1.0
-            if w < self.bonus_weight:  # only falls: a bad rating does not bring the bonuses back
-                self.set_bonus_weight(w)
-                print(f"event bonus weight now {w:.2f}", flush=True)
         # The test reset the games, so training has to continue from fresh observations.
         self.model._last_obs = self.vec.reset()
         self.model._last_episode_starts = np.ones(self.vec.num_envs, dtype=bool)

@@ -95,9 +95,13 @@ Tidigare gav vi en fast poäng per tick med siktet på motståndaren; den kunde 
 ### 6. Händelsebonusar trappas ned när modellen kan
 
 Crit, långa slag och kostnaden för missade slag är stöttning: de hjälper modellen att upptäcka tekniker, men det
-som räknas är vinst och skada (en crit ger redan 1,5× skada). Deras vikt w sjunker när vinstandelen mot
-referenserna stiger, och får bara sjunka (backas om referensstyrkan faller). Vikten sparas mellan omstarter och
-syns aldrig i indata.
+som räknas är vinst och skada (en crit ger redan 1,5× skada). Deras vikt w är den andel av duell-läroplanen som
+återstår: 1 på första nivån, 0 när alla duell-rattar är i botten (`train_auto.bonus_weight_for`). Den syns aldrig i
+indata.
+
+Förr följde w vinsten mot modellens frysta kopior. Från noll föll den för tidigt: vid 14M slog auto8 sina 2M- och
+6M-kopior i 90 % eftersom de var nybörjare, och w föll till 0,03 med duell-läroplanen på 9 av 20. De punkter nedan
+som gäller den gamla regeln är historik.
 
 - Källa: OpenAI Fives ablation med bara vinst/förlust nådde TrueSkill 155 mot skriptade bottens 100, men med "a
   large penalty to sample efficiency": stöttning köper fart i början och behövs inte för slutlig styrka.
@@ -105,10 +109,19 @@ syns aldrig i indata.
   är OpenAI Fives kompetensstyrda införande av nya funktioner.
 - Bara de frysta kopiorna av modellen räknas i vinstandelen, inte de skriptade bottarna: dem slår modellen redan
   ~90 %, så de skulle sänka w direkt utan att säga något om just dessa tekniker.
-- Kod: `sim/src/shaping.rs` (beräkningen, samma i simulatorn och spelet), `train_auto.bonus_weight_from` (w),
+- Kod: `sim/src/shaping.rs` (beräkningen, samma i simulatorn och spelet), `train_auto.bonus_weight_for` (w),
   `Fight18.players()` (motståndarnas slag och träffar i riktiga spelet).
 - Vi avstår från idén "belöna crit när den inte hänt på länge": en sådan utlösare gör belöningen
   icke-monoton (bonusen kommer tillbaka när beteendet blir ovanligt) och kan få modellen att pendla.
+
+<a id="slag-mot-ingen"></a>
+### Slag mot ingen
+
+Ett vänsterklick utan någon motståndare i synfältet kostar 0,01 (`shaping::BLIND_SWING_COST`, delen
+"swing at nobody"). Synfältet är 60° åt varje håll från dit den tittar, ungefär spelets bredd vid FOV 90. I en
+bana finns ingen att slå, så varje klick kostar. Kostnaden viktas inte ned och är inte nollsumma: den är ingen
+stöttning som ska bort, och ingen motståndare kan få modellen att betala den. Indata ändras inte: modellen ser
+redan sin egen blickriktning och motståndarnas lägen. Önskat av projektägaren 2026-11-07.
 
 ## Motståndare
 

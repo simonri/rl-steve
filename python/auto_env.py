@@ -913,6 +913,11 @@ class AutoEnv(SkillEnv):
         return mcsim.fight_potential(list(o["pos"]), float(o["yaw"]), float(o["pitch"]), bool(o.get("crouch_pose", o.get("sneaking", False))),
                                      self._enemies(o), [not x for x in self.out])
 
+    def _in_view(self, o):
+        """shaping::anyone_in_view (env.rs fight_step): an opponent still in the fight within the view cone."""
+        return mcsim.in_view(list(o["pos"]), float(o["yaw"]), float(o["pitch"]), bool(o.get("crouch_pose", o.get("sneaking", False))),
+                             self._enemies(o), [not x for x in self.out])
+
     def _enemies(self, o):
         """The opponents as duel.rs View tuples, as the game shows them (one out of the fight is still there until it dies)."""
         return [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), float(p["health"]), int(p["armor"]),
@@ -966,6 +971,8 @@ class AutoEnv(SkillEnv):
         reward += self._points("long hit", long)
         reward += self._points("critical hit", crit)
         reward += self._points("missed swing", swing)
+        if attack and not self._in_view(o):  # shaping.rs BLIND_SWING_COST: a click with no opponent in view
+            reward += self._points("swing at nobody", -mcsim.BLIND_SWING_COST)
         # Only to opponents still in the fight (env.rs): one knocked out keeps falling, and the void's damage is no hit.
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for i, (b, p) in enumerate(zip(before, players)) if not (i < len(self.out) and self.out[i])],
                              dtype=np.float32))
@@ -1081,6 +1088,8 @@ class AutoEnv(SkillEnv):
         reward = self._points("time", -TICK_COST)
         if use and held == 0:
             reward += self._points("click without blocks", -EMPTY_CLICK_COST)
+        if attack:  # shaping.rs BLIND_SWING_COST: a course has nobody to hit
+            reward += self._points("swing at nobody", -mcsim.BLIND_SWING_COST)
         if not self.took_blocks and self._in_hand(o) > 0:  # env.rs TOOK_BLOCKS_BONUS: blocks in hand the first time
             self.took_blocks = True
             reward += self._points("took blocks", TOOK_BLOCKS_BONUS)

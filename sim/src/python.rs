@@ -583,6 +583,8 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(combat_features, m)?)?;
     m.add_function(wrap_pyfunction!(fight_potential, m)?)?;
     m.add_function(wrap_pyfunction!(fight_events, m)?)?;
+    m.add_function(wrap_pyfunction!(in_view, m)?)?;
+    m.add("BLIND_SWING_COST", crate::shaping::BLIND_SWING_COST)?;
     m.add("GAMMA", crate::shaping::GAMMA)?;
     m.add("NON_SWORD", crate::shaping::NON_SWORD)?;
     m.add_function(wrap_pyfunction!(bot_action, m)?)?;
@@ -641,6 +643,17 @@ fn fight_potential(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies
         .collect();
     let foes: Vec<(&Player, bool)> = players.iter().zip(alive).collect();
     crate::shaping::potential(&me, &foes)
+}
+
+/// shaping::anyone_in_view for AutoEnv: whether a left click now has an opponent in view (the same arguments as
+/// fight_potential).
+#[pyfunction]
+fn in_view(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies: Vec<ViewTuple>, alive: Vec<bool>) -> bool {
+    let mut me = Player::new(pos, yaw, pitch, 0);
+    me.crouch_pose = crouching;
+    let players: Vec<Player> = enemies.iter().map(|e| Player::new(e.0, e.2, e.3, 0)).collect();
+    let foes: Vec<(&Player, bool)> = players.iter().zip(alive).collect();
+    crate::shaping::anyone_in_view(&me, &foes)
 }
 
 /// shaping::events and zero_sum for AutoEnv: [long hit, critical hit, missed swing] for the model this tick. `foes` is

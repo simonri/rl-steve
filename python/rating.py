@@ -43,7 +43,7 @@ MAX_SNAPSHOTS = 4  # the anchor and the three newest: each costs ROUNDS fights p
 # A bot the model scored at least SURE against (or at most 1 - SURE) last time is skipped, except every RECHECK_EVERY-th
 # rating, which plays them all and would catch forgetting. Why: a 98 % result says almost nothing about the rating
 # (OpenAI Five only played references within 15-85 %, arXiv 1912.06680 appendix J), and the bots were 6 of 10
-# references. The frozen copies are always played: the bonus weight (train_auto.snapshot_score) and outgrown use them.
+# references. The frozen copies are always played: outgrown and the pool use them.
 SURE = 0.95
 RECHECK_EVERY = 4
 

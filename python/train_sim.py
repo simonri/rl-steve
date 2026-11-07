@@ -148,8 +148,6 @@ def main():
         progress.resume_last_exam = saved_state.get("last_exam")
         progress.last_bench = saved_state.get("last_bench")
         progress.last_rated = saved_state.get("last_rated")
-        progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
-        progress.snapshot_scores = saved_state.get("snapshot_scores", [])
     if a.exploit:
         # An exploiter (docs/training-design.md#mata, FightLadder arXiv 2406.02081): a copy trained only to beat the
         # frozen model, in the rating's kinds of fight. How often it then wins says how exploitable that model is,
