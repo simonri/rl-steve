@@ -247,7 +247,7 @@ class AutoEnv(SkillEnv):
         in hand, a fight with the sword: in the "gap" arena it has to change to the blocks itself, and back."""
         r = self.np_random
         damage = self.duel["damage"] if self.family == "duel" else combat18.ATTACK_BASE + combat18.SWORDS["wood"]
-        sword = items.SWORD_FOR_DAMAGE[int(round(damage))]
+        sword = items.sword_for(damage)
         kind = items.BUILD_BLOCKS[int(r.integers(len(items.BUILD_BLOCKS)))]
         # A fight starts with the sword. A course starts with its blocks in hand, except RANDOM_HAND of those that give
         # blocks: then something else is selected, and finding the blocks pays once (env.rs TOOK_BLOCKS_BONUS).
@@ -796,6 +796,7 @@ class AutoEnv(SkillEnv):
         has_blocks = any(items.placeable(k_) and c_ > 0 for k_, c_ in getattr(self, "hotbar", []))
         needs = self.family == "duel" and getattr(self, "needs_blocks", False)
         self.took_blocks = (self.family == "duel" and not needs) or not has_blocks or (items.placeable(k) and c > 0)  # env.rs took_blocks
+        self.foe_hits = 1.0  # env.rs foe_hits
         self.visited = set()
         self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
@@ -841,7 +842,7 @@ class AutoEnv(SkillEnv):
         order = ("forward", "back", "left", "right", "jump", "sneak", "sprint")
         fall_line = self._fall_line()
         try:  # the game reports feet as decimals; whatever else differs, a push is never worth stopping the round for
-            v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(self._in_hand(o)),
+            v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(self._in_hand(o, self.pending_hotbar - 1 if self.pending_hotbar else None)),
                                [bool(before[k]) for k in order], [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5],
                                fall_line, plan[self.next_push], sprinting=bool(o.get("sprinting", False)))
         except (TypeError, ValueError) as e:
@@ -884,6 +885,12 @@ class AutoEnv(SkillEnv):
     def _seen(self, vec):
         self.delayed.append(vec)
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)]))
+
+    @staticmethod
+    def _hand_share(hits):
+        """env.rs hand_share: in full if a hit was with a sword or there was none, else NON_SWORD."""
+        hits = [h for h in hits if h is not None]
+        return mcsim.NON_SWORD if hits and not any(h[2] for h in hits) else 1.0
 
     @staticmethod
     def _landed(h):
@@ -951,12 +958,16 @@ class AutoEnv(SkillEnv):
         reward += self._points("long hit", long)
         reward += self._points("critical hit", crit)
         reward += self._points("missed swing", swing)
-        dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
+        # Only to opponents still in the fight (env.rs): one knocked out keeps falling, and the void's damage is no hit.
+        dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for i, (b, p) in enumerate(zip(before, players)) if not (i < len(self.out) and self.out[i])],
+                             dtype=np.float32))
         died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost
         taken = mine if died else max(0.0, mine - o["health"])
-        with_ = mcsim.NON_SWORD if landed is not None and not landed[2] else 1.0  # env.rs: damage pays in full only from a sword
+        with_ = self._hand_share([landed])  # env.rs: damage pays in full only from a sword
         reward += self._points("damage dealt", with_ * HEALTH_POINTS * dealt)
-        reward += self._points("damage taken", -HEALTH_POINTS * taken)
+        # As the hitters' dealt counts (env.rs): only a sword's in full. Its damage shows a tick late: last tick's hands.
+        by, self.foe_hits = self.foe_hits, self._hand_share([f[0] for f in foes])
+        reward += self._points("damage taken", -by * HEALTH_POINTS * taken)
         self.damage += taken
         line = self._fall_line()
         for i, p in enumerate(players):

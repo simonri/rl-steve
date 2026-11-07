@@ -188,7 +188,8 @@ impl Player {
 
     /// Holding a sword: its hits do the sword's damage (the attack attribute), any other item's do 1.
     pub fn holds_sword(&self) -> bool {
-        is_sword(self.hand().item)
+        let h = self.hand();
+        is_sword(h.item) && h.count > 0
     }
 
     /// Sets the blocks in its hand (the selected slot becomes wool, or empty at 0): for the Python side's state.

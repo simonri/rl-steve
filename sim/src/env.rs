@@ -172,6 +172,21 @@ pub struct Course {
     pub needs_blocks: bool,
 }
 
+/// How much a tick's damage from these hits pays: in full if one was with a sword or there was none (the void), else
+/// shaping::NON_SWORD. AutoEnv._hand_share.
+pub fn hand_share(hits: impl Iterator<Item = Option<(f64, bool, bool)>>) -> f64 {
+    let (mut any, mut sword) = (false, false);
+    for (_, _, s) in hits.flatten() {
+        any = true;
+        sword |= s;
+    }
+    if any && !sword {
+        shaping::NON_SWORD
+    } else {
+        1.0
+    }
+}
+
 /// The sword for an attack attribute (combat18.SWORDS: 1 plus 4 to 7).
 pub fn sword_for(damage: f32) -> crate::items::Item {
     match damage.round() as i32 {
@@ -304,6 +319,7 @@ pub struct Env {
     push_airborne: bool, // it has left the ground since
     pushes_given: i32,
     took_blocks: bool, // it has had blocks in hand this round (TOOK_BLOCKS_BONUS), or the round needs none
+    foe_hits: f64,     // hand_share of the opponents' hits last tick: their damage shows this tick
     pub opponents: Vec<Opponent>,
     history2: [[f32; HIST_F]; HISTORY],
     queued: Option<(Swing, usize)>, // the model's hit, on its way to the server
@@ -410,6 +426,7 @@ impl Env {
             push_airborne: false,
             pushes_given: 0,
             took_blocks: true, // set below from the hand it starts with
+            foe_hits: 1.0,
             opponents: Vec::new(),
             history2: [[0.0; HIST_F]; HISTORY],
             queued: None,
@@ -584,7 +601,7 @@ impl Env {
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
         let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot };
-        self.maybe_push(before, &input);
+        self.maybe_push(before, &input, in_hand);
         if self.course.duel.is_some() {
             return self.fight_step(&input);
         }
@@ -764,12 +781,17 @@ impl Env {
         reward += self.points(P_LONG_HIT, long);
         reward += self.points(P_CRIT, crit);
         reward += self.points(P_SWING, swing);
-        let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
+        // Only to opponents still in the fight: one knocked out keeps falling and the void hurts it, which is not a hit.
+        let dealt: f32 = self.opponents.iter().zip(&health_before).filter(|(o, _)| !o.out).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);
         // Damage pays in full only from a hit with a sword: a hit with blocks or a tool in hand pays a sliver (NON_SWORD).
-        let with = if ev.landed.is_some_and(|l| !l.2) { shaping::NON_SWORD } else { 1.0 };
+        let with = hand_share(std::iter::once(ev.landed));
         reward += self.points(P_DEALT, with * HEALTH_POINTS * dealt as f64);
-        reward += self.points(P_TAKEN, -HEALTH_POINTS * taken as f64);
+        // Damage taken counts as the hitter's dealt does (only a sword's in full), so the damage terms stay zero-sum.
+        // The model's client shows a hit's damage a tick late: the hands are those of the hits a tick before.
+        let by = self.foe_hits;
+        self.foe_hits = hand_share(self.opponents.iter().map(|o| o.landed));
+        reward += self.points(P_TAKEN, -by * HEALTH_POINTS * taken as f64);
         self.damage += taken as f64;
         let line = self.fall_line();
         for o in self.opponents.iter_mut() {
@@ -829,7 +851,10 @@ impl Env {
     }
 
     /// AutoEnv._maybe_push: the next planned push, the first tick it fits and can be saved.
-    fn maybe_push(&mut self, before: Keys, input: &Input) {
+    /// `in_hand`: the blocks in hand once this tick's hotbar key is pressed. clutch.rs plays the push out with them in
+    /// its first slot, so the key itself is taken out of the input it is given (with it, a key to another slot would
+    /// leave the check's player empty-handed, or holding blocks the model no longer has in hand). AutoEnv._maybe_push.
+    fn maybe_push(&mut self, before: Keys, input: &Input, in_hand: i32) {
         let pushes = &self.course.pushes;
         while self.next_push < pushes.len() && self.t > pushes[self.next_push].until {
             self.next_push += 1;
@@ -840,9 +865,10 @@ impl Env {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
-        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held(), keys: before, sprinting: p.sprinting };
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: in_hand.max(0), keys: before, sprinting: p.sprinting };
         let goal = [self.course.goal[0] as f64 + 0.5, self.course.goal[1] as f64 + 0.5];
-        if let Some(v) = clutch::decide(&cube, &state, input, goal, self.fall_line(), &pushes[self.next_push]) {
+        let input = Input { slot: None, ..*input };
+        if let Some(v) = clutch::decide(&cube, &state, &input, goal, self.fall_line(), &pushes[self.next_push]) {
             clutch::apply(&mut self.player, v);
             self.next_push += 1;
             self.pushed = true;
@@ -1536,5 +1562,72 @@ mod tests {
         p.resist = 5;
         tick(&mut w, &mut p, &mut o, 0, &mut None);
         assert_eq!(p.resist, 4, "in a fight: once, after the hits");
+    }
+
+    /// A round with two dummies; the model holds the sword (slot 2), its blocks in slot 5.
+    fn duel2() -> Env {
+        let mut w = World::new([-12, -200, -12], [40, 110, 16]);
+        w.fill([-8, Y, -8], [8, Y, 12], FULL);
+        let feet = (Y + 1) as f64;
+        let mut hb = [Stack::default(); SLOTS];
+        hb[2] = Stack { item: items::WOODEN_SWORD, count: 1 };
+        hb[5] = Stack { item: items::WOOL, count: 16 };
+        let mut course = mirror_duel().course;
+        course.world = w;
+        course.hotbar = hb;
+        course.slot = 2;
+        course.blocks = 16;
+        let d = course.duel.as_mut().unwrap();
+        d.opponents.push(Rival { bot: Bot::Dummy, pos: [3.5, feet, 4.5], yaw: 180.0, damage: 5.0, armor: 0, kb: 0 });
+        Env::new(course, 0)
+    }
+
+    /// An opponent knocked out keeps falling and the void hurts it: that is no hit, and pays nothing as damage dealt
+    /// (it paid up to 6 a round, 60 % of a win, in two-opponent rounds).
+    #[test]
+    fn the_void_hurting_an_opponent_who_is_out_is_not_damage_dealt() {
+        let mut env = duel2();
+        env.opponents[1].player.pos = [30.5, -127.0, 0.5];
+        env.opponents[1].player.on_ground = false;
+        for _ in 0..10 {
+            env.step([0, 0, 0, 0, 0, 0, 5, 5, 0, 0]);
+        }
+        assert!(env.opponents[1].out && env.opponents[1].player.health < 20.0, "it fell out and the void hurt it");
+        assert_eq!(env.parts[P_DEALT], 0.0);
+    }
+
+    /// The hand decides what a tick's damage pays: in full with a sword or with no hit at all, a sliver otherwise.
+    #[test]
+    fn hand_share_pays_a_sword_in_full() {
+        assert_eq!(hand_share([None, None].into_iter()), 1.0);
+        assert_eq!(hand_share([Some((2.0, false, true))].into_iter()), 1.0);
+        assert_eq!(hand_share([Some((2.0, false, false))].into_iter()), shaping::NON_SWORD);
+        assert_eq!(hand_share([Some((2.0, false, false)), Some((3.0, true, true))].into_iter()), 1.0);
+    }
+
+    /// A sword stack with nothing in it is no sword: it hits for 1, as the empty slot the inputs show.
+    #[test]
+    fn an_empty_sword_slot_is_no_sword() {
+        let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
+        p.hotbar[0] = Stack { item: items::WOODEN_SWORD, count: 0 };
+        p.slot = 0;
+        assert!(!p.holds_sword());
+    }
+
+    /// The push check plays the push out with the blocks in hand after this tick's key: pressing the key of the
+    /// blocks' own slot (5 here, not the first) changes nothing in the game, and so changes nothing in the check.
+    #[test]
+    fn the_push_check_sees_the_hand_after_the_key() {
+        let mut w = World::new([-10, 80, -10], [10, 110, 10]);
+        w.fill([0, 99, -10], [0, 99, 10], FULL);
+        let s = clutch::State { pos: [0.5, 100.0, 0.5], vel: [0.0, -0.0784, 0.0], yaw: 0.0, pitch: 60.0, held: 16, keys: Keys::default(), sprinting: false };
+        for &(vx, vz) in &[(0.35, 0.0), (-0.35, 0.0), (0.45, 0.1), (-0.45, -0.1)] {
+            let v = [vx, 0.36, vz];
+            let plain = clutch::can_save(&w, [0, 100, 0], &s, v, &Input::default(), 95.0);
+            // What maybe_push hands clutch.rs for a tick with a key: the key taken out, the blocks in hand kept.
+            let keyed = Input { slot: Some(5), ..Input::default() };
+            let given = clutch::can_save(&w, [0, 100, 0], &s, v, &Input { slot: None, ..keyed }, 95.0);
+            assert_eq!(plain, given, "{v:?}");
+        }
     }
 }

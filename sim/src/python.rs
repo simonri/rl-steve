@@ -41,7 +41,8 @@ impl Single {
         Single { world, player: Player::new([0.0; 3], 0.0, 0.0, 0), opponents: Vec::new(), centre: [0.0; 3], t: 0, since_hit: 99, since_hurt: 99, fall_line: f64::MIN, queued: None }
     }
 
-    /// A new player standing at a spot, as after the mod's reset: nothing kept from before.
+    /// A player standing at a spot, as after the mod's reset or respawn: its gear, hotbar and slot kept (set_hotbar gives
+    /// a new round's). `held` only matters for a player that had nothing before.
     fn spawn(&mut self, pos: [f64; 3], yaw: f32, pitch: f32, held: i32) {
         let mut p = Player::new(pos, yaw, pitch, held);
         p.on_ground = true;
@@ -76,9 +77,10 @@ impl Single {
     }
 
     /// The hotbar: (item, count) per slot (items.rs), and the selected slot, as the round's reset gives them.
-    fn set_hotbar(&mut self, slots: Vec<(u8, i32)>, slot: u8) {
+    fn set_hotbar(&mut self, slots: Vec<(u8, i32)>, slot: u8) -> PyResult<()> {
         self.player.hotbar = to_hotbar(slots);
-        self.player.slot = slot;
+        self.player.slot = to_slot(slot)?;
+        Ok(())
     }
 
     /// An opponent played by a scripted bot (duel.Bot by index), as the round's reset puts it.
@@ -345,7 +347,7 @@ impl Batch {
                 Some(h) if !h.is_none() => to_hotbar(h.extract::<Vec<(u8, i32)>>()?),
                 _ => crate::player::blocks_hotbar(get(spec, "blocks")?), // the blocks in the first slot, selected
             },
-            slot: spec.get_item("slot")?.map(|v| v.extract::<u8>()).transpose()?.unwrap_or(0),
+            slot: to_slot(spec.get_item("slot")?.map(|v| v.extract::<u8>()).transpose()?.unwrap_or(0))?,
             needs_blocks: spec.get_item("needs_blocks")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
             world,
             settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
@@ -641,7 +643,21 @@ fn bot_action(bot: i32, me: ViewTuple, target: ViewTuple, centre: [f64; 3], t: i
 fn to_hotbar(slots: Vec<(u8, i32)>) -> [crate::items::Stack; crate::items::SLOTS] {
     let mut h = [crate::items::Stack::default(); crate::items::SLOTS];
     for (i, (item, count)) in slots.into_iter().take(crate::items::SLOTS).enumerate() {
-        h[i] = crate::items::Stack { item, count };
+        // As the game has it: nothing in a slot with no items, and anything off the list is "other".
+        h[i] = if count <= 0 || item == crate::items::EMPTY {
+            crate::items::Stack::default()
+        } else {
+            crate::items::Stack { item: if (item as usize) < crate::items::KINDS { item } else { crate::items::OTHER }, count }
+        };
     }
     h
+}
+
+/// A hotbar slot from Python: 0-8, or a ValueError (a slot past the hotbar would be shown as the last one).
+fn to_slot(slot: u8) -> PyResult<u8> {
+    if (slot as usize) < crate::items::SLOTS {
+        Ok(slot)
+    } else {
+        Err(pyo3::exceptions::PyValueError::new_err(format!("hotbar slot {slot}: 0-8")))
+    }
 }

@@ -33,6 +33,11 @@ HOTBAR_F = SLOTS * (len(KINDS) + 1) + SLOTS  # items.rs HOTBAR_F
 BUILD_BLOCKS = ("wool", "hardened clay", "blast-proof glass", "end stone", "oak planks", "obsidian")
 SWORD_FOR_DAMAGE = {5: "wooden sword", 6: "stone sword", 7: "iron sword", 8: "diamond sword"}  # env.rs sword_for
 
+
+def sword_for(damage):
+    """env.rs sword_for: the sword for an attack attribute, wood at 5 or less, diamond at 8 or more."""
+    return SWORD_FOR_DAMAGE[min(max(int(round(damage)), 5), 8)]
+
 # The game's registry name for each kind given out (the mod's give), and what its names mean when it reports a hotbar.
 GIVE = {"wool": "minecraft:white_wool", "hardened clay": "minecraft:terracotta", "blast-proof glass": "minecraft:white_stained_glass",
         "end stone": "minecraft:end_stone", "ladder": "minecraft:ladder", "oak planks": "minecraft:oak_planks", "obsidian": "minecraft:obsidian",
