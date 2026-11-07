@@ -761,7 +761,12 @@ public final class McBridge implements ClientModInitializer {
                 var id = mc.getGameProfile().id();
                 lockstep.onServer(() -> {
                     ServerPlayer p = server.getPlayerList().getPlayer(id);
-                    if (p != null) Fight18.gear(p, damage, armor, kb, rules18);
+                    if (p == null) return;
+                    Fight18.gear(p, damage, armor, kb, rules18);
+                    // The server holds the item too (watchers see it, and the hit's damage follows it), and tells the
+                    // client, which otherwise keeps its own idea.
+                    p.getInventory().setSelectedSlot(slot);
+                    p.connection.send(new net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket(slot));
                 });
                 mc.player.getInventory().setSelectedSlot(slot);
                 ok(cmd);

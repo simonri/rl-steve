@@ -108,7 +108,7 @@ impl Swing {
             yaw: p.yaw,
             falling: p.fall_distance > 0.0 && !p.on_ground,
             sprinting: p.server_sprinting,
-            damage: p.attack_damage,
+            damage: if p.slot == 1 { p.attack_damage } else { 1.0 }, // the sword in hand, or a bare hit (blocks, fist)
             kb_enchant: p.kb_enchant,
         }
     }
@@ -238,6 +238,17 @@ mod tests {
         assert!((v.health - 12.5).abs() < 1e-6, "only the difference counts: {}", v.health);
         v.resist = 10;
         assert!({ let at = v.pos; hit(&s(1.0), &mut v, at) }.0, "from the second half on, any hit counts in full");
+    }
+
+    /// A sword hits for its damage; blocks or a bare hand in hand hit for 1, as in 1.8.
+    #[test]
+    fn the_sword_hits_harder() {
+        let mut p = Player::new([0.0, 100.0, 0.0], 0.0, 0.0, 0);
+        p.attack_damage = 5.0;
+        p.slot = 1;
+        assert_eq!(Swing::of(&p).damage, 5.0);
+        p.slot = 0;
+        assert_eq!(Swing::of(&p).damage, 1.0);
     }
 
     /// A sprinting hit slows the attacker's client to 0.6 and ends its sprint (duel_real_vs_sim).

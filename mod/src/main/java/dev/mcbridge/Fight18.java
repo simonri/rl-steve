@@ -87,7 +87,7 @@ public final class Fight18 {
     public static void attack(ServerPlayer attacker, Entity target) {
         if (!(target instanceof LivingEntity victim) || !victim.isAlive() || victim.getHealth() <= 0) return;
         State a = of(attacker), v = of(victim);
-        float amount = a.damage;
+        float amount = attacker.getInventory().getSelectedSlot() == 1 ? a.damage : 1.0f; // the sword's, or a bare hit's (combat.rs Swing)
         boolean falling = attacker.fallDistance > 0 && !attacker.onGround() && !attacker.onClimbable() && !attacker.isInWater();
         if (falling) amount *= 1.5f;
         boolean sprinting = attacker instanceof Bot ? a.serverSprint : attacker.isSprinting();
