@@ -70,6 +70,16 @@ public final class Fight18 {
     /** The model was beaten since this was last read (attack): server thread sets it, the client's reply reads it. */
     private static volatile boolean downed;
 
+    /** The model's last hit that counted, not yet reported: feet distance across, and 1 if critical (attack). */
+    private static volatile double[] landed;
+
+    /** The model's hit that counted since the last call, or null; clears it. */
+    public static double[] takeLanded() {
+        double[] was = landed;
+        landed = null;
+        return was;
+    }
+
     /** Whether the model was beaten since the last call; clears it. */
     public static boolean takeDowned() {
         boolean was = downed;
@@ -141,6 +151,9 @@ public final class Fight18 {
         }
         a.sinceHit = 0;
         v.sinceHurt = 0;
+        if (!(attacker instanceof Bot)) {
+            landed = new double[] {Math.hypot(attacker.getX() - victim.getX(), attacker.getZ() - victim.getZ()), falling ? 1 : 0};
+        }
     }
 
     /** Once per server tick, before anything moves: opponents act, then hurt resistance and healing count down. */

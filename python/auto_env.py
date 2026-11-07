@@ -63,6 +63,7 @@ HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
 AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
 SWING_COST, SWING_REACH = 0.01, 4.0  # env.rs: a left click with the nearest opponent further than this, feet to feet
+LONG_HIT_POINTS, LONG_HIT_FROM, CRIT_POINTS = 0.4, 2.0, 0.3  # env.rs: a hit from further off, a critical hit
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
@@ -868,6 +869,11 @@ class AutoEnv(SkillEnv):
         reward = self._points("time", -TICK_COST)
         if swung_at_nothing:
             reward += self._points("swing out of reach", -SWING_COST)
+        landed = o.get("landed")  # its own hit that counted: (feet distance across, critical)
+        if landed:
+            reward += self._points("long hit", LONG_HIT_POINTS * max(0.0, landed[0] - LONG_HIT_FROM))
+            if landed[1]:
+                reward += self._points("critical hit", CRIT_POINTS)
         players = o.get("players", [])
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
         died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost

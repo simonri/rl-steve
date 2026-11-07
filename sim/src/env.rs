@@ -75,9 +75,9 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 22] = [
+pub const PARTS: [&str; 24] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "swing out of reach",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "swing out of reach", "long hit", "critical hit",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -100,6 +100,8 @@ const P_WON: usize = 18;
 const P_LOST: usize = 19;
 const P_AIMED: usize = 20;
 const P_SWING: usize = 21;
+const P_LONG_HIT: usize = 22;
+const P_CRIT: usize = 23;
 const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
 const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 /// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
@@ -109,6 +111,13 @@ const AIM_POINTS: f64 = 0.005;
 /// never land: it costs this, so swinging at someone 6 blocks off is worse than not swinging.
 const SWING_COST: f64 = 0.01;
 const SWING_REACH: f64 = 4.0;
+/// A hit that lands from further off is worth more: this per block of distance (feet to feet, across) beyond
+/// LONG_HIT_FROM. A hit from the edge of reach (about 3.3) gets about 0.5 more, on top of about 1 for the damage: the
+/// one who hits from further away takes fewer hits back.
+const LONG_HIT_POINTS: f64 = 0.4;
+const LONG_HIT_FROM: f64 = 2.0;
+/// A critical hit (landed while falling: half as much damage again) is worth this more.
+const CRIT_POINTS: f64 = 0.3;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -646,7 +655,7 @@ impl Env {
         let swung_at_nothing = input.attack && nearest > SWING_REACH * SWING_REACH;
         let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
         let my_health = self.player.shown_health();
-        fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
+        let ev = fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
         self.track_target();
         self.tick_count += 1;
         self.t += 1;
@@ -655,6 +664,12 @@ impl Env {
         let mut reward = self.points(P_TIME, -TICK_COST);
         if swung_at_nothing {
             reward += self.points(P_SWING, -SWING_COST);
+        }
+        if let Some((across, critical)) = ev.landed {
+            reward += self.points(P_LONG_HIT, LONG_HIT_POINTS * (across - LONG_HIT_FROM).max(0.0));
+            if critical {
+                reward += self.points(P_CRIT, CRIT_POINTS);
+            }
         }
         let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);
@@ -982,12 +997,14 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
+    let mut landed = None;
     if let Some((s, j)) = queued.take() {
         if !opponents[j].gone() {
             let at = opponents[j].player.pos;
             let (counted, broke) = combat::hit(&s, &mut opponents[j].player, at);
             if counted {
                 *since_hit = 0;
+                landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling));
             }
             if broke {
                 player.server_sprinting = false;
@@ -1014,7 +1031,8 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             combat::recoil(&mut o.player);
         }
     }
-    let ev = player.rest(world, input);
+    let mut ev = player.rest(world, input);
+    ev.landed = landed;
     // Players do not push each other: Hypixel's teams have collisionRule never, and so do the mod's (Fight18.gear).
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         if !o.gone() {
@@ -1112,6 +1130,26 @@ mod tests {
         tick(&mut w, &mut p, &mut o, 1, &mut queued);
         assert_eq!(p.shown_health(), 19.0);
         assert_eq!(p.resist, 18);
+    }
+
+    /// The model's hit that counts is reported with the distance across (where the server had both) and whether it
+    /// was critical: what the long-hit and critical-hit points are worked out from.
+    #[test]
+    fn a_landed_hit_tells_how_far_and_how() {
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.5);
+        let mut queued = Some((Swing::of(&p), 0));
+        let (mut since_hit, mut since_hurt) = (99, 99);
+        let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut queued);
+        let (across, critical) = ev.landed.expect("the hit counts");
+        assert!((across - 2.5).abs() < 1e-9 && !critical, "{across} {critical}");
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.5);
+        p.fall_distance = 0.5;
+        p.on_ground = false;
+        let mut queued = Some((Swing::of(&p), 0));
+        let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut queued);
+        assert!(ev.landed.is_some_and(|(_, c)| c), "a hit while falling is critical");
+        let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 1, &mut since_hit, &mut since_hurt, &mut None);
+        assert!(ev.landed.is_none(), "nothing landed this tick");
     }
 
     /// Bots turn by the step itself, as Fight18.drive adds it; the model turns through the mouse (multiples of 0.15).

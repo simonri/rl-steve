@@ -1054,6 +1054,13 @@ public final class McBridge implements ClientModInitializer {
             o.addProperty("since_hurt", s.sinceHurt);
         }
         o.add("players", Fight18.players());
+        double[] hit = Fight18.takeLanded();
+        if (hit != null) { // its own hit that counted: feet distance across, critical (AutoEnv's long and critical hit points)
+            JsonArray h = new JsonArray();
+            h.add(hit[0]);
+            h.add(hit[1] != 0);
+            o.add("landed", h);
+        }
         o.addProperty("health", pl.getHealth());
         // It died since the last reply and is already back at the spawn (a fall), or a fight beat it without killing
         // it (Fight18): either way the round has to know.
