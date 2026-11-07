@@ -829,10 +829,9 @@ class AutoEnv(SkillEnv):
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)]))
 
     def _enemies(self, o):
-        """The opponents as duel.rs View tuples; one out of the fight has no health."""
-        out = getattr(self, "out", [])
-        return [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), 0.0 if (i < len(out) and out[i]) else float(p["health"]), int(p["armor"]),
-                 float(p["damage"]), int(p["hurt_time"]), bool(p["on_ground"]), bool(p["sprinting"]), bool(p["crouching"])) for i, p in enumerate(o.get("players", []))]
+        """The opponents as duel.rs View tuples, as the game shows them (one out of the fight is still there until it dies)."""
+        return [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), float(p["health"]), int(p["armor"]),
+                 float(p["damage"]), int(p["hurt_time"]), bool(p["on_ground"]), bool(p["sprinting"]), bool(p["crouching"])) for p in o.get("players", [])]
 
     def _combat(self, o):
         """duel.features: the opponents, its own fighting state, the command, its last fighting inputs."""

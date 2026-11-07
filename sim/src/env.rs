@@ -110,6 +110,9 @@ const AIM_POINTS: f64 = 0.005;
 /// A left click that is not on an opponent in reach (too far, or beside it) costs this: a swing at nothing is worse
 /// than not swinging.
 const SWING_COST: f64 = 0.01;
+/// Below the world (its bottom at -64, less 64) a player takes this every tick, whatever its hurt resistance.
+const VOID_Y: f64 = -128.0;
+const VOID_DAMAGE: f32 = 4.0;
 /// A hit that lands from further off is worth more: this per block of distance (feet to feet, across) beyond
 /// LONG_HIT_FROM. A hit from the edge of reach (about 3.3) gets about 0.5 more, on top of about 1 for the damage: the
 /// one who hits from further away takes fewer hits back.
@@ -678,7 +681,7 @@ impl Env {
                 o.out = true;
             }
         }
-        let boxes: Vec<Option<_>> = self.opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
+        let boxes: Vec<Option<_>> = self.opponents.iter().map(|o| if o.dead() { None } else { Some(combat::body(&o.player)) }).collect();
         if combat::aimed_at(&self.player, &self.world, &boxes).is_some() {
             reward += self.points(P_AIMED, AIM_POINTS);
         }
@@ -925,7 +928,7 @@ impl Env {
             since_hurt: self.since_hurt,
             duel: self.course.duel.is_some(),
         };
-        let views: Vec<View> = self.opponents.iter().map(|o| if o.out { View::default() } else { View::of(&o.player) }).collect();
+        let views: Vec<View> = self.opponents.iter().map(|o| View::of(&o.player)).collect(); // as they are: one out still falls, a dead one has no health
         duel::features(p, &me, &views, k, &|| Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z)), &self.history2, &mut out[MOVE_OBS..]);
     }
 
@@ -995,7 +998,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     }
     let mut landed = None;
     if let Some((s, j)) = queued.take() {
-        if !opponents[j].gone() {
+        if !opponents[j].dead() {
             let at = opponents[j].player.pos;
             let (counted, broke) = combat::hit(&s, &mut opponents[j].player, at);
             if counted {
@@ -1012,7 +1015,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         o.player.begin(i);
     }
-    let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
+    let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.dead() { None } else { Some(combat::body(&o.player)) }).collect();
     let my_box = Some(combat::body(player));
     let target = if input.attack { combat::click(player, world, &boxes) } else { None };
     let struck = target.is_some();
@@ -1023,7 +1026,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let my_pos = player.pos;
     let mut their_hits = Vec::new();
     for (j, (o, i)) in opponents.iter_mut().zip(&inputs).enumerate() {
-        if i.attack && !o.gone() && combat::click(&mut o.player, world, &[my_box]).is_some() {
+        if i.attack && !o.dead() && combat::click(&mut o.player, world, &[my_box]).is_some() {
             their_hits.push((j, Swing::of(&o.player)));
             combat::recoil(&mut o.player);
         }
@@ -1033,8 +1036,11 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     ev.struck = struck;
     // Players do not push each other: Hypixel's teams have collisionRule never, and so do the mod's (Fight18.gear).
     for (o, i) in opponents.iter_mut().zip(&inputs) {
-        if !o.gone() {
-            o.player.rest(world, i); // the mod's drive() leaves a dead one where it fell
+        if !o.dead() {
+            o.player.rest(world, i); // out of the fight it still falls; the mod's drive() leaves only the dead where they are
+            if o.player.pos[1] < VOID_Y {
+                o.player.health = (o.player.health - VOID_DAMAGE).max(0.0); // Entity.onBelowWorld: the void kills
+            }
         }
     }
     let before_hits = player.health;
@@ -1061,7 +1067,12 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
 impl Opponent {
     /// Out of the fight, or killed this tick by the model's hit (which lands before it would act).
     pub fn gone(&self) -> bool {
-        self.out || self.player.health <= 0.0
+        self.out || self.dead()
+    }
+
+    /// Dead: no longer in the world as a player (it still is while it falls out of the fight).
+    pub fn dead(&self) -> bool {
+        self.player.health <= 0.0
     }
 
     /// An opponent standing where a round puts it, as after the mod's reset.
@@ -1097,6 +1108,25 @@ mod tests {
     fn tick(w: &mut World, p: &mut Player, o: &mut [Opponent], t: i32, queued: &mut Option<(Swing, usize)>) {
         let (mut since_hit, mut since_hurt) = (99, 99);
         fight_tick(w, p, o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, queued);
+    }
+
+    /// Out of the fight an opponent is still a player: it keeps falling, and below the world the void kills it.
+    #[test]
+    fn out_still_falls_until_the_void_kills_it() {
+        let (mut w, mut p, mut o) = arena(Bot::Walker, 2.0);
+        o[0].out = true;
+        o[0].player.pos = [20.5, -125.0, 0.5];
+        o[0].player.on_ground = false;
+        let start = o[0].player.pos[1];
+        let (mut since_hit, mut since_hurt) = (99, 99);
+        for t in 0..3 {
+            fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, &mut None);
+        }
+        assert!(o[0].player.pos[1] < start, "it falls");
+        for t in 3..20 {
+            fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, &mut None);
+        }
+        assert!(o[0].dead(), "the void killed it: {}", o[0].player.health);
     }
 
     /// The model's queued hit lands first: an opponent it kills neither hits back nor moves that tick (Fight18.drive
