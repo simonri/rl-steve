@@ -62,7 +62,7 @@ class Rating:
     def _policy(self, ref, device):
         if ref["name"] not in self.policies:
             import train_auto as ta  # here, not at the top: train_auto is the trainer that imports this module
-            self.policies[ref["name"]] = ta.SplitPPO.load(self.folder / ref["file"], device=device).policy
+            self.policies[ref["name"]] = ta.load_policy(self.folder / ref["file"], device)
         return self.policies[ref["name"]]
 
     def _score(self, policy, ref, device):

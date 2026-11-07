@@ -144,6 +144,18 @@ def fast_convolutions():
     torch.backends.cudnn.benchmark = True
 
 
+def load_policy(path, device):
+    """A saved model's policy only, to play with (opponents, references), on `device`.
+
+    Loaded on the processor and then moved: SB3 sets up a loaded model with its seed, and on the graphics card that
+    switches cuDNN to deterministic for the whole process, training included. That is what made learning 3.5x slower
+    (75 -> 270 ms a step) from the moment the first pool version was loaded. fast_convolutions again, to be sure."""
+    policy = SplitPPO.load(path, device="cpu").policy.to(device)
+    policy.set_training_mode(False)
+    fast_convolutions()
+    return policy
+
+
 def make_env(port, levels):
     def build():
         env = AutoEnv(port, levels=levels)

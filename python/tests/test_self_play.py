@@ -85,6 +85,14 @@ def pool_and_mix(policy):
         pool.save()
         again = P.Pool(d)
         assert again.versions == pool.versions and again.last == 10_000_000
+        # Loading an opponent must not switch training's convolutions to cuDNN's slow deterministic mode (load_policy).
+        import torch
+        if torch.cuda.is_available():
+            ta.fast_convolutions()
+            ta.load_policy(pool.folder / pool.versions[0]["file"], "cuda")
+            assert not torch.backends.cudnn.deterministic and torch.backends.cudnn.benchmark
+            ta.SplitPPO.load(pool.folder / pool.versions[0]["file"], device="cuda")
+            assert torch.backends.cudnn.deterministic, "the trap load_policy avoids is still there"
 
         levels = curriculum.Curriculum().levels
         levels["duel"].update(bot=0, distance=1, arena=0)

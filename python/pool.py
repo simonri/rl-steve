@@ -122,7 +122,7 @@ class SelfPlay:
         import train_auto as ta  # here: train_auto imports the trainer's modules
         device = self.opp.policies["latest"].device
         v = next(v for v in self.pool.versions if v["name"] == name)
-        self.opp.policies[name] = ta.SplitPPO.load(self.pool.folder / v["file"], device=device).policy
+        self.opp.policies[name] = ta.load_policy(self.pool.folder / v["file"], device)
         self.loaded.append(name)
         # Versions dropped from the pool, or more in memory than the pool holds: let go of the least recently loaded
         # that no round is playing now.
