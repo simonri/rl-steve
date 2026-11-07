@@ -252,6 +252,9 @@ public final class McBridge implements ClientModInitializer {
         // A death keeps the hotbar, as the simulator does (Player.keep_gear): the respawn gives nothing back, and an
         // empty hotbar after a real fall would be a round the simulator never plays.
         rules.set(GameRules.KEEP_INVENTORY, true, s);
+        // Training dies and earns advancements thousands of times: in the watcher's chat that is only noise.
+        rules.set(GameRules.SHOW_DEATH_MESSAGES, false, s);
+        rules.set(GameRules.SHOW_ADVANCEMENT_MESSAGES, false, s);
         if (watchPort > 0 && !watchPortOpen) {
             try {
                 // Loopback only, and offline auth so a second client on this machine can join to watch.
