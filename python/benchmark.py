@@ -131,13 +131,14 @@ def main():
     p.add_argument("model")
     p.add_argument("--rounds", type=int, default=ROUNDS)
     p.add_argument("--out", help="a .jsonl to add this result to")
+    p.add_argument("--modes", default="sampled,best", help="sampled (as in training), best (as exams and the viewer), or both")
     a = p.parse_args()
     import train_auto as ta
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     policy = ta.load_policy(a.model, device)
     started = time.time()
-    result = run(policy, device, a.rounds)
+    result = run(policy, device, a.rounds, tuple(a.modes.split(",")))
     show(result)
     print(f"{time.time() - started:.0f} s")
     if a.out:

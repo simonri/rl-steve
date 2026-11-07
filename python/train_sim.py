@@ -45,6 +45,7 @@ def main():
     p.add_argument("--critic-memory", action="store_true", help="the value gets its own memory (LSTM)")
     p.add_argument("--normalize-inputs", action="store_true", help="the body part's inputs standardized, measured once")
     p.add_argument("--entities", action="store_true", help="opponents and hotbar slots through their own shared networks")
+    p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
     os.environ.setdefault("RAYON_NUM_THREADS", str(a.sim_threads))
     Distribution.set_default_validate_args(False)
@@ -107,8 +108,10 @@ def main():
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     progress = ta.Progress(vec, out, curriculum, 2)
     progress.value_warmup = warmup
-    progress.rating = Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
-    progress.bench_every = 10_000_000  # the fixed benchmark (benchmark.py): a few minutes, about every hour
+    progress.rating = None if a.no_evals else Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
+    progress.bench_every = None if a.no_evals else 10_000_000  # the fixed benchmark (benchmark.py): a few minutes, about every hour
+    if a.no_evals:
+        ta.EXAM_EVERY = 10 ** 12
     progress.rate_every = 4_000_000  # a rating plays 3 kinds of fight x 64 rounds per reference: every other exam
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
