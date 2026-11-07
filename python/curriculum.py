@@ -23,7 +23,7 @@ FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-
 CLIFFS = (-12, -8, -4, 0, 2, 4, 6)  # far down or well up: a way down to build, or a climb, inside a stack
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
 EXACT = (1.25, 3)  # a quarter over a walkable bridge's need: little room for a wasted block
-BOTS = ("dummy", "walker", "strafer", "combo", "pusher")  # duel.rs Bot, easiest first
+BOTS = ("dummy", "slow walker", "walker", "strafer", "combo", "pusher")  # duel.rs Bot, easiest first
 PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
 
 FAMILIES = {

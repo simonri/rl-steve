@@ -77,11 +77,12 @@ def sprint_hit_dummy(t):
 ONLY = sys.argv[2] if len(sys.argv) > 2 else None
 CASES = [
     ("the model walks to the dummy and hits it every third tick", 0, hit_dummy),
-    ("the walker hits the model, which stands still", 1, stand),
+    ("the walker hits the model, which stands still", 2, stand),
     ("the model sprints at the dummy and hits it every third tick", 0, sprint_hit_dummy),
-    ("the strafer fights the model, which stands still", 2, stand),
-    ("the combo bot (w-taps) fights the model, which stands still", 3, stand),
-    ("the pusher fights the model, which stands still", 4, stand),
+    ("the strafer fights the model, which stands still", 3, stand),
+    ("the combo bot (w-taps) fights the model, which stands still", 4, stand),
+    ("the pusher fights the model, which stands still", 5, stand),
+    ("the slow walker hits the model, which stands still", 1, stand),
 ]
 for i, (name, bot, fn) in enumerate(CASES):
     if ONLY is None or str(i) in ONLY.split(","):
