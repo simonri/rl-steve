@@ -1020,8 +1020,21 @@ public final class McBridge implements ClientModInitializer {
             settleReason = "velocity " + pl.getDeltaMovement();
             return pl.getDeltaMovement().horizontalDistanceSqr() <= 1e-6;
         }
-        settleReason = "count " + pl.getInventory().getItem(0).getCount();
-        if (pl.getInventory().getItem(0).getCount() != resetSpec.get("blocks").getAsInt()) return false;
+        if (resetSpec.has("hotbar_items")) {
+            // The client shows the hotbar the round gives (giveHotbar): every slot's count, and the slot selected.
+            JsonArray h = resetSpec.getAsJsonArray("hotbar_items");
+            for (int i = 0; i < Math.min(9, h.size()); i++) {
+                int want = h.get(i).getAsJsonArray().get(1).getAsInt();
+                settleReason = "slot " + i + " count " + pl.getInventory().getItem(i).getCount() + ", want " + want;
+                if (pl.getInventory().getItem(i).getCount() != want) return false;
+            }
+            int slot = resetSpec.has("slot") ? resetSpec.get("slot").getAsInt() : 0;
+            settleReason = "selected " + pl.getInventory().getSelectedSlot() + ", want " + slot;
+            if (pl.getInventory().getSelectedSlot() != slot) return false;
+        } else {
+            settleReason = "count " + pl.getInventory().getItem(0).getCount();
+            if (pl.getInventory().getItem(0).getCount() != resetSpec.get("blocks").getAsInt()) return false;
+        }
         settleReason = "health " + pl.getHealth();
         if (pl.getHealth() < pl.getMaxHealth()) return false;
         settleReason = "velocity " + pl.getDeltaMovement();
