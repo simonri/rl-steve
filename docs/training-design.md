@@ -22,6 +22,16 @@ Varje belöning och varje indata finns både i `sim/src/env.rs` och i `python/au
 `tests/test_sim_env.py` kontrollerar att de ger exakt samma tal. Riktiga spelet kontrolleras mot simulatorn med
 `checks/check_duel_real.py`.
 
+<a id="delmal"></a>
+### 2b. Målet är nästa delmål, inte banans slut
+
+På en bana av block som ska landas på i ordning (hop, path) är målet i indata nästa block, där modellen står på
+det. Målet är ett kommando ("gå hit"), som i en duell där det är motståndaren, och senare i Bedwars de delmål en
+strateg ger. Med banans slut som mål drogs modellen bort från blocken där banan svängde: auto7 landade 95–98 % av
+hoppen som pekade inom 20° från slutet men 16–50 % av dem som pekade mer än 90° bort, och hops sista två reglage
+stod still i 40 miljoner beslut (diagnos 2026-11-07, 400 banor per inställning). Belöningen räknade redan avståndet
+till nästa block, så bara indata ändrades.
+
 ## Mätning
 
 <a id="referenser"></a>
