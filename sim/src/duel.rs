@@ -7,7 +7,7 @@
 //! own fighting state, four values for the command a strategist will give, and its last left clicks.
 
 use crate::clutch::Cube;
-use crate::combat::{self, ENTITY_REACH};
+use crate::combat::{self, Aim, ENTITY_REACH};
 use crate::env::{rotate, HISTORY, TURN_STEPS};
 use crate::player::{Player, STAND_EYES};
 
@@ -85,10 +85,10 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
     // and outside fights every tick would pay it for nothing.
     let cube = if order.is_empty() { None } else { Some(cube()) };
     let aimed = match &cube {
-        None => None,
+        None => Aim::Nothing,
         Some(cube) => {
             let boxes: Vec<Option<_>> = enemies.iter().map(|e| if e.health > 0.0 { Some(body(e)) } else { None }).collect();
-            combat::aimed_at(me_player, &cube.world(), &boxes) // really aiming, not standing in it (combat.rs)
+            combat::aim(me_player, &cube.world(), &boxes) // the game's own rule: a click now would land on it
         }
     };
     let my_eye = me_player.eye();
@@ -121,7 +121,7 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
         o[14] = e.hurt_time as f32 / 10.0;
         o[15] = e.on_ground as i32 as f32;
         o[16] = e.sprinting as i32 as f32;
-        o[17] = (aimed == Some(i)) as i32 as f32;
+        o[17] = (aimed == Aim::Player(i)) as i32 as f32;
         o[18] = reach as i32 as f32;
         o[19] = cube.as_ref().is_some_and(|c| clear(c, my_eye, e.eye())) as i32 as f32;
     }
@@ -146,7 +146,7 @@ pub fn dist2(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
 }
 
-fn body(e: &View) -> crate::world::Aabb {
+pub(crate) fn body(e: &View) -> crate::world::Aabb {
     let h = if e.crouching { 1.5 } else { 1.8 };
     crate::world::Aabb::new(e.pos[0] - 0.3, e.pos[1], e.pos[2] - 0.3, e.pos[0] + 0.3, e.pos[1] + h, e.pos[2] + 0.3)
 }

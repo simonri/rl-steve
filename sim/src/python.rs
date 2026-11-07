@@ -478,6 +478,7 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kind_of, m)?)?;
     m.add_function(wrap_pyfunction!(push_for, m)?)?;
     m.add_function(wrap_pyfunction!(combat_features, m)?)?;
+    m.add_function(wrap_pyfunction!(aimed_at, m)?)?;
     m.add_function(wrap_pyfunction!(bot_action, m)?)?;
     m.add("MOVE_OBS", MOVE_OBS)?;
     m.add("EXTRA", EXTRA)?;
@@ -512,6 +513,18 @@ fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8
     let mut out = vec![0.0; EXTRA];
     duel::features(&p, &m, &views, k, &|| Cube::from_text(feet, &solid), &h, &mut out);
     out
+}
+
+/// combat::aimed_at for AutoEnv's aim points, from what the game reports (the same cube of blocks as combat_features):
+/// the crosshair on an opponent from outside its box, the view toward its chest.
+#[pyfunction]
+#[pyo3(signature = (pos, yaw, pitch, crouching, enemies, solid, feet))]
+#[allow(clippy::too_many_arguments)]
+fn aimed_at(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies: Vec<ViewTuple>, solid: &str, feet: [i32; 3]) -> bool {
+    let mut p = Player::new(pos, yaw, pitch, 0);
+    p.crouch_pose = crouching;
+    let boxes: Vec<Option<_>> = enemies.iter().map(to_view).map(|e| if e.health > 0.0 { Some(duel::body(&e)) } else { None }).collect();
+    crate::combat::aimed_at(&p, &Cube::from_text(feet, solid).world(), &boxes).is_some()
 }
 
 /// duel.action for the real game: a scripted opponent's inputs this tick, in the model's action space.

@@ -828,13 +828,16 @@ class AutoEnv(SkillEnv):
         self.delayed.append(vec)
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)]))
 
+    def _enemies(self, o):
+        """The opponents as duel.rs View tuples; one out of the fight has no health."""
+        out = getattr(self, "out", [])
+        return [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), 0.0 if (i < len(out) and out[i]) else float(p["health"]), int(p["armor"]),
+                 float(p["damage"]), int(p["hurt_time"]), bool(p["on_ground"]), bool(p["sprinting"]), bool(p["crouching"])) for i, p in enumerate(o.get("players", []))]
+
     def _combat(self, o):
         """duel.features: the opponents, its own fighting state, the command, its last fighting inputs."""
         k = int(round(math.degrees(math.atan2(-self.goal_x, self.goal_z)) / 90.0))
-        players = o.get("players", [])
-        out = getattr(self, "out", [])
-        enemies = [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), 0.0 if (i < len(out) and out[i]) else float(p["health"]), int(p["armor"]),
-                    float(p["damage"]), int(p["hurt_time"]), bool(p["on_ground"]), bool(p["sprinting"]), bool(p["crouching"])) for i, p in enumerate(players)]
+        enemies = self._enemies(o)
         me = (int(o.get("slot", 0)), int(o.get("resist", 0)), float(o.get("attack_damage", 1.0)), int(o.get("armor", 0)),
               bool(o.get("server_sprinting", False)), int(o.get("since_hit", 99)), int(o.get("since_hurt", 99)), self.family == "duel")
         if len(o.get("solid", "")) != (2 * RADIUS + 1) ** 3:  # a recording or game without the full cube: nothing to see
@@ -880,8 +883,10 @@ class AutoEnv(SkillEnv):
         for i, p in enumerate(players):
             if not self.out[i] and (p["health"] <= 0 or p["pos"][1] < line):
                 self.out[i] = True
-        tail = self._combat(o)  # feature 17 of the nearest opponent: the crosshair is on it, in reach (env.rs aim)
-        if any(tail[i * mcsim.ENEMY_F + 17] > 0.5 for i in range(3)):
+        # Really aiming (env.rs, combat::aimed_at): on it from outside its box, looking toward its chest.
+        if len(o.get("solid", "")) == (2 * RADIUS + 1) ** 3 and mcsim.aimed_at(list(o["pos"]), float(o["yaw"]), float(o["pitch"]),
+                                                                             bool(o.get("crouch_pose", o.get("sneaking", False))), self._enemies(o), o["solid"],
+                                                                             [math.floor(v) for v in o["feet"]]):
             reward += self._points("aimed", AIM_POINTS)
         # Won only alive and standing: knocking the last opponent off by falling after it is a loss (env.rs). A death
         # the game has already respawned from stands at the spawn, so it is checked first.
