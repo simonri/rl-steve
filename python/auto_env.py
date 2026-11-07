@@ -251,7 +251,10 @@ class AutoEnv(SkillEnv):
         kind = items.BUILD_BLOCKS[int(r.integers(len(items.BUILD_BLOCKS)))]
         # A fight starts with the sword. A course starts with its blocks in hand, except RANDOM_HAND of those that give
         # blocks: then something else is selected, and finding the blocks pays once (env.rs TOOK_BLOCKS_BONUS).
-        hold = "sword" if self.family == "duel" else "random" if r.random() < RANDOM_HAND else "blocks"
+        # Only in rounds that test nothing: in exams and in the rounds that move a dial, a hand it has not learned to
+        # change yet failed a third of them (bridge exam 31 -> 19/32, stairs 31 -> 10/32) and could lower its levels.
+        practice = self.tested is None and not self.exam_family
+        hold = "sword" if self.family == "duel" else "random" if r.random() < RANDOM_HAND and practice else "blocks"
         self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)
         spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
         spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give
