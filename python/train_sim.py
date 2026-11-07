@@ -65,8 +65,12 @@ def main():
     resumed_steps = 0
     if continuing or a.resume:
         # The eyes and hands may have grown since that model was saved: what was there is kept exactly.
-        grew, _ = ta.load_weights(model, out / "latest.zip" if continuing else a.resume)
+        grew, steps = ta.load_weights(model, out / "latest.zip" if continuing else a.resume)
         print(f"continuing from {out / 'latest.zip' if continuing else a.resume}: grown {grew}", flush=True)
+        if not continuing:
+            # A model that has learned for a while goes on at its calmer learning rate and exploration: from step 0
+            # the schedule's first ones undid much of what it could (bridging fell from 0.82 to 0.66 in 500k).
+            resumed_steps = model.num_timesteps = steps
         torch.cuda.empty_cache()
     else:
         ta.init_action_bias(model.policy)

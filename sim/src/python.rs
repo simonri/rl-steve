@@ -510,7 +510,9 @@ fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8
 
 /// duel.action for the real game: a scripted opponent's inputs this tick, in the model's action space.
 #[pyfunction]
-#[pyo3(signature = (bot, me, target, centre, t, since_hit))]
-fn bot_action(bot: i32, me: ViewTuple, target: ViewTuple, centre: [f64; 3], t: i32, since_hit: i32) -> Vec<i64> {
-    duel::action(Bot::from_index(bot), &to_view(&me), &to_view(&target), centre, t, since_hit).to_vec()
+#[pyo3(signature = (bot, me, target, centre, t, since_hit, floor))]
+fn bot_action(bot: i32, me: ViewTuple, target: ViewTuple, centre: [f64; 3], t: i32, since_hit: i32, floor: Vec<[i32; 6]>) -> Vec<i64> {
+    // The arena's blocks as boxes (x0, y0, z0, x1, y1, z1): the game's world for the bot's step ahead.
+    let ground = |x: i32, y: i32, z: i32| floor.iter().any(|b| b[0] <= x && x <= b[3] && b[1] <= y && y <= b[4] && b[2] <= z && z <= b[5]);
+    duel::action(Bot::from_index(bot), &to_view(&me), &to_view(&target), centre, t, since_hit, &ground).to_vec()
 }

@@ -99,7 +99,7 @@ FAMILIES = {
     "duel": dict(
         bot=BOTS,
         arena=("platform", "island", "bridge"),  # a wide floor, an island with void all round, a bridge between two islands
-        distance=(4, 7, 11),  # blocks to the opponent at the start
+        distance=(2, 4, 7, 11),  # blocks to the opponent at the start: first within reach, so the first random clicks already hit
         yaw=YAW,
         gear=("wood", "stone", "iron", "theirs better"),  # swords and armor as bought in Bedwars; the last: the opponent is a step ahead
         kb=(False, True),  # both have a Knockback stick's worth of knockback on the sword

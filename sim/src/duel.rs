@@ -208,8 +208,9 @@ fn step_toward(left: f64) -> i64 {
 
 /// A bot's inputs for this tick, in the model's own action space (so it gets the same key and click limits).
 /// `me` is the bot, `target` the one it fights, `centre` the middle of the arena (the side away from the void), `t`
-/// the tick, `since_hit` ticks since one of its hits counted.
-pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, since_hit: i32) -> [i64; ACTIONS] {
+/// the tick, `since_hit` ticks since one of its hits counted, `ground` whether a block is at a spot (the floor it
+/// must not walk off).
+pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, since_hit: i32, ground: &dyn Fn(i32, i32, i32) -> bool) -> [i64; ACTIONS] {
     let mut a = [0, 0, 0, 0, 0, 0, 5, 5, 0, 2]; // nothing pressed, no turn, sword in hand
     if bot == Bot::Dummy || target.health <= 0.0 {
         return a;
@@ -260,5 +261,37 @@ pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, sinc
         }
         Bot::Dummy => {}
     }
+    if !floor_ahead(me, &a, ground) {
+        a[0] = 0;
+        a[1] = 0;
+        a[4] = 0;
+        a[5] = 0; // a bot keeps to the arena as a player would: knocked off it may be, it never walks off
+    }
     a
+}
+
+/// Whether there is floor a step ahead (further when sprinting) in the way the keys `a` move a player at `me`,
+/// after this tick's turn; true when the keys do not move it.
+fn floor_ahead(me: &View, a: &[i64; ACTIONS], ground: &dyn Fn(i32, i32, i32) -> bool) -> bool {
+    let fwd = match a[0] {
+        1 => 1.0,
+        2 => -1.0,
+        _ => 0.0,
+    };
+    let left = match a[1] {
+        1 => 1.0,
+        2 => -1.0,
+        _ => 0.0,
+    };
+    if fwd == 0.0 && left == 0.0 {
+        return true;
+    }
+    // Entity.moveRelative: forward is (-sin, cos) of the yaw, left (cos, sin).
+    let (sin, cos) = (me.yaw as f64 + TURN_STEPS[a[6] as usize]).to_radians().sin_cos();
+    let (vx, vz) = (-sin * fwd + cos * left, cos * fwd + sin * left);
+    let n = vx.hypot(vz);
+    let reach = if a[5] != 0 { 1.6 } else { 1.0 };
+    let (x, z) = ((me.pos[0] + vx / n * reach).floor() as i32, (me.pos[2] + vz / n * reach).floor() as i32);
+    let below = me.pos[1].floor() as i32 - 1;
+    (0..3).any(|d| ground(x, below - d, z)) // a step or two down is fine too
 }

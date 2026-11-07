@@ -61,7 +61,7 @@ def main():
     vec.env_method("set_exam", "duel", False)
     obs = vec.reset()
     tail = obs[0, mcsim.MOVE_OBS:]
-    assert tail[0] == 1.0 and tail[3] > 0.3 and abs(tail[1]) < 0.1, tail[:20]
+    assert tail[0] == 1.0 and tail[3] > 0.2 and abs(tail[1]) < 0.1, tail[:20]  # 2 blocks ahead at the first distance: 2 / 8
     assert tail[61] == 1.0 and tail[69] == 1.0, "sword in hand, and it is a fight"
     print("duel ok")
 

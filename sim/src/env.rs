@@ -948,7 +948,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let me = View::of(player);
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
-        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit) };
+        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
     if let Some((s, j)) = queued.take() {

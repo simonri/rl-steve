@@ -738,6 +738,7 @@ class AutoEnv(SkillEnv):
         self.visited = set()
         self.history2 = collections.deque([(0.0, 0.0)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
+        self.placed_cells = []  # blocks placed this round (_arena_floor)
         self._plan_pushes()
         self.next_push, self.pushed, self.push_airborne, self.pushes_given = 0, False, False, 0
         super()._begin_episode()
@@ -854,6 +855,7 @@ class AutoEnv(SkillEnv):
         o = self._send(keys, clicked, turn_yaw, turn_pitch, attack, slot)
         for c in o.get("clicks") or []:  # blocks built in a fight, maybe outside the arena
             self._mark_dirty(c)
+            self.placed_cells.append(c[:3])
         reward = self._points("time", -TICK_COST)
         players = o.get("players", [])
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
@@ -896,6 +898,12 @@ class AutoEnv(SkillEnv):
         if self.tested == "push":
             self.tested = None
 
+    def _arena_floor(self):
+        """The round's blocks as boxes, and every block placed since: what the bots must not walk off (env.rs gives
+        them the simulator's world)."""
+        placed = [[c[0], c[1], c[2], c[0], c[1], c[2]] for c in self.placed_cells]
+        return [list(map(int, b)) for b in self.spec.get("platforms", [])] + placed
+
     def _bot_actions(self):
         """duel.rs Bot.action for every opponent, from what the game shows now: the same bots as in the simulator."""
         o = self.obs
@@ -911,7 +919,8 @@ class AutoEnv(SkillEnv):
             if i < len(self.out) and self.out[i]:
                 actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
                 continue
-            actions.append(list(mcsim.bot_action(int(p.get("bot", self.duel["opponents"][i][0])), view(p, p["health"]), me, list(self.duel["centre"]), self.t, int(p.get("since_hit", 99)))))
+            actions.append(list(mcsim.bot_action(int(p.get("bot", self.duel["opponents"][i][0])), view(p, p["health"]), me, list(self.duel["centre"]), self.t, int(p.get("since_hit", 99)),
+                                                 self._arena_floor())))
         return actions
 
     def time_limit(self):
