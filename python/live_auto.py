@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 p = argparse.ArgumentParser()
 p.add_argument("--name", default="auto6")
 p.add_argument("--port", type=int, default=25601)
+p.add_argument("--kinds", nargs="+", help="course kinds to show (default: every open one), e.g. --kinds duel")
 a = p.parse_args()
 out = ROOT / "runs" / "models" / a.name
 torch.set_num_threads(1)
@@ -144,7 +145,7 @@ def turn_once():
     s = status()
     levels = Curriculum(s.get("levels")).levels
     env.set_levels(levels)
-    kinds = [f for f in FAMILIES if is_open(levels, f)] or ["hop"]  # parkour is always open; never an empty list
+    kinds = [f for f in FAMILIES if is_open(levels, f) and (not a.kinds or f in a.kinds)] or a.kinds or ["hop"]  # never an empty list
     env.set_exam(kinds[turn % len(kinds)], all_dials=False)  # the mix of courses it trains on, not only the hardest
     turn += 1
     info = episode(s)
