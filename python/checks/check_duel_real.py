@@ -62,16 +62,16 @@ def case(name, bot, actions_fn, ticks=120):
 
 
 def hit_dummy(t):
-    a = np.array([1 if t < 12 else 0, 0, 0, 0, 0, 0, 5, 5, 1 if t % 3 == 0 else 0, 0])
+    a = np.array([1 if t < 12 else 0, 0, 0, 0, 0, 0, 5, 5, 1 if t % 3 == 0 else 0])
     return a
 
 
 def stand(t):
-    return np.array([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
+    return np.array([0, 0, 0, 0, 0, 0, 5, 5, 0])
 
 
 def sprint_hit_dummy(t):
-    return np.array([1 if t < 14 else 0, 0, 0, 0, 0, 1 if t < 14 else 0, 5, 5, 1 if t % 3 == 0 else 0, 0])
+    return np.array([1 if t < 14 else 0, 0, 0, 0, 0, 1 if t < 14 else 0, 5, 5, 1 if t % 3 == 0 else 0])
 
 
 ONLY = sys.argv[2] if len(sys.argv) > 2 else None

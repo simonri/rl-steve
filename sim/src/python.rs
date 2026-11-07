@@ -163,7 +163,6 @@ impl Single {
         d.set_item("hurt_time", p.hurt_time)?;
         d.set_item("crouch_pose", p.crouch_pose)?;
         d.set_item("slot", p.slot)?;
-        d.set_item("miss_lock", p.miss_lock)?;
         d.set_item("resist", p.resist)?;
         d.set_item("attack_damage", p.attack_damage)?;
         d.set_item("armor", p.armor)?;
@@ -489,16 +488,16 @@ fn to_view(v: &ViewTuple) -> View {
 }
 
 /// duel.features for the real game (and AutoEnv): the values after the movement model's, from what the game reports.
-/// me: (slot, miss_lock, resist, damage, armor, server_sprinting, since_hit, since_hurt, duel). history: the last
-/// HISTORY (attack, hotbar / 2) pairs, oldest first.
+/// me: (slot, resist, damage, armor, server_sprinting, since_hit, since_hurt, duel). history: the last HISTORY left
+/// clicks, oldest first, each as a one-value list.
 #[pyfunction]
 #[pyo3(signature = (pos, yaw, pitch, crouching, me, enemies, k, solid, feet, history))]
 #[allow(clippy::too_many_arguments)]
-fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8, i32, i32, f32, i32, bool, i32, i32, bool), enemies: Vec<ViewTuple>, k: i32,
+fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8, i32, f32, i32, bool, i32, i32, bool), enemies: Vec<ViewTuple>, k: i32,
                    solid: &str, feet: [i32; 3], history: Vec<[f32; HIST_F]>) -> Vec<f32> {
     let mut p = Player::new(pos, yaw, pitch, 0);
     p.crouch_pose = crouching;
-    let m = duel::Me { slot: me.0, miss_lock: me.1, resist: me.2, damage: me.3, armor: me.4, server_sprinting: me.5, since_hit: me.6, since_hurt: me.7, duel: me.8 };
+    let m = duel::Me { slot: me.0, resist: me.1, damage: me.2, armor: me.3, server_sprinting: me.4, since_hit: me.5, since_hurt: me.6, duel: me.7 };
     let views: Vec<View> = enemies.iter().map(to_view).collect();
     let mut h = [[0.0; HIST_F]; HISTORY];
     for (i, v) in history.iter().rev().take(HISTORY).enumerate() {

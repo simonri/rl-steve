@@ -4,7 +4,7 @@
 //! two always agree. Like clutch.rs, what depends on blocks reads only the cube 5 around the feet the model sees.
 //!
 //! The model's input grows by [`EXTRA`] values after the 4681 of the movement model: the three nearest opponents, its
-//! own fighting state, four values for the command a strategist will give, and its last attack and hotbar inputs.
+//! own fighting state, four values for the command a strategist will give, and its last left clicks.
 
 use crate::clutch::Cube;
 use crate::combat::{self, Aim, ENTITY_REACH};
@@ -13,13 +13,13 @@ use crate::player::{Player, STAND_EYES};
 
 pub const ENEMIES: usize = 3;
 pub const ENEMY_F: usize = 20;
-pub const SELF_F: usize = 10;
+pub const SELF_F: usize = 9;
 pub const CMD_F: usize = 4;
-pub const HIST_F: usize = 2; // attack, hotbar choice, per remembered tick
+pub const HIST_F: usize = 1; // the left click, per remembered tick
 pub const EXTRA: usize = ENEMIES * ENEMY_F + SELF_F + CMD_F + HIST_F * HISTORY;
-pub const ACTIONS: usize = 10; // the movement model's 8, then attack (0, 1) and hotbar (0 keep, 1 blocks, 2 sword)
-/// How many choices each action has (AutoEnv.action_space): move, strafe, sneak, use, jump, sprint, yaw, pitch, attack, hotbar.
-pub const CHOICES: [i64; ACTIONS] = [3, 3, 2, 2, 2, 2, 11, 11, 2, 3];
+pub const ACTIONS: usize = 9; // the movement model's 8, then the left click (0, 1). Every round starts with the right thing in hand.
+/// How many choices each action has (AutoEnv.action_space): move, strafe, sneak, use, jump, sprint, yaw, pitch, attack.
+pub const CHOICES: [i64; ACTIONS] = [3, 3, 2, 2, 2, 2, 11, 11, 2];
 
 /// A player as the game shows it to someone else.
 #[derive(Clone, Copy, Debug, Default)]
@@ -63,7 +63,6 @@ impl View {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Me {
     pub slot: u8,
-    pub miss_lock: i32,
     pub resist: i32,
     pub damage: f32,
     pub armor: i32,
@@ -74,7 +73,7 @@ pub struct Me {
 }
 
 /// The values after the movement model's 4681: opponents nearest first, then itself, the command, the history.
-/// `me_player` is the model's own player (position, view and aim), `history` its last attack and hotbar inputs.
+/// `me_player` is the model's own player (position, view and aim), `history` its last left clicks.
 /// `cube` makes the blocks around it, only asked for when there is someone to see.
 pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dyn Fn() -> Cube, history: &[[f32; HIST_F]; HISTORY], out: &mut [f32]) {
     debug_assert_eq!(out.len(), EXTRA);
@@ -129,14 +128,13 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
     let s = &mut out[ENEMIES * ENEMY_F..ENEMIES * ENEMY_F + SELF_F];
     s[0] = (me.slot == 0) as i32 as f32;
     s[1] = (me.slot == 1) as i32 as f32;
-    s[2] = me.miss_lock as f32 / 10.0;
-    s[3] = me.resist as f32 / 20.0;
-    s[4] = me.damage / 8.0;
-    s[5] = me.armor as f32 / 20.0;
-    s[6] = me.server_sprinting as i32 as f32;
-    s[7] = (me.since_hit.min(20) as f32) / 20.0;
-    s[8] = (me.since_hurt.min(20) as f32) / 20.0;
-    s[9] = me.duel as i32 as f32;
+    s[2] = me.resist as f32 / 20.0;
+    s[3] = me.damage / 8.0;
+    s[4] = me.armor as f32 / 20.0;
+    s[5] = me.server_sprinting as i32 as f32;
+    s[6] = (me.since_hit.min(20) as f32) / 20.0;
+    s[7] = (me.since_hurt.min(20) as f32) / 20.0;
+    s[8] = me.duel as i32 as f32;
     // the command (CMD_F) stays 0 until there is a strategist
     let h = &mut out[ENEMIES * ENEMY_F + SELF_F + CMD_F..];
     for (t, v) in history.iter().enumerate() {
@@ -144,7 +142,7 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
     }
 }
 
-fn dist2(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+pub fn dist2(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
 }
 
@@ -211,7 +209,7 @@ fn step_toward(left: f64) -> i64 {
 /// the tick, `since_hit` ticks since one of its hits counted, `ground` whether a block is at a spot (the floor it
 /// must not walk off).
 pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, since_hit: i32, ground: &dyn Fn(i32, i32, i32) -> bool) -> [i64; ACTIONS] {
-    let mut a = [0, 0, 0, 0, 0, 0, 5, 5, 0, 2]; // nothing pressed, no turn, sword in hand
+    let mut a = [0, 0, 0, 0, 0, 0, 5, 5, 0]; // nothing pressed, no turn (the sword is in hand from the start)
     if bot == Bot::Dummy || target.health <= 0.0 {
         return a;
     }

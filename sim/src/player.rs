@@ -93,7 +93,6 @@ pub struct Player {
     pub heal_timer: i32,
     // Combat (combat.rs).
     pub slot: u8,             // selected hotbar slot: 0 blocks, 1 sword
-    pub miss_lock: i32,       // Minecraft.missTime: ticks before a left click does anything again
     pub resist: i32,          // hurtResistantTime
     pub last_damage: f32,     // lastDamage, for hits inside the resistance
     pub attack_damage: f32,   // the attack attribute: 1, plus the sword
@@ -137,7 +136,6 @@ impl Player {
             rules18: false,
             heal_timer: 0,
             slot: 0,
-            miss_lock: 0,
             resist: 0,
             last_damage: 0.0,
             attack_damage: 1.0,
@@ -284,7 +282,7 @@ impl Player {
     }
 
     /// The start of a tick, up to where the client handles its keys: a hit's motion packet from the last server tick,
-    /// the mod's turn, the hotbar key, and the attack lock counting down. With several players, every one does this
+    /// the mod's turn and the hotbar key. With several players, every one does this
     /// and its left click (combat.rs) before anyone moves.
     pub fn begin(&mut self, input: &Input) {
         if let Some(v) = self.pending_knock.take() {
@@ -293,9 +291,6 @@ impl Player {
         self.turn(input.turn_yaw, input.turn_pitch);
         if let Some(s) = input.slot {
             self.slot = s;
-        }
-        if self.miss_lock > 0 {
-            self.miss_lock -= 1;
         }
     }
 

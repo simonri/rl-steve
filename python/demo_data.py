@@ -87,7 +87,7 @@ def replay(path):
     env.best = float("inf")
     history = deque([np.zeros(8, np.float32)] * HISTORY, maxlen=HISTORY)
     delayed = deque(maxlen=1)  # the model sees the game as it is now
-    env.history2 = deque([(0.0, 0.0)] * HISTORY, maxlen=HISTORY)  # recordings never fight: no clicks, the first slot
+    env.history2 = deque([(0.0,)] * HISTORY, maxlen=HISTORY)  # recordings never fight: no left clicks
     observations, actions = [], []
     env.landed = 0
     env._release_inputs()
@@ -120,7 +120,7 @@ def replay(path):
         placed = max(0, o["held_count"] - then.get("held_count", 0))
         env.used += placed
         action = [move, strafe, int(then["sneak"]), min(placed, 1), int(then["jump"]), int(then["sprint"]),
-                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"]), 0, 0]  # no left click, keep the slot
+                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"]), 0]  # no left click
         observations.append(seen)
         actions.append(action)
         history.append(np.asarray([move / 2, strafe / 2, action[2], action[3] / 2, action[4], action[5], action[6] / (len(TURN_STEPS) - 1), action[7] / (len(TURN_STEPS) - 1)], np.float32))

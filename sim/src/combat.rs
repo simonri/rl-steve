@@ -9,7 +9,6 @@ use crate::player::{clip_box, Player, REACH, WIDTH};
 use crate::world::{Aabb, World};
 
 pub const ENTITY_REACH: f64 = 3.0; // Attributes.ENTITY_INTERACTION_RANGE for a player
-pub const MISS_LOCK: i32 = 10; // Minecraft.missTime after a click on nothing, while the button is held (see click)
 const MAX_RESIST: i32 = 20; // maxHurtResistantTime
 const KNOCK: f64 = 0.4;
 
@@ -70,13 +69,9 @@ pub fn aim(p: &Player, world: &World, others: &[Option<Aabb>]) -> Aim {
 
 /// A left click: hits whoever `aim` finds. Returns the target.
 ///
-/// A click on nothing sets 26.3's 10-tick attack lock (Minecraft.missTime), but the same tick ends with
-/// continueAttack(false) for a button that is not held, which sets it back to 0: clicks, as people and the model make
-/// them, never wait. The lock only bites while the button is held down, which nobody here does.
+/// A click on nothing never makes the next one wait: the 10-tick attack lock it sets (26.3 Minecraft.missTime, 1.8.9
+/// leftClickCounter) is cleared the same tick when the button is not held, and clicks are never held here.
 pub fn click(p: &mut Player, world: &World, others: &[Option<Aabb>]) -> Option<usize> {
-    if p.miss_lock > 0 {
-        return None;
-    }
     match aim(p, world, others) {
         Aim::Player(i) => Some(i),
         Aim::Block | Aim::Nothing => None, // a block would start breaking; blocks do not break in these rounds
@@ -258,25 +253,22 @@ mod tests {
     }
 
     #[test]
-    fn aim_and_miss_lock() {
+    fn aim_and_click() {
         let mut w = World::new([-10, 90, -10], [10, 110, 10]);
         w.fill([-10, 99, -10], [10, 99, 10], FULL);
-        // Looking along +z (yaw 0) at a player 2.5 ahead: hit. 3.5 ahead: nothing in reach, and no lock for a click.
+        // Looking along +z (yaw 0) at a player 2.5 ahead: hit. 3.5 ahead: nothing in reach, and the next click hits again.
         let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
         let near = Player::new([0.5, 100.0, 3.0], 0.0, 0.0, 0);
         let far = Player::new([0.5, 100.0, 4.2], 0.0, 0.0, 0);
         assert_eq!(click(&mut p, &w, &[Some(body(&near))]), Some(0));
         assert_eq!(click(&mut p, &w, &[Some(body(&far))]), None);
-        assert_eq!(p.miss_lock, 0);
         assert_eq!(click(&mut p, &w, &[Some(body(&near))]), Some(0), "the next click hits");
-        // Looking at the ground in front: a block, no lock.
+        // Looking at the ground in front: a block.
         let mut q = Player::new([0.5, 100.0, 0.5], 0.0, 60.0, 0);
         assert_eq!(click(&mut q, &w, &[None]), None);
-        assert_eq!(q.miss_lock, 0);
         // A wall between: the block is nearer, so no hit.
         w.set(0, 101, 2, FULL);
-        let mut r = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
+        let r = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
         assert_eq!(aim(&r, &w, &[Some(body(&near))]), Aim::Block);
-        r.miss_lock = 0;
     }
 }

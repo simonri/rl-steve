@@ -1033,7 +1033,6 @@ public final class McBridge implements ClientModInitializer {
         o.addProperty("eye_height", pl.getEyeHeight());
         o.addProperty("held_count", pl.getInventory().getItem(0).getCount()); // the blocks, whatever is in hand
         o.addProperty("slot", pl.getInventory().getSelectedSlot());
-        o.addProperty("miss_lock", mc.missTime);
         o.addProperty("crouch_pose", pl.isCrouching());
         ServerPlayer sp = server == null ? null : server.getPlayerList().getPlayer(mc.getGameProfile().id());
         if (sp != null) {

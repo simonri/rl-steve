@@ -34,15 +34,14 @@ cur = Curriculum()
 vec = SimVecEnv(4, cur.levels, seed=0)
 model = ta.SplitPPO(MemoryPolicy, vec, n_steps=8, batch_size=32, n_epochs=1, policy_kwargs=ta.POLICY, device="cpu", seed=0)
 
-# A new model leans away from jumping, sprinting, turning, clicking and changing the slot.
+# A new model leans away from jumping, sprinting, turning and clicking.
 ta.init_action_bias(model.policy)
 bias = model.policy.action_net.bias.data
 nvec = [int(n) for n in model.policy.action_space.nvec]
 start = np.cumsum([0] + nvec)
 attack = bias[start[8] : start[9]]
 assert attack[0] > attack[1], attack
-slot = bias[start[9] : start[10]]
-assert slot[1] < slot[0] - 5 and slot[2] < slot[0] - 5, slot  # what is in hand stays there at first
+assert len(nvec) == mcsim.ACTIONS == 9, nvec  # no hotbar input: every round starts with the right thing in hand
 for index, value in ta.MOVE_BIAS:
     assert bias[index] == value
 

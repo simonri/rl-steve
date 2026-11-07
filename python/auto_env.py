@@ -62,7 +62,6 @@ DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
 AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
-HOTBAR = False  # env.rs: the hotbar input does nothing until a course kind needs it
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
@@ -99,8 +98,8 @@ class AutoEnv(SkillEnv):
         self.levels = levels or curriculum.Curriculum().levels
         super().__init__(port, stage=0, render=render)
         # A click is always one click, never a held button: click or not, once per decision.
-        # Then a left click (hit), and the hotbar: keep, blocks, sword.
-        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2, 3])
+        # Then a left click (hit). Every round starts with the right thing in hand: there is no hotbar input.
+        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2])
 
     def set_stage(self, stage):
         pass
@@ -632,10 +631,13 @@ class AutoEnv(SkillEnv):
         ego = lambda dx, dz: (dx * forward[0] + dz * forward[1], dx * right[0] + dz * right[1])
         # The frame of this round: the goal does not move, so neither does this.
         k = int(round(math.degrees(math.atan2(-self.goal_x, self.goal_z)) / 90.0))
-        goal_x, goal_z = self.goal_x + 0.5 - x, self.goal_z + 0.5 - z
+        target = self._target(o)
+        if target is not None:  # a fight: the goal is the nearest opponent still in it, wherever it is now
+            goal_x, goal_z, goal_up = target[0] - x, target[2] - z, target[1] - y
+        else:
+            goal_x, goal_z, goal_up = self.goal_x + 0.5 - x, self.goal_z + 0.5 - z, Y + 1 + self.dy - y
         distance = math.hypot(goal_x, goal_z)
         goal_f, goal_r = ego(goal_x, goal_z)
-        goal_up = Y + 1 + self.dy - y
         centre_x, centre_z = rotate(x - math.floor(x) - 0.5, z - math.floor(z) - 0.5, k)
         speed_f, speed_r = ego(vx, vz)
         look = turn - k * math.pi / 2
@@ -738,7 +740,7 @@ class AutoEnv(SkillEnv):
 
     def _begin_episode(self):
         self.visited = set()
-        self.history2 = collections.deque([(0.0, 0.0)] * HISTORY, maxlen=HISTORY)
+        self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
         self.placed_cells = []  # blocks placed this round (_arena_floor)
         self._plan_pushes()
@@ -808,13 +810,13 @@ class AutoEnv(SkillEnv):
                 next_tick = pace(next_tick, 0.05)
 
     def step(self, action):
-        """SkillEnv.step with the two fighting inputs: a left click and the hotbar."""
+        """SkillEnv.step with the fighting input, a left click."""
         a = [int(v) for v in action]
         move, strafe, sneak, use, jump, sprint, yaw, pitch = a[:8]
-        attack, slot = (a[8], a[9]) if len(a) > 8 else (0, 0)
-        self.history2.append((float(attack), slot / 2))
+        attack = a[8] if len(a) > 8 else 0
+        self.history2.append((float(attack),))
         self.history.append(np.asarray([move / 2, strafe / 2, sneak, use / 2, jump, sprint, yaw / (self.turn_choices - 1), pitch / (self.turn_choices - 1)], np.float32))
-        reward, term, trunc, info = self._tick(move, strafe, sneak, use > 0, jump, sprint, yaw, pitch, attack=bool(attack), slot=slot)
+        reward, term, trunc, info = self._tick(move, strafe, sneak, use > 0, jump, sprint, yaw, pitch, attack=bool(attack))
         if not info["respawned"]:
             self.delayed.append(self._vec(self.obs))
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)])), reward, term, trunc, info
@@ -830,7 +832,7 @@ class AutoEnv(SkillEnv):
         out = getattr(self, "out", [])
         enemies = [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), 0.0 if (i < len(out) and out[i]) else float(p["health"]), int(p["armor"]),
                     float(p["damage"]), int(p["hurt_time"]), bool(p["on_ground"]), bool(p["sprinting"]), bool(p["crouching"])) for i, p in enumerate(players)]
-        me = (int(o.get("slot", 0)), int(o.get("miss_lock", 0)), int(o.get("resist", 0)), float(o.get("attack_damage", 1.0)), int(o.get("armor", 0)),
+        me = (int(o.get("slot", 0)), int(o.get("resist", 0)), float(o.get("attack_damage", 1.0)), int(o.get("armor", 0)),
               bool(o.get("server_sprinting", False)), int(o.get("since_hit", 99)), int(o.get("since_hurt", 99)), self.family == "duel")
         if len(o.get("solid", "")) != (2 * RADIUS + 1) ** 3:  # a recording or game without the full cube: nothing to see
             return np.zeros(mcsim.EXTRA, np.float32)
@@ -839,22 +841,20 @@ class AutoEnv(SkillEnv):
                                      o["solid"], feet, [list(h) for h in getattr(self, "history2", [])])
         return np.clip(np.asarray(tail, np.float32), -5.0, 5.0)
 
-    def _send(self, keys, clicked, turn_yaw, turn_pitch, attack, slot):
+    def _send(self, keys, clicked, turn_yaw, turn_pitch, attack):
         """One tick of inputs to the game; returns what it shows after it."""
         extra = dict(attack=True) if attack else {}
-        if slot and HOTBAR:
-            extra["hotbar"] = slot - 1
         if self.family == "duel" and not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
             extra["opponents"] = self._bot_actions()
         self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
         self.t += 1
         return o
 
-    def _fight_tick(self, keys, clicked, turn_yaw, turn_pitch, attack, slot):
+    def _fight_tick(self, keys, clicked, turn_yaw, turn_pitch, attack):
         """env.rs fight_step: what was dealt and taken, and the result."""
         before = [p["health"] for p in self.obs.get("players", [])]
         mine = self.obs["health"]
-        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack, slot)
+        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack)
         for c in o.get("clicks") or []:  # blocks built in a fight, maybe outside the arena
             self._mark_dirty(c)
             self.placed_cells.append(c[:3])
@@ -885,6 +885,16 @@ class AutoEnv(SkillEnv):
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,
                 "parts": dict(self.parts)}
         return float(reward) * self.reward_scale, term, False, info
+
+    def _target(self, o):
+        """In a fight, where the nearest opponent still in it stands (env.rs observe): the goal the model goes for.
+        None outside fights, and before the game shows any opponent."""
+        if self.family != "duel":
+            return None
+        out = getattr(self, "out", [])
+        here = o["pos"]
+        alive = [p["pos"] for i, p in enumerate(o.get("players", [])) if not (i < len(out) and out[i]) and p["health"] > 0]
+        return min(alive, key=lambda q: (q[0] - here[0]) ** 2 + (q[1] - here[1]) ** 2 + (q[2] - here[2]) ** 2) if alive else None
 
     def _fall_line(self):
         """Below this the round counts as a fall (env.rs fall_line): the lower of start and goal, less the margin."""
@@ -922,7 +932,7 @@ class AutoEnv(SkillEnv):
                 players.append(dict(pos=pos, vel=[0.0, 0.0, 0.0], yaw=yaw, pitch=0.0, health=20.0, armor=armor, damage=damage, hurt_time=0, on_ground=True, bot=bot, since_hit=99))
         for i, p in enumerate(players):
             if i < len(self.out) and self.out[i]:
-                actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
+                actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0])
                 continue
             actions.append(list(mcsim.bot_action(int(p.get("bot", self.duel["opponents"][i][0])), view(p, p["health"]), me, list(self.duel["centre"]), self.t, int(p.get("since_hit", 99)),
                                                  self._arena_floor())))
@@ -933,7 +943,7 @@ class AutoEnv(SkillEnv):
             return DUEL_TICKS
         return self._move_time_limit()
 
-    def _tick(self, move, strafe, sneak, use, jump, sprint, yaw, pitch, attack=False, slot=0):
+    def _tick(self, move, strafe, sneak, use, jump, sprint, yaw, pitch, attack=False):
         held, health = self.obs["held_count"], self.obs["health"]
         before = dict(self.keys)
         keys = self._press(dict(forward=move == 1, back=move == 2, left=strafe == 1, right=strafe == 2, sneak=bool(sneak), jump=bool(jump), sprint=bool(sprint)))
@@ -943,8 +953,8 @@ class AutoEnv(SkillEnv):
         turn_yaw, turn_pitch = self._aim(TURN_STEPS[yaw]), self._aim(TURN_STEPS[pitch])
         self._maybe_push(before, keys, clicked, turn_yaw, turn_pitch)
         if self.family == "duel":
-            return self._fight_tick(keys, clicked, turn_yaw, turn_pitch, attack, slot)
-        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack, slot)
+            return self._fight_tick(keys, clicked, turn_yaw, turn_pitch, attack)
+        o = self._send(keys, clicked, turn_yaw, turn_pitch, attack)
         self._track_jump(o, keys["jump"])
         self._visit(o)
         reward = self._points("time", -TICK_COST)

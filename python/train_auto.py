@@ -50,11 +50,8 @@ POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan", "stairs": "Stairs", "bedwars": "Bedwars", "duel": "Duel"}
 
 
-# A new left click starts at about one in nine. A new hotbar input keeps what is in hand almost always (each change
-# about 3 in 10 000 ticks): every round starts with the right item, and a change is wrong either way until it has
-# learned when to make one. With "keep" at 0.79 a sword was in hand most of the time on block courses (bridging fell
-# from 0.85 to 0.1 in a test run); with "keep" and "blocks" equal, fights went on with bare hands.
-NEW_ACTION_BIAS = {2: (1.0, -1.0), 3: (8.0, 0.0, 0.0)}
+# A new left click starts at about one in nine.
+NEW_ACTION_BIAS = {2: (1.0, -1.0)}
 
 
 def transfer(policy, old_state):

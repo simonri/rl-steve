@@ -104,9 +104,6 @@ const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 /// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
 /// before the first hit lands (at most 3 in a 600-tick round, against 10 for winning and about 1 a hit).
 const AIM_POINTS: f64 = 0.005;
-/// Whether the hotbar input does anything. No course kind needs it yet: every round starts with the right thing in
-/// hand, and a change it could make at random (exploration keeps every choice alive) only ever took the sword away.
-pub const HOTBAR: bool = false;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -459,9 +456,9 @@ impl Env {
     /// One decision: AutoEnv.step with one tick. Returns the reward and whether the round is over.
     pub fn step(&mut self, a: [i64; ACTIONS]) -> (f64, bool) {
         let (mv, strafe, sneak, use_, jump, sprint, yaw, pitch) = (a[0], a[1], a[2] != 0, a[3] != 0, a[4] != 0, a[5] != 0, a[6] as usize, a[7] as usize);
-        let (attack, slot) = (a[8] != 0, if HOTBAR { slot_choice(a[9]) } else { None });
+        let attack = a[8] != 0;
         self.history2.rotate_left(1);
-        self.history2[HISTORY - 1] = [attack as i32 as f32, a[9] as f32 / 2.0];
+        self.history2[HISTORY - 1] = [attack as i32 as f32];
         self.history.rotate_left(1);
         self.history[HISTORY - 1] = [mv as f32 / 2.0, strafe as f32 / 2.0, sneak as i32 as f32, use_ as i32 as f32 / 2.0, jump as i32 as f32, sprint as i32 as f32, yaw as f32 / 10.0, pitch as f32 / 10.0];
         let held = self.player.held;
@@ -471,7 +468,7 @@ impl Env {
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
-        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot };
+        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot: None };
         self.maybe_push(before, &input);
         if self.course.duel.is_some() {
             return self.fight_step(&input);
@@ -742,11 +739,14 @@ impl Env {
         let turn = (p.yaw as f64).to_radians();
         let (fw, rt) = ((-turn.sin(), turn.cos()), (-turn.cos(), -turn.sin()));
         let ego = |dx: f64, dz: f64| (dx * fw.0 + dz * fw.1, dx * rt.0 + dz * rt.1);
-        let gx = c.goal[0] as f64 + 0.5 - x;
-        let gz = c.goal[1] as f64 + 0.5 - z;
+        // The goal: the course's, or in a fight the nearest opponent still in it, wherever it is now (AutoEnv._target).
+        let fight = self.opponents.iter().filter(|o| !o.gone()).map(|o| o.player.pos).min_by(|a, b| duel::dist2(a, &p.pos).total_cmp(&duel::dist2(b, &p.pos)));
+        let (gx, gz, goal_up) = match fight {
+            Some(t) if c.duel.is_some() => (t[0] - x, t[2] - z, t[1] - y),
+            _ => (c.goal[0] as f64 + 0.5 - x, c.goal[1] as f64 + 0.5 - z, (Y + 1 + c.dy) as f64 - y),
+        };
         let distance = gx.hypot(gz);
         let (goal_f, goal_r) = ego(gx, gz);
-        let goal_up = (Y + 1 + c.dy) as f64 - y;
         let (cx, cz) = rotate(x - x.floor() - 0.5, z - z.floor() - 0.5, k);
         let (sf, sr) = ego(vx, vz);
         let look = turn - k as f64 * std::f64::consts::PI / 2.0;
@@ -872,11 +872,10 @@ impl Env {
             out[i..i + 8].copy_from_slice(h);
             i += 8;
         }
-        // duel.features: the opponents, its own fighting state, the command, its last attack and hotbar inputs.
+        // duel.features: the opponents, its own fighting state, the command, its last left clicks.
         let p = &self.player;
         let me = duel::Me {
             slot: p.slot,
-            miss_lock: p.miss_lock,
             resist: p.resist,
             damage: p.attack_damage,
             armor: p.armor,
@@ -921,15 +920,6 @@ fn settle(p: &mut Player) {
     p.hurt_time = 0;
 }
 
-/// The hotbar input: 0 keeps the slot, 1 picks the blocks, 2 the sword.
-fn slot_choice(a: i64) -> Option<u8> {
-    match a {
-        1 => Some(0),
-        2 => Some(1),
-        _ => None,
-    }
-}
-
 impl Opponent {
     /// Its action through the same key limits as the model's (Env.press, the shift rule for clicks).
     fn input(&mut self, a: [i64; ACTIONS]) -> Input {
@@ -942,7 +932,7 @@ impl Opponent {
             turn_yaw: TURN_STEPS[a[6] as usize],
             turn_pitch: TURN_STEPS[a[7] as usize],
             attack: a[8] != 0,
-            slot: slot_choice(a[9]),
+            slot: None, // a bot keeps the sword it starts with
         }
     }
 }
@@ -959,7 +949,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let me = View::of(player);
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
-        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
+        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
     if let Some((s, j)) = queued.take() {

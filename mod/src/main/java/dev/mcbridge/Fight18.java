@@ -267,7 +267,7 @@ public final class Fight18 {
         final int bot;
         boolean[] keys = new boolean[7];
         int[] keyAge = {2, 2, 2, 2, 2, 2, 2};
-        int[] action = {0, 0, 0, 0, 0, 0, 5, 5, 0, 0};
+        int[] action = {0, 0, 0, 0, 0, 0, 5, 5, 0};
         // Its client's sprint (LocalPlayer.aiStep), as player.rs has it.
         boolean sprinting, sentSprinting, wasShift;
         int sprintTrigger;
@@ -336,7 +336,7 @@ public final class Fight18 {
         }
     }
 
-    /** Each opponent: keys through the model's limits, turn, hotbar, a left click as a 26.3 client sees it, then moving. */
+    /** Each opponent: keys through the model's limits, turn, a left click as a 26.3 client sees it, then moving. */
     private static void drive(MinecraftServer server) {
         ServerPlayer target = null;
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
@@ -358,8 +358,6 @@ public final class Fight18 {
             p.setYRot(p.getYRot() + (float) TURN_STEPS[a[6]]);
             p.setYHeadRot(p.getYRot());
             p.setXRot(Math.max(-90.0f, Math.min(90.0f, p.getXRot() + (float) TURN_STEPS[a[7]])));
-            if (a[9] == 1) p.getInventory().setSelectedSlot(0);
-            if (a[9] == 2) p.getInventory().setSelectedSlot(1);
             State s = of(p);
             if (a[8] != 0 && target != null) {
                 Vec3 eye = p.getEyePosition();

@@ -464,14 +464,14 @@ for name in a._fields:
         assert x.shape == y.shape and torch.allclose(torch.nan_to_num(x.float()), y.float()), name
 assert torch.isnan(a.observations[:, 0]).sum() == (a.mask == 0).sum()
 # The eyes skip marked padding and give it nothing, and see the played ticks as they would alone.
-policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11, 2, 3]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
+policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11, 2]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
 played = torch.rand(3, AutoEnv.N_OBS)
 padded = torch.cat([played, torch.full((2, AutoEnv.N_OBS), float("nan"))])
 with torch.no_grad():
     both, alone = policy.extract_features(padded), policy.extract_features(played)
 assert torch.allclose(both[:3], alone, atol=1e-6) and (both[3:] == 0).all()
 # Copying recordings of different lengths gives a finite loss: their padding goes through the whole model.
-rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, 10), np.int64)) for n in (3, 7)]
+rounds = [(np.random.rand(n, AutoEnv.N_OBS).astype(np.float32), np.zeros((n, mcsim.ACTIONS), np.int64)) for n in (3, 7)]
 distribution, actions, real = train_auto._whole_rounds(policy, rounds, "cpu")
 assert torch.isfinite((distribution.log_prob(actions) * real).sum())
 print("batches ok")

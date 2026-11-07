@@ -26,16 +26,14 @@ def reference_env(levels):
 
 def actions(rng, n):
     """Inputs that do things: long presses, clicks, turns, some of everything."""
-    a = np.zeros((n, 10), np.int64)
-    cur = np.array([1, 0, 0, 0, 0, 1, 5, 5, 0, 0])
+    a = np.zeros((n, 9), np.int64)
+    cur = np.array([1, 0, 0, 0, 0, 1, 5, 5, 0])
     for t in range(n):
         if rng.random() < 0.15:
-            cur = np.array([rng.integers(3), rng.integers(3), rng.integers(2), 0, rng.integers(2), rng.integers(2), rng.integers(11), rng.integers(11), 0, rng.integers(3)])
+            cur = np.array([rng.integers(3), rng.integers(3), rng.integers(2), 0, rng.integers(2), rng.integers(2), rng.integers(11), rng.integers(11), 0])
         a[t] = cur
         a[t, 3] = rng.random() < 0.3
-        a[t, 8] = rng.random() < 0.4  # left clicks: hits when something is in reach, the 10 tick lock when nothing is
-        if rng.random() < 0.9:
-            a[t, 9] = 0
+        a[t, 8] = rng.random() < 0.4  # left clicks: hits when something is in reach
         if rng.random() < 0.5:
             a[t, 6] = a[t, 7] = 5
     return a

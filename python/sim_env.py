@@ -34,7 +34,7 @@ class CourseMaker(AutoEnv):
         self.dirty = list(FIRST_CLEAR)
         self.camera_every = 0.0
         self.observation_space = gym.spaces.Box(-5.0, 5.0, (AutoEnv.N_OBS,), np.float32)
-        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2, 3])
+        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2])
         self._np_random, _ = seeding.np_random(seed)
 
     def draw(self, seed=None):
