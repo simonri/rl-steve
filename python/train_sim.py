@@ -89,6 +89,7 @@ def main():
     progress.rating = Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
+        progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
 
     def stop(*_):
         # A stop (start.sh, a redeploy) ends learning where it is, and the run is saved below. A second one (uv passes

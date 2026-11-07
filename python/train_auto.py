@@ -286,6 +286,21 @@ class SplitPPO(RecurrentPPO):
             return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
 
 
+def bonus_weight_from(rated, references):
+    """How much a fight's event bonuses (long hit, critical hit, missed swing) should count, from a rating.
+
+    They are a crutch for finding those plays; what counts is damage and winning (docs/training-design.md#nedtrappning).
+    So they fade as the model gets stronger: full while it scores 0.5 against the frozen copies of itself, nothing at
+    0.9. Only the frozen copies count: the scripted bots are already beaten ~90% and measure nothing of these plays.
+    The 0.5 and 0.4 are ours, not from a paper.
+    """
+    snapshots = [r["name"] for r in references if r["kind"] == "snapshot"]
+    if not snapshots:
+        return 1.0
+    score = sum(rated["scores"][n] for n in snapshots) / len(snapshots)
+    return float(min(max(1.0 - (score - 0.5) / 0.4, 0.0), 1.0))
+
+
 class Progress(BaseCallback):
     def __init__(self, vec, out, curriculum, learn_threads=6):
         super().__init__()
@@ -299,6 +314,7 @@ class Progress(BaseCallback):
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
         self.rated = None  # its last result: Elo and score per reference
+        self.bonus_weight = 1.0  # how much a fight's event bonuses count (bonus_weight_from, shaping.rs); only falls
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
         self.results, self.falls, self.stalls = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.damage, self.speeds, self.shift, self.parts = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
@@ -350,7 +366,7 @@ class Progress(BaseCallback):
         for round_parts in self.parts:
             for rule, value in round_parts.items():
                 parts[rule] = parts.get(rule, 0.0) + value
-        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(), rating=self.rated,
+        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(), rating=self.rated, bonus_weight=self.bonus_weight,
                     success=self.mean(self.results), fell=self.mean(self.falls), stalled=self.mean(self.stalls), damage=self.mean(self.damage), speed=self.mean(self.speeds),
                     shift=self.mean(self.shift), bridge_speed=self.mean(self.bridge_speeds), bridge_record=self.bridge_record, parts={k: round(v / max(len(self.parts), 1), 3) for k, v in parts.items()}, seconds=time.time() - self.t0)
 
@@ -361,6 +377,14 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "status.json")
         return status
 
+    def set_bonus_weight(self, w):
+        """The weight for every round from now on (env.rs Env.bonus_weight): the simulator's batch, or each game's AutoEnv."""
+        self.bonus_weight = w
+        if hasattr(self.vec, "batch"):
+            self.vec.batch.set_bonus_weight(w)
+        else:
+            self.vec.set_attr("bonus_weight", w)
+
     def save_latest(self):
         self.model.save(self.out / "latest_tmp")
         os.replace(self.out / "latest_tmp.zip", self.out / "latest.zip")
@@ -369,7 +393,7 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "levels.json")
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
-        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam)))
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight)))
         os.replace(tmp, self.out / "latest.json")
 
     def show(self, title="TRAINING"):
@@ -396,6 +420,7 @@ class Progress(BaseCallback):
             # (resume_last_exam, from latest.json), so restarts do not keep putting them off.
             self.first_step = self.last_save = self.num_timesteps
             self.last_exam = self.resume_last_exam if self.resume_last_exam is not None else self.num_timesteps
+            self.set_bonus_weight(self.bonus_weight)  # a resumed run's weight (train_sim sets it from latest.json)
         moved = False
         for done, info in zip(self.locals["dones"], self.locals["infos"]):
             if not done:
@@ -500,6 +525,10 @@ class Progress(BaseCallback):
         if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
             self.rated = self.rating.rate(self.model, self.num_timesteps)
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
+            w = bonus_weight_from(self.rated, self.rating.references)
+            if w < self.bonus_weight:  # only falls: a bad rating does not bring the bonuses back
+                self.set_bonus_weight(w)
+                print(f"event bonus weight now {w:.2f}", flush=True)
         # The test reset the games, so training has to continue from fresh observations.
         self.model._last_obs = self.vec.reset()
         self.model._last_episode_starts = np.ones(self.vec.num_envs, dtype=bool)

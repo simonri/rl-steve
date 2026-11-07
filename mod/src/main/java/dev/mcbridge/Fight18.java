@@ -103,9 +103,10 @@ public final class Fight18 {
     // ---- The rules ----
 
     /** A hit from attacker on target, as the 1.8.9 server works it out. */
-    public static void attack(ServerPlayer attacker, Entity target) {
+    /** Returns the hit if it counted (feet distance across, 1 if critical), else null. */
+    public static double[] attack(ServerPlayer attacker, Entity target) {
         if (!(attacker instanceof Bot)) struck = true; // the client only sends a hit with the crosshair on someone in reach
-        if (!(target instanceof LivingEntity victim) || !victim.isAlive() || victim.getHealth() <= 0) return;
+        if (!(target instanceof LivingEntity victim) || !victim.isAlive() || victim.getHealth() <= 0) return null;
         State a = of(attacker), v = of(victim);
         float amount = attacker.getInventory().getSelectedSlot() == 1 ? a.damage : 1.0f; // the sword's, or a bare hit's (combat.rs Swing)
         boolean falling = attacker.fallDistance > 0 && !attacker.onGround() && !attacker.onClimbable() && !attacker.isInWater();
@@ -115,7 +116,7 @@ public final class Fight18 {
         float dealt;
         boolean knock;
         if ((float) v.resist > MAX_RESIST / 2.0f) {
-            if (amount <= v.last) return;
+            if (amount <= v.last) return null;
             dealt = amount - v.last;
             v.last = amount;
             knock = false;
@@ -161,9 +162,9 @@ public final class Fight18 {
         }
         a.sinceHit = 0;
         v.sinceHurt = 0;
-        if (!(attacker instanceof Bot)) {
-            landed = new double[] {Math.hypot(attacker.getX() - victim.getX(), attacker.getZ() - victim.getZ()), falling ? 1 : 0};
-        }
+        double[] hit = {Math.hypot(attacker.getX() - victim.getX(), attacker.getZ() - victim.getZ()), falling ? 1 : 0};
+        if (!(attacker instanceof Bot)) landed = hit;
+        return hit;
     }
 
     /** Once per server tick, before anything moves: opponents act, then hurt resistance and healing count down. */
@@ -313,6 +314,10 @@ public final class Fight18 {
         boolean sprinting, sentSprinting, wasShift;
         int sprintTrigger;
         float lastForward;
+        // Its left click and its hit that counted since the last reply (players()): the round's reward is zero-sum, so
+        // its long hits, critical hits and missed swings count against the model's (sim/src/shaping.rs).
+        volatile Boolean swing;
+        volatile double[] landed;
 
         Opponent(Bot player, int bot) {
             this.player = player;
@@ -409,8 +414,11 @@ public final class Fight18 {
                 AABB box = target.getBoundingBox();
                 var clip = box.contains(eye) ? java.util.Optional.of(eye) : box.clip(eye, eye.add(view.scale(max)));
                 // A click on nothing would lock attacks, but a click is not a held button: 26.3 clears it the same tick.
-                if (clip.isPresent() && clip.get().distanceToSqr(eye) < blockD2 && clip.get().distanceToSqr(eye) < ENTITY_REACH * ENTITY_REACH) {
-                    attack(p, target);
+                boolean on = clip.isPresent() && clip.get().distanceToSqr(eye) < blockD2 && clip.get().distanceToSqr(eye) < ENTITY_REACH * ENTITY_REACH;
+                o.swing = on;
+                if (on) {
+                    double[] hit = attack(p, target);
+                    if (hit != null) o.landed = hit;
                     // Its client's side of the click (26.3 Player.attack, combat.rs recoil): knockback slows it and stops its sprint.
                     if (s.kb + (o.sprinting ? 1 : 0) > 0) {
                         p.setDeltaMovement(p.getDeltaMovement().multiply(0.6, 1.0, 0.6));
@@ -492,6 +500,17 @@ public final class Fight18 {
             e.addProperty("crouching", p.isCrouching());
             e.addProperty("since_hit", s.sinceHit);
             e.addProperty("bot", o.bot);
+            Boolean swing = o.swing;
+            double[] hit = o.landed;
+            o.swing = null;
+            o.landed = null;
+            if (swing != null) e.addProperty("swing", swing); // it clicked: true if on the model in reach
+            if (hit != null) { // its hit that counted: feet distance across, critical
+                JsonArray h = new JsonArray();
+                h.add(hit[0]);
+                h.add(hit[1] != 0);
+                e.add("landed", h);
+            }
             out.add(e);
         }
         return out;

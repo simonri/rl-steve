@@ -191,6 +191,12 @@ impl Single {
             e.set_item("sprinting", q.sprinting)?;
             e.set_item("crouching", q.crouch_pose)?;
             e.set_item("out", o.out)?;
+            if let Some(s) = o.swing {
+                e.set_item("swing", s)?; // as the mod reports an opponent's click and its counted hit
+            }
+            if let Some(l) = o.landed {
+                e.set_item("landed", l)?;
+            }
             players.append(e)?;
         }
         d.set_item("players", players)?;
@@ -249,6 +255,7 @@ impl Single {
 pub struct Batch {
     envs: Vec<Option<Env>>,
     tick_count: i64,
+    bonus_weight: f64, // Env.bonus_weight for every round, set from training (train_auto.Progress)
 }
 
 impl Batch {
@@ -270,7 +277,7 @@ fn get<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyR
 impl Batch {
     #[new]
     fn new(n: usize) -> Self {
-        Batch { envs: (0..n).map(|_| None).collect(), tick_count: 0 }
+        Batch { envs: (0..n).map(|_| None).collect(), tick_count: 0, bonus_weight: 1.0 }
     }
 
     #[getter]
@@ -348,8 +355,18 @@ impl Batch {
             },
         };
         let n = self.envs.len();
-        *self.envs.get_mut(i).ok_or_else(|| pyo3::exceptions::PyIndexError::new_err(format!("round {i} of {n}")))? = Some(Env::new(course, self.tick_count));
+        let mut env = Env::new(course, self.tick_count);
+        env.bonus_weight = self.bonus_weight;
+        *self.envs.get_mut(i).ok_or_else(|| pyo3::exceptions::PyIndexError::new_err(format!("round {i} of {n}")))? = Some(env);
         Ok(())
+    }
+
+    /// How much the fight's event bonuses count, for every round from now on, the running ones too (shaping.rs).
+    fn set_bonus_weight(&mut self, w: f64) {
+        self.bonus_weight = w;
+        for e in self.envs.iter_mut().flatten() {
+            e.bonus_weight = w;
+        }
     }
 
     /// Writes what round `i` sees now into `out`.
@@ -524,7 +541,9 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kind_of, m)?)?;
     m.add_function(wrap_pyfunction!(push_for, m)?)?;
     m.add_function(wrap_pyfunction!(combat_features, m)?)?;
-    m.add_function(wrap_pyfunction!(aimed_at, m)?)?;
+    m.add_function(wrap_pyfunction!(fight_potential, m)?)?;
+    m.add_function(wrap_pyfunction!(fight_events, m)?)?;
+    m.add("GAMMA", crate::shaping::GAMMA)?;
     m.add_function(wrap_pyfunction!(bot_action, m)?)?;
     m.add("MOVE_OBS", MOVE_OBS)?;
     m.add("EXTRA", EXTRA)?;
@@ -561,16 +580,32 @@ fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8
     out
 }
 
-/// combat::aimed_at for AutoEnv's aim points, from what the game reports (the same cube of blocks as combat_features):
-/// the crosshair on an opponent from outside its box, the view toward its chest.
+/// shaping::potential for AutoEnv, from what the game reports: the model's aim at the opponents still in the fight
+/// (`alive`), minus theirs at it.
 #[pyfunction]
-#[pyo3(signature = (pos, yaw, pitch, crouching, enemies, solid, feet))]
-#[allow(clippy::too_many_arguments)]
-fn aimed_at(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies: Vec<ViewTuple>, solid: &str, feet: [i32; 3]) -> bool {
-    let mut p = Player::new(pos, yaw, pitch, 0);
-    p.crouch_pose = crouching;
-    let boxes: Vec<Option<_>> = enemies.iter().map(to_view).map(|e| if e.health > 0.0 { Some(duel::body(&e)) } else { None }).collect();
-    crate::combat::aimed_at(&p, &Cube::from_text(feet, solid).world(), &boxes).is_some()
+#[pyo3(signature = (pos, yaw, pitch, crouching, enemies, alive))]
+fn fight_potential(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies: Vec<ViewTuple>, alive: Vec<bool>) -> f64 {
+    let mut me = Player::new(pos, yaw, pitch, 0);
+    me.crouch_pose = crouching;
+    let players: Vec<Player> = enemies
+        .iter()
+        .map(|e| {
+            let mut p = Player::new(e.0, e.2, e.3, 0);
+            p.crouch_pose = e.10;
+            p
+        })
+        .collect();
+    let foes: Vec<(&Player, bool)> = players.iter().zip(alive).collect();
+    crate::shaping::potential(&me, &foes)
+}
+
+/// shaping::events and zero_sum for AutoEnv: [long hit, critical hit, missed swing] for the model this tick. `foes` is
+/// each opponent's (landed, swing), as the game reports them.
+#[pyfunction]
+#[pyo3(signature = (landed, swing, foes, weight))]
+fn fight_events(landed: Option<(f64, bool)>, swing: Option<bool>, foes: Vec<(Option<(f64, bool)>, Option<bool>)>, weight: f64) -> [f64; 3] {
+    let theirs: Vec<[f64; 3]> = foes.iter().map(|(l, s)| crate::shaping::events(*l, *s)).collect();
+    crate::shaping::zero_sum(crate::shaping::events(landed, swing), &theirs, foes.len(), weight)
 }
 
 /// duel.action for the real game: a scripted opponent's inputs this tick, in the model's action space.

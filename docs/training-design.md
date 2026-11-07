@@ -74,6 +74,10 @@ syns aldrig i indata.
   large penalty to sample efficiency": stöttning köper fart i början och behövs inte för slutlig styrka.
 - Formeln är vår (extrapolation): w = clip(1 − (vinst mot referenser − 0,5) / 0,4, 0, 1). Närmast i litteraturen
   är OpenAI Fives kompetensstyrda införande av nya funktioner.
+- Bara de frysta kopiorna av modellen räknas i vinstandelen, inte de skriptade bottarna: dem slår modellen redan
+  ~90 %, så de skulle sänka w direkt utan att säga något om just dessa tekniker.
+- Kod: `sim/src/shaping.rs` (beräkningen, samma i simulatorn och spelet), `train_auto.bonus_weight_from` (w),
+  `Fight18.players()` (motståndarnas slag och träffar i riktiga spelet).
 - Vi avstår från idén "belöna crit när den inte hänt på länge": en sådan utlösare gör belöningen
   icke-monoton (bonusen kommer tillbaka när beteendet blir ovanligt) och kan få modellen att pendla.
 

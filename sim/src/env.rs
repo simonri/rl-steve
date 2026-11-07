@@ -10,6 +10,7 @@ use crate::clutch::{self, Cube, Push};
 use crate::combat::{self, Swing};
 use crate::duel::{self, Bot, View, ACTIONS, EXTRA, HIST_F};
 use crate::player::{Hit, Input, Keys, Player, FACE_STEP};
+use crate::shaping;
 use crate::world::World;
 
 pub const Y: i32 = 100;
@@ -77,7 +78,7 @@ const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimate
 /// The point rules, in the order info["parts"] lists them.
 pub const PARTS: [&str; 24] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "missed swing", "long hit", "critical hit",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aim", "missed swing", "long hit", "critical hit",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -98,28 +99,15 @@ const P_DEALT: usize = 16;
 const P_TAKEN: usize = 17;
 const P_WON: usize = 18;
 const P_LOST: usize = 19;
-const P_AIMED: usize = 20;
+const P_AIM: usize = 20;
 const P_SWING: usize = 21;
 const P_LONG_HIT: usize = 22;
 const P_CRIT: usize = 23;
 const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
 const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
-/// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
-/// before the first hit lands (at most 3 in a 600-tick round, against 10 for winning and about 1 a hit).
-const AIM_POINTS: f64 = 0.005;
-/// A left click that is not on an opponent in reach (too far, or beside it) costs this: a swing at nothing is worse
-/// than not swinging.
-const SWING_COST: f64 = 0.01;
 /// Below the world (its bottom at -64, less 64) a player takes this every tick, whatever its hurt resistance.
 const VOID_Y: f64 = -128.0;
 const VOID_DAMAGE: f32 = 4.0;
-/// A hit that lands from further off is worth more: this per block of distance (feet to feet, across) beyond
-/// LONG_HIT_FROM. A hit from the edge of reach (about 3.3) gets about 0.5 more, on top of about 1 for the damage: the
-/// one who hits from further away takes fewer hits back.
-const LONG_HIT_POINTS: f64 = 0.4;
-const LONG_HIT_FROM: f64 = 2.0;
-/// A critical hit (landed while falling: half as much damage again) is worth this more.
-const CRIT_POINTS: f64 = 0.3;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -207,6 +195,10 @@ pub struct Opponent {
     target: Option<[f64; 3]>,          // its goal: the model, where it last stood over the floor (Env.track_target)
     /// An action given from outside for the next tick (a model plays it: self-play), instead of its bot's.
     pub next: Option<[i64; ACTIONS]>,
+    /// This tick (fight_tick): its left click (Some(whether it was on the model in reach)) and its hit that counted
+    /// (feet distance across, critical). The reward is zero-sum, so these count against the model's (shaping.rs).
+    pub swing: Option<bool>,
+    pub landed: Option<(f64, bool)>,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -252,6 +244,11 @@ pub struct Env {
     history: [[f32; 8]; HISTORY],
     pub parts: [f64; PARTS.len()],
     pub report: Report,
+    /// The fight's aim potential after the last tick (shaping::potential), for the next tick's γ·Φ(s′) − Φ(s).
+    potential: f64,
+    /// How much the event bonuses (long hit, critical hit, missed swing) count, from 1 down to 0 as the model gets
+    /// stronger against the references (train_auto.Progress; docs/training-design.md#nedtrappning). Never observed.
+    pub bonus_weight: f64,
     hit: Option<Hit>,
     k: i32,
     tick_count: i64,
@@ -354,6 +351,8 @@ impl Env {
             history: [[0.0; 8]; HISTORY],
             parts: [0.0; PARTS.len()],
             report: Report::default(),
+            potential: 0.0,
+            bonus_weight: 1.0,
             hit: None,
             k,
             tick_count,
@@ -375,10 +374,20 @@ impl Env {
             }
         }
         env.track_target();
+        env.potential = env.fight_potential();
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
         env
+    }
+
+    /// shaping::potential for this round: the model against the opponents still in the fight. 0 outside fights.
+    fn fight_potential(&self) -> f64 {
+        if self.course.duel.is_none() {
+            return 0.0;
+        }
+        let foes: Vec<(&Player, bool)> = self.opponents.iter().map(|o| (&o.player, !o.out)).collect();
+        shaping::potential(&self.player, &foes)
     }
 
     /// AutoEnv._target: in a fight, the goal moves to the nearest opponent still in it that stands over the arena's
@@ -671,17 +680,15 @@ impl Env {
         self.tick_count += 1;
         self.t += 1;
         self.hit = self.player.pick(&self.world);
-        // Points: what was dealt and taken, and the result.
+        // Points: what was dealt and taken, the result, and the shaping (shaping.rs: zero-sum, the event bonuses
+        // weighted, aim as a potential).
         let mut reward = self.points(P_TIME, -TICK_COST);
-        if input.attack && !ev.struck {
-            reward += self.points(P_SWING, -SWING_COST);
-        }
-        if let Some((across, critical)) = ev.landed {
-            reward += self.points(P_LONG_HIT, LONG_HIT_POINTS * (across - LONG_HIT_FROM).max(0.0));
-            if critical {
-                reward += self.points(P_CRIT, CRIT_POINTS);
-            }
-        }
+        let mine = shaping::events(ev.landed, if input.attack { Some(ev.struck) } else { None });
+        let theirs: Vec<[f64; 3]> = self.opponents.iter().map(|o| shaping::events(o.landed, o.swing)).collect();
+        let [long, crit, swing] = shaping::zero_sum(mine, &theirs, self.opponents.len(), self.bonus_weight);
+        reward += self.points(P_LONG_HIT, long);
+        reward += self.points(P_CRIT, crit);
+        reward += self.points(P_SWING, swing);
         let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);
         reward += self.points(P_DEALT, HEALTH_POINTS * dealt as f64);
@@ -692,10 +699,6 @@ impl Env {
             if !o.out && (o.player.health <= 0.0 || o.player.pos[1] < line) {
                 o.out = true;
             }
-        }
-        let boxes: Vec<Option<_>> = self.opponents.iter().map(|o| if o.dead() { None } else { Some(combat::body(&o.player)) }).collect();
-        if combat::aimed_at(&self.player, &self.world, &boxes).is_some() {
-            reward += self.points(P_AIMED, AIM_POINTS);
         }
         // Won only alive and standing: knocking the last opponent off by falling after it is a loss, however late the
         // fall would count.
@@ -709,6 +712,10 @@ impl Env {
             self.deaths += 1;
         }
         let done = won || lost || self.t >= self.course.limit;
+        // Φ is 0 once the round is over, so over a round the aim points add up to about −Φ(start): nothing to farm.
+        let now = if done { 0.0 } else { self.fight_potential() };
+        reward += self.points(P_AIM, shaping::GAMMA * now - self.potential);
+        self.potential = now;
         self.report = Report {
             success: won,
             clean: won,
@@ -1082,6 +1089,8 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
         let given = o.next.take(); // self-play: a model's action for this opponent
+        o.swing = None;
+        o.landed = None;
         let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else if let Some(a) = given { a } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
@@ -1116,9 +1125,13 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let my_pos = player.pos;
     let mut their_hits = Vec::new();
     for (j, (o, i)) in opponents.iter_mut().zip(&inputs).enumerate() {
-        if i.attack && !o.dead() && combat::click(&mut o.player, world, &[my_box]).is_some() {
-            their_hits.push((j, Swing::of(&o.player)));
-            combat::recoil(&mut o.player);
+        if i.attack && !o.dead() {
+            let on = combat::click(&mut o.player, world, &[my_box]).is_some();
+            o.swing = Some(on);
+            if on {
+                their_hits.push((j, Swing::of(&o.player)));
+                combat::recoil(&mut o.player);
+            }
         }
     }
     let mut ev = player.rest(world, input);
@@ -1139,6 +1152,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         if counted {
             *since_hurt = 0;
             opponents[j].since_hit = 0;
+            opponents[j].landed = Some(((s.pos[0] - my_pos[0]).hypot(s.pos[2] - my_pos[2]), s.falling));
         }
         if broke {
             opponents[j].player.server_sprinting = false;
@@ -1189,6 +1203,8 @@ impl Opponent {
             history2: [[0.0; HIST_F]; HISTORY],
             target: None,
             next: None,
+            swing: None,
+            landed: None,
         }
     }
 }

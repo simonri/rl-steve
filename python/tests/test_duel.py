@@ -69,17 +69,17 @@ def main():
         vec.step_async(idle(obs, 0))
         obs, _, _, _ = vec.step_wait()
     assert obs[0, mcsim.MOVE_OBS + 61] == 1.0, "the sword stays in hand"
-    # Standing still facing the dummy 2 blocks off, the crosshair is often on it: that is worth a little every tick,
-    # never more than 3 a round.
+    # Aim is a potential (shaping.rs): standing still a whole round, the aim points add up to about −Φ(start) plus the
+    # discount's drift, far below what 600 ticks of a per-tick bonus paid. Bound: 0.1·π·(1 + 600·0.005), scaled by 0.1.
     vec = SimVecEnv(16, levels, seed=3)
     vec.env_method("set_exam", "duel", False)
     obs = vec.reset()
-    aimed = []
+    aim = []
     for t in range(700):
         vec.step_async(idle(obs, t))
         obs, _, dones, infos = vec.step_wait()
-        aimed += [infos[i]["parts"].get("aimed", 0.0) for i in np.flatnonzero(dones)]
-    assert aimed and max(aimed) > 0 and max(aimed) <= 3.0 * 0.1 + 1e-9, aimed  # parts are after the reward scale (0.1)
+        aim += [infos[i]["parts"].get("aim", 0.0) for i in np.flatnonzero(dones)]
+    assert aim and max(abs(a) for a in aim) <= 0.1 * (0.1 * np.pi * (1 + 600 * 0.005)) + 1e-9, aim
     # Swinging at a dummy 11 blocks off costs, every click; at 2 blocks only the clicks that miss.
     def swing(obs, t):
         a = idle(obs, t)

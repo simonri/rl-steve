@@ -6,6 +6,7 @@ pub mod duel;
 pub mod env;
 pub mod mth;
 pub mod player;
+pub mod shaping;
 pub mod world;
 
 #[cfg(feature = "python")]

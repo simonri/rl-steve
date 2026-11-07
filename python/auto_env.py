@@ -61,9 +61,6 @@ DUEL_BLOCKS = 16  # in hand for a fight, to clutch or block a way
 DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
-AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
-SWING_COST = 0.01  # env.rs: a left click that is not on an opponent in reach
-LONG_HIT_POINTS, LONG_HIT_FROM, CRIT_POINTS = 0.4, 2.0, 0.3  # env.rs: a hit from further off, a critical hit
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
@@ -91,6 +88,7 @@ class AutoEnv(SkillEnv):
     tested = None
     mastered = ()  # course kinds that need less practice
     jump_wait, was_on_ground = 0, True
+    bonus_weight = 1.0  # env.rs Env.bonus_weight: how much a fight's event bonuses count (shaping.rs), set by training
     exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
     exam_all = True
     can_push = True
@@ -746,6 +744,7 @@ class AutoEnv(SkillEnv):
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
         self.placed_cells = []  # blocks placed this round (_arena_floor)
         self.target = None  # in a fight, the goal (_target)
+        self.potential = self._fight_potential(self.obs) if self.family == "duel" else 0.0  # shaping.rs: Φ for the first tick
         self._plan_pushes()
         self.next_push, self.pushed, self.push_airborne, self.pushes_given = 0, False, False, 0
         super()._begin_episode()
@@ -828,6 +827,11 @@ class AutoEnv(SkillEnv):
         self.delayed.append(vec)
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)]))
 
+    def _fight_potential(self, o):
+        """shaping::potential (env.rs fight_potential): its aim at the opponents still in the fight, minus theirs at it."""
+        return mcsim.fight_potential(list(o["pos"]), float(o["yaw"]), float(o["pitch"]), bool(o.get("crouch_pose", o.get("sneaking", False))),
+                                     self._enemies(o), [not x for x in self.out])
+
     def _enemies(self, o):
         """The opponents as duel.rs View tuples, as the game shows them (one out of the fight is still there until it dies)."""
         return [(list(p["pos"]), list(p["vel"]), float(p["yaw"]), float(p["pitch"]), float(p["health"]), int(p["armor"]),
@@ -864,14 +868,15 @@ class AutoEnv(SkillEnv):
             self._mark_dirty(c)
             self.placed_cells.append(c[:3])
         reward = self._points("time", -TICK_COST)
-        if attack and not o.get("struck"):  # the game says whether its click was on an opponent in reach
-            reward += self._points("missed swing", -SWING_COST)
-        landed = o.get("landed")  # its own hit that counted: (feet distance across, critical)
-        if landed:
-            reward += self._points("long hit", LONG_HIT_POINTS * max(0.0, landed[0] - LONG_HIT_FROM))
-            if landed[1]:
-                reward += self._points("critical hit", CRIT_POINTS)
         players = o.get("players", [])
+        # The event bonuses, zero-sum and weighted (shaping.rs): the game says whether its click was on an opponent in
+        # reach ("struck"), its hit that counted ("landed": feet distance across, critical), and the same per opponent.
+        landed = o.get("landed")
+        foes = [(tuple(p["landed"]) if p.get("landed") else None, p.get("swing")) for p in players]
+        long, crit, swing = mcsim.fight_events(tuple(landed) if landed else None, bool(o.get("struck")) if attack else None, foes, self.bonus_weight)
+        reward += self._points("long hit", long)
+        reward += self._points("critical hit", crit)
+        reward += self._points("missed swing", swing)
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
         died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost
         taken = mine if died else max(0.0, mine - o["health"])
@@ -882,11 +887,6 @@ class AutoEnv(SkillEnv):
         for i, p in enumerate(players):
             if not self.out[i] and (p["health"] <= 0 or p["pos"][1] < line):
                 self.out[i] = True
-        # Really aiming (env.rs, combat::aimed_at): on it from outside its box, looking toward its chest.
-        if len(o.get("solid", "")) == (2 * RADIUS + 1) ** 3 and mcsim.aimed_at(list(o["pos"]), float(o["yaw"]), float(o["pitch"]),
-                                                                             bool(o.get("crouch_pose", o.get("sneaking", False))), self._enemies(o), o["solid"],
-                                                                             [math.floor(v) for v in o["feet"]]):
-            reward += self._points("aimed", AIM_POINTS)
         # Won only alive and standing: knocking the last opponent off by falling after it is a loss (env.rs). A death
         # the game has already respawned from stands at the spawn, so it is checked first.
         won = all(self.out) and not died and o["health"] > 0 and bool(o["on_ground"]) and o["pos"][1] >= line
@@ -897,6 +897,10 @@ class AutoEnv(SkillEnv):
             reward += self._points("lost", -FIGHT_RESULT)
             self.deaths += 1
         term = won or lost or self.t >= self.limit
+        # Aim as a potential (shaping.rs): γ·Φ(s′) − Φ(s), Φ = 0 once the round is over.
+        now = 0.0 if term else self._fight_potential(o)
+        reward += self._points("aim", mcsim.GAMMA * now - self.potential)
+        self.potential = now
         info = {"success": won, "clean": won, "fell": self.deaths > 0, "deaths": self.deaths, "respawned": False, "stalled": False, "damage": self.damage,
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,
                 "parts": dict(self.parts)}
