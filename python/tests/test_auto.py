@@ -169,7 +169,11 @@ rng2 = np.random.default_rng(1)
 tests = {draw(top.levels, "path", rng2)[1] for _ in range(300)}
 assert set(FAMILIES["path"]) <= tests
 assert top.mastered() == []
-for _ in range(30):
+# A dial moves only on a sure win rate: 21 of 30 (70 %, enough before) is not surely above 0.6; 27 of 30 is.
+lo, hi = curriculum.wilson_bounds(21, 30)
+assert lo < curriculum.RAISE_AT < hi
+assert curriculum.wilson_bounds(27, 30)[0] >= curriculum.RAISE_AT and curriculum.wilson_bounds(4, 30)[1] <= curriculum.LOWER_AT
+for _ in range(curriculum.WINDOW):  # a full window of whole-course wins
     top.record("path", "all", True)
 assert top.mastered() == ["path"]
 for _ in range(60):

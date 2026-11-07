@@ -493,6 +493,13 @@ impl Batch {
         d.set_item("shift_share", r.shift_share)?;
         d.set_item("ticks", r.t)?;
         d.set_item("pushes", r.pushes)?;
+        let k = &env.skills; // Env.Skills: counted for the benchmark, never seen or paid
+        let skills = PyDict::new(py);
+        for (name, v) in [("swings", k.swings), ("misses", k.misses), ("hits", k.hits), ("crits", k.crits), ("long_hits", k.long_hits), ("sword_hits", k.sword_hits), ("took_blocks_at", k.took_blocks_at)] {
+            skills.set_item(name, v)?;
+        }
+        skills.set_item("needed_blocks", k.needed_blocks)?;
+        d.set_item("skills", skills)?;
         if r.success {
             d.set_item("blocks_per_s", r.blocks_per_s)?;
         }

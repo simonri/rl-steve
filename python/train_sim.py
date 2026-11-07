@@ -89,8 +89,10 @@ def main():
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     progress = ta.Progress(vec, out, curriculum, 2)
     progress.rating = Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
+    progress.bench_every = 10_000_000  # the fixed benchmark (benchmark.py): a few minutes, about every hour
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
+        progress.last_bench = saved_state.get("last_bench")
         progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
         progress.snapshot_scores = saved_state.get("snapshot_scores", [])
     # Self-play (docs/training-design.md#self-play): some duels against the latest model or an older version of it.

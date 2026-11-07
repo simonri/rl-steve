@@ -3,11 +3,30 @@
 A dial goes up when rounds with it at its limit are won often enough, and back down when they stop being won,
 so nothing has to be scheduled by hand and a skill that fades gets practised again.
 """
+import math
 from collections import deque
 
-WINDOW = 30  # rounds at a limit before judging it
-RAISE_AT = 0.7
-LOWER_AT = 0.25
+# A dial moves only when its rounds at the limit say so with confidence, not on a lucky or unlucky stretch: with 30
+# rounds and "70 % up, 25 % down", a dial the model wins 60 % of the time went up about one time in five and came back
+# down, and auto7's dials moved 96 times up and 89 down, 132 of them hop.longer and hop.bend going back and forth
+# (docs/training-design.md#mata). Now the last up to WINDOW rounds, judged from MIN_ROUNDS on, must put the win rate
+# above RAISE_AT, or below LOWER_AT, with 95 % one-sided confidence (a Wilson bound).
+WINDOW = 60  # rounds at a limit kept to judge it
+MIN_ROUNDS = 30  # before judging at all
+RAISE_AT = 0.6  # it goes up when its win rate is surely above this
+LOWER_AT = 0.35  # and down when surely below this
+CONFIDENCE_Z = 1.645  # one-sided 95 %
+
+
+def wilson_bounds(wins, n, z=CONFIDENCE_Z):
+    """(low, high) for a win rate seen `wins` times in `n` (Wilson): honest also near 0 and 1."""
+    if n == 0:
+        return 0.0, 1.0
+    p = wins / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return max(0.0, c - h), min(1.0, c + h)
 ALL_DIALS_FLOOR = 0.3  # rounds with every dial at its limit have to stay above this before any dial goes up
 ALL_DIALS_MIN_ROUNDS = 10
 SHARE_ALL_DIALS, SHARE_ONE_DIAL = 0.3, 0.5  # of the rest, every dial is drawn freely below its limit
@@ -153,19 +172,20 @@ class Curriculum:
             return None
         rounds = self.limit_rounds[family][tested]
         rounds.append(clean)
-        if len(rounds) < WINDOW:
+        if len(rounds) < MIN_ROUNDS:
             return None
-        rate = sum(rounds) / WINDOW
+        low, high = wilson_bounds(sum(rounds), len(rounds))
+        surely_up, surely_down = low >= RAISE_AT, high <= LOWER_AT
         level = self.levels[family][tested]
-        if rate > LOWER_AT:
+        if not surely_down:
             self.failed_once.discard((family, tested))
-        if rate >= RAISE_AT and level + 1 < len(FAMILIES[family][tested]) and self._all_dials_hold(family):
+        if surely_up and level + 1 < len(FAMILIES[family][tested]) and self._all_dials_hold(family):
             if (family, tested) in self.lowered:
                 self.lowered.discard((family, tested))
                 rounds.clear()  # one more full window first, so a level it just failed at is not tried again right away
                 return None
             return self._move(family, tested, level + 1)
-        if rate <= LOWER_AT and level > 0:
+        if surely_down and level > 0:
             if (family, tested) not in self.failed_once:
                 self.failed_once.add((family, tested))
                 rounds.clear()

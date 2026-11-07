@@ -280,6 +280,20 @@ pub struct Report {
     pub pushes: i32,
 }
 
+/// How a round went, counted for the skills the benchmark follows over time (python/benchmark.py): what the points
+/// do not show directly. Counted only, never seen by the model and never paid.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Skills {
+    pub swings: i32,     // left clicks in a fight
+    pub misses: i32,     // of those, not on an opponent in reach
+    pub hits: i32,       // its hits that counted
+    pub crits: i32,      // of those, critical
+    pub long_hits: i32,  // of those, from further than shaping::LONG_HIT_FROM across
+    pub sword_hits: i32, // of those, with a sword in hand
+    pub needed_blocks: bool, // it started without blocks in hand on a round that needs them (took_blocks)
+    pub took_blocks_at: i32, // the tick it first had them in hand then, or -1
+}
+
 pub struct Env {
     pub course: Course,
     pub world: World,
@@ -319,6 +333,7 @@ pub struct Env {
     push_airborne: bool, // it has left the ground since
     pushes_given: i32,
     took_blocks: bool, // it has had blocks in hand this round (TOOK_BLOCKS_BONUS), or the round needs none
+    pub skills: Skills,
     foe_hits: f64,     // hand_share of the opponents' hits last tick: their damage shows this tick
     pub opponents: Vec<Opponent>,
     history2: [[f32; HIST_F]; HISTORY],
@@ -426,6 +441,7 @@ impl Env {
             push_airborne: false,
             pushes_given: 0,
             took_blocks: true, // set below from the hand it starts with
+            skills: Skills { took_blocks_at: -1, ..Skills::default() },
             foe_hits: 1.0,
             opponents: Vec::new(),
             history2: [[0.0; HIST_F]; HISTORY],
@@ -444,6 +460,7 @@ impl Env {
         env.track_target();
         env.potential = env.fight_potential();
         env.took_blocks = (env.course.duel.is_some() && !env.course.needs_blocks) || env.player.blocks() == 0 || env.player.held() > 0;
+        env.skills.needed_blocks = !env.took_blocks;
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
@@ -628,6 +645,7 @@ impl Env {
         }
         if !self.took_blocks && self.player.held() > 0 {
             self.took_blocks = true;
+            self.skills.took_blocks_at = self.t;
             reward += self.points(P_TOOK_BLOCKS, TOOK_BLOCKS_BONUS);
         }
         // Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
@@ -773,7 +791,18 @@ impl Env {
         let mut reward = self.points(P_TIME, -TICK_COST);
         if !self.took_blocks && self.player.held() > 0 {
             self.took_blocks = true; // a fight that needs blocks to get to the opponent (Course.needs_blocks)
+            self.skills.took_blocks_at = self.t;
             reward += self.points(P_TOOK_BLOCKS, TOOK_BLOCKS_BONUS);
+        }
+        if input.attack {
+            self.skills.swings += 1;
+            self.skills.misses += !ev.struck as i32;
+        }
+        if let Some((across, critical, sword)) = ev.landed {
+            self.skills.hits += 1;
+            self.skills.crits += critical as i32;
+            self.skills.long_hits += (across > shaping::LONG_HIT_FROM) as i32;
+            self.skills.sword_hits += sword as i32;
         }
         let mine = shaping::events(ev.landed, if input.attack { Some(ev.struck) } else { None });
         let theirs: Vec<[f64; 3]> = self.opponents.iter().map(|o| shaping::events(o.landed, o.swing)).collect();

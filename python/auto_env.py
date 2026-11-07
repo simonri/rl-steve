@@ -91,6 +91,7 @@ class AutoEnv(SkillEnv):
     tested = None
     mastered = ()  # course kinds that need less practice
     jump_wait, was_on_ground = 0, True
+    hand = None  # "random" or "blocks": how every course starts, whatever the round (benchmark.py); None as in training
     pending_hotbar = 0  # the hotbar key of the tick being played (step), 0 for none
     bonus_weight = 1.0  # env.rs Env.bonus_weight: how much a fight's event bonuses count (shaping.rs), set by training
     exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
@@ -255,6 +256,8 @@ class AutoEnv(SkillEnv):
         # change yet failed a third of them (bridge exam 31 -> 19/32, stairs 31 -> 10/32) and could lower its levels.
         practice = self.tested is None and not self.exam_family
         hold = "sword" if self.family == "duel" else "random" if r.random() < RANDOM_HAND and practice else "blocks"
+        if self.hand is not None and self.family != "duel":  # set from outside: the benchmark's hand round (benchmark.py)
+            hold = self.hand
         self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)
         spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
         spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give

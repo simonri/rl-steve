@@ -363,6 +363,8 @@ class Progress(BaseCallback):
         self.rounds = 0
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
+        self.bench_every = None  # decisions between fixed benchmarks (benchmark.py), when train_sim sets it
+        self.last_bench = None
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
         self.rated = None  # its last result: Elo and score per reference
         self.bonus_weight = 1.0  # how much a fight's event bonuses count (weight_for, shaping.rs); only falls
@@ -432,6 +434,17 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "status.json")
         return status
 
+    def benchmark(self):
+        """The fixed benchmark (benchmark.py), added to benchmark.jsonl: the curve that shows real progress."""
+        import benchmark
+
+        self.last_bench = self.num_timesteps
+        result = benchmark.run(self.model.policy, self.model.device)
+        with open(self.out / "benchmark.jsonl", "a") as f:
+            f.write(json.dumps(dict(steps=self.num_timesteps, rounds=benchmark.ROUNDS, result=result)) + "\n")
+        brief = ", ".join(f"{fam} {' '.join(str(t['sampled']['clean']) for t in tiers.values())}" for fam, tiers in result.items())
+        print(f"benchmark at {self.num_timesteps}: {brief}", flush=True)
+
     def set_bonus_weight(self, w):
         """The weight for every round from now on (env.rs Env.bonus_weight): the simulator's batch, or each game's AutoEnv."""
         self.bonus_weight = w
@@ -448,7 +461,8 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "levels.json")
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
-        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores)))
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores,
+                                    last_bench=self.last_bench)))
         os.replace(tmp, self.out / "latest.json")
         if self.pool is not None:
             self.pool.save()  # the versions' scores
@@ -599,6 +613,8 @@ class Progress(BaseCallback):
         self.vec.env_method("set_exam", None)
         if playing is not None:
             self.vec.opponents = playing
+        if self.bench_every and (self.last_bench is None or self.num_timesteps - self.last_bench >= self.bench_every):
+            self.benchmark()
         if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
             self.rated = self.rating.rate(self.model, self.num_timesteps)
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
