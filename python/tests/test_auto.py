@@ -351,8 +351,9 @@ assert term and info["clean"] and env.landed == 2 and r3 > GOAL_REWARD
 env = make(count=2, takeoff="block", seed=1)
 begin(env)
 env.c.path = [on(env.landing_order[1])]
-tick(env)
-assert env.landed == 0, "skipping a block gives nothing"
+r, term, _, info = tick(env)
+# The way over the blocks is the model's to find: landing past one counts both, and here that is the last one.
+assert env.landed == 2 and term and info["success"] and r > 2 * LANDING_BONUS * 0.9, (env.landed, r)
 # Shift is never let go by itself.
 env = make(count=2, takeoff="block", seed=15)
 begin(env)

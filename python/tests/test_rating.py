@@ -7,6 +7,9 @@ import json
 import tempfile
 from pathlib import Path
 
+import torch
+
+import auto_env
 import curriculum
 import rating
 import train_auto as ta
@@ -22,8 +25,11 @@ assert abs(mid - 1400) < 1, mid
 
 # A short run: the anchor is added once (a frozen copy, Elo 1000), every bot gets a fixed rating, the model a score each.
 rating.ROUNDS = 4
+auto_env.DUEL_TICKS = 100  # short fights: what is checked here is the bookkeeping, not who wins
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # the model is slow on the processor a tick at a time
 vec = SimVecEnv(1, curriculum.Curriculum().levels, seed=0)
-model = ta.SplitPPO(MemoryPolicy, vec, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs=ta.POLICY, device="cpu", seed=0)
+model = ta.SplitPPO(MemoryPolicy, vec, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs=ta.POLICY, device=DEVICE, seed=0)
+ta.fast_convolutions()
 with tempfile.TemporaryDirectory() as d:
     r = rating.Rating(Path(d), n=4)
     result = r.rate(model, 5_000_000)
@@ -31,8 +37,7 @@ with tempfile.TemporaryDirectory() as d:
     assert refs[0]["kind"] == "snapshot" and refs[0]["elo"] == 1000 and (Path(d) / "references" / refs[0]["file"]).exists()
     assert [x["name"] for x in refs[1:]] == list(rating.BOT_REFERENCES)
     assert set(result["scores"]) == {x["name"] for x in refs} and all(0 <= v <= 1 for v in result["scores"].values())
-    again = rating.Rating(Path(d), n=4).rate(model, 6_000_000)  # the references stay as they were
-    assert json.loads((Path(d) / "references" / "references.json").read_text()) == refs or again.get("added")
+    assert rating.Rating(Path(d), n=4).references == refs  # a restart reads them back as they were, ratings and all
     # A model that outgrows the references adds a frozen copy at its Elo; the anchor stays, the oldest others go.
     r = rating.Rating(Path(d), n=4)
     for m in range(10, 10 + rating.MAX_SNAPSHOTS + 1):

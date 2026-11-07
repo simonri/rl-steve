@@ -5,13 +5,18 @@ stands still), rounds without one are as before, and its memory starts again wit
 """
 import _path  # noqa: F401  (python/ on the import path)
 import numpy as np
+import torch
 
+import auto_env
 import curriculum
 import mcsim
 import train_auto as ta
 from opponents import BOT, Opponents
 from sim_env import SimVecEnv
 from spatial import MemoryPolicy
+
+auto_env.DUEL_TICKS = 100  # short fights: what is checked here happens in the first ticks or at a round's end
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # the model is slow on the processor a tick at a time
 
 
 def where_the_opponent_is(obs):
@@ -35,7 +40,7 @@ def run(played_by, ticks=60):
     for _ in range(ticks):
         vec.step_async(idle)
         obs, _, dones, _ = vec.step_wait()
-        assert not dones.any(), "rounds of 600 ticks do not end in 60"
+        assert not dones.any(), "rounds of 100 ticks do not end in 60"
     return np.abs(where_the_opponent_is(obs) - start).max(), vec
 
 
@@ -43,7 +48,8 @@ def main():
     moved_by_bot, _ = run(BOT)
     assert moved_by_bot < 1e-6, f"the dummy stands still: {moved_by_bot}"
     vec0 = SimVecEnv(1, curriculum.Curriculum().levels, seed=0)
-    policy = ta.SplitPPO(MemoryPolicy, vec0, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs=ta.POLICY, device="cpu", seed=0).policy
+    policy = ta.SplitPPO(MemoryPolicy, vec0, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs=ta.POLICY, device=DEVICE, seed=0).policy
+    ta.fast_convolutions()
     moved, vec = run(policy)
     assert moved > 0.05, f"played by a model, it acts: moved {moved}"
     assert all(p == "test" for p in vec.opponents.players)
@@ -113,7 +119,7 @@ def pool_and_mix(policy):
         obs = vec.reset()
         idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0]), (vec.num_envs, 1))
         seen = []
-        for _ in range(700):
+        for _ in range(150):
             vec.step_async(idle)
             obs, _, dones, infos = vec.step_wait()
             seen += [infos[i].get("opponent") for i in np.flatnonzero(dones)]

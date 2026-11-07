@@ -98,7 +98,9 @@ FAMILIES = {
     # A fight against scripted opponents (duel.rs), with 1.8 combat as on Hypixel (combat18.py).
     "duel": dict(
         bot=BOTS,
-        arena=("platform", "island", "bridge"),  # a wide floor, an island with void all round, a bridge between two islands
+        # A wide floor, an island with void all round, a bridge between two islands, and two islands with only void
+        # between: the model builds its way over to the opponent first, as in Bedwars (the distance dial sets the gap).
+        arena=("platform", "island", "bridge", "gap"),
         distance=(2, 4, 7, 11),  # blocks to the opponent at the start: first within reach, so the first random clicks already hit
         yaw=YAW,
         gear=("wood", "stone", "iron", "theirs better"),  # swords and armor as bought in Bedwars; the last: the opponent is a step ahead

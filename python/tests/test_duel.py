@@ -141,6 +141,19 @@ def main():
                 results.append((info["success"], info["deaths"]))
                 break
     assert any(lost for _, lost in results), results  # running on, it does go over the edge
+    # "gap": two islands with only void between, as many blocks as the distance dial less two; it has blocks to build.
+    from sim_env import CourseMaker
+    lv = curriculum.Curriculum().levels
+    lv["duel"].update(arena=curriculum.FAMILIES["duel"]["arena"].index("gap"), distance=3, bot=0)  # 11 blocks: 9 of void
+    maker = CourseMaker(lv, seed=3)
+    maker.set_exam("duel", True)
+    spec, _ = maker.draw()
+    cols = {(b[0], b[2]) for b in spec["boxes"]}
+    gx, gz = spec["goal"]
+    step = (int(np.sign(gx)), int(np.sign(gz)))
+    line = [(step[0] * a, step[1] * a) for a in range(12)]
+    assert [c in cols for c in line] == [True] * 2 + [False] * 9 + [True], [c in cols for c in line]
+    assert spec["blocks"] >= 9
     print("duel ok")
 
 

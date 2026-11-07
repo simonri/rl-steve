@@ -193,8 +193,10 @@ class AutoEnv(SkillEnv):
             cells = [(a, s) for a in range(-8, d + 9) for s in range(-8, 9)]  # room to be knocked back: a sprint hit flies 5 to 6 blocks
         elif t["arena"] == "island":
             cells = [(a, s) for a in range(-2, d + 3) for s in range(-2, 3)]
-        else:  # a bridge one block wide between two islands
+        elif t["arena"] == "bridge":  # a bridge one block wide between two islands
             cells = [(a, s) for a in range(-2, 2) for s in range(-2, 3)] + [(a, 0) for a in range(2, d)] + [(a, s) for a in range(d, d + 4) for s in range(-2, 3)]
+        else:  # "gap": the same two islands with void between (d - 2 blocks), to build over with its DUEL_BLOCKS
+            cells = [(a, s) for a in range(-2, 2) for s in range(-2, 3)] + [(a, s) for a in range(d, d + 4) for s in range(-2, 3)]
         boxes = []
         for a, s in cells:
             x, z = world(a, s)
@@ -996,9 +998,14 @@ class AutoEnv(SkillEnv):
                 self.pushed = False
                 reward += self._points("clutched", CLUTCH_BONUS)
         if self.family == "hop":
-            if self.landed < len(self.landing_order) and o["on_ground"] and self._is_on(o, self.landing_order[self.landed]):
-                self.landed += 1
-                reward += self._points("landed on a block", LANDING_BONUS)
+            # Any block further along counts, not only the next: the way over the blocks is the model's to find (env.rs).
+            if o["on_ground"]:
+                for i in range(self.landed, len(self.landing_order)):
+                    if self._is_on(o, self.landing_order[i]):
+                        passed = i + 1 - self.landed
+                        self.landed = i + 1
+                        reward += self._points("landed on a block", LANDING_BONUS * passed)
+                        break
         elif self.landing_order and o["on_ground"]:
             # A path is walked, so a corner can be cut past a block. Distance alone pays here.
             for i in range(self.landed, min(self.landed + 3, len(self.landing_order))):

@@ -568,9 +568,15 @@ impl Env {
         }
         let n = self.course.landing.len();
         if self.course.hop {
-            if self.landed < n && on_ground && self.is_on(self.course.landing[self.landed]) {
-                self.landed += 1;
-                reward += self.points(P_LANDED, LANDING_BONUS);
+            // Any block further along counts, not only the next one: the way over the blocks is the model's to find
+            // (it sees the course; its goal is the course's end). A jump past some blocks earns their landing points
+            // too, as landing on each would have. AutoEnv._step_course.
+            if on_ground {
+                if let Some(i) = (self.landed..n).find(|&i| self.is_on(self.course.landing[i])) {
+                    let passed = i + 1 - self.landed;
+                    self.landed = i + 1;
+                    reward += self.points(P_LANDED, LANDING_BONUS * passed as f64);
+                }
             }
         } else if n > 0 && on_ground {
             for i in self.landed..(self.landed + 3).min(n) {
