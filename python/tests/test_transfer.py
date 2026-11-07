@@ -48,6 +48,14 @@ def main():
     assert float(d_new.distribution[moves + 1].probs[:, 0].min()) > 0.998, "a new hotbar key is rarely pressed"
     assert torch.allclose(attack, attack[0]) and 0.05 < float(attack[0]) < 0.2, attack
     print(f"moves and values unchanged; new: attack {float(attack[0]):.2f}")
+    # An opponent or reference saved before the layout grew (a pool version, the rating's anchor) plays through
+    # load_policy, which grows it the same way: it takes today's inputs and answers as transfer() does.
+    played = ta.load_policy(path, "cpu")
+    with torch.no_grad():
+        d_played, _ = played.get_distribution(new_obs, zeros(n_old), starts)
+    assert len(d_played.distribution) == mcsim.ACTIONS
+    for a, b in zip(d_new.distribution, d_played.distribution):
+        assert torch.allclose(a.logits, b.logits, atol=1e-5), (a.logits - b.logits).abs().max()
     print("transfer ok")
 
 

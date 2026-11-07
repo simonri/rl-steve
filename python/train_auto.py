@@ -22,6 +22,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch.distributions import Distribution
 
 import demo_data
+import mcsim
 import scoreboard as sb
 from auto_env import NO_TURN, TURN_STEPS, AutoEnv
 from spatial import MemoryPolicy, SpatialNet
@@ -118,7 +119,7 @@ def load_weights(model, path):
     inputs or actions have since grown goes through transfer(), which keeps what it knew exactly. Loaded on the
     processor: a second model on the card takes the scratch memory the fast convolutions need. Returns (what grew, the
     saved model's step count)."""
-    old = SplitPPO.load(path, device="cpu")
+    old = SplitPPO.load(path, device="cpu", custom_objects=QUIET_LOAD)
     state, steps = old.policy.state_dict(), old.num_timesteps
     del old
     new = model.policy.state_dict()
@@ -152,10 +153,28 @@ def load_policy(path, device):
     Loaded on the processor and then moved: SB3 sets up a loaded model with its seed, and on the graphics card that
     switches cuDNN to deterministic for the whole process, training included. That is what made learning 3.5x slower
     (75 -> 270 ms a step) from the moment the first pool version was loaded. fast_convolutions again, to be sure."""
-    policy = SplitPPO.load(path, device="cpu").policy.to(device)
+    policy = SplitPPO.load(path, device="cpu", custom_objects=QUIET_LOAD).policy
+    # One saved with an older layout (fewer inputs or actions, before the hotbar) plays through transfer(): the new
+    # inputs at 0, the new actions at their starting leanings, everything it knew exactly as it was. Fed today's
+    # inputs as it was, it crashed training at the first pool pick or rating (2x530 against 161x128).
+    space, actions = policy.observation_space.shape[0], [int(n) for n in policy.action_space.nvec]
+    if space != mcsim.MOVE_OBS + mcsim.EXTRA or actions != list(mcsim.CHOICES):
+        import gymnasium as gym
+
+        new = MemoryPolicy(gym.spaces.Box(-5.0, 5.0, (mcsim.MOVE_OBS + mcsim.EXTRA,), np.float32), gym.spaces.MultiDiscrete(list(mcsim.CHOICES)),
+                           lambda _: 0.0, **POLICY)
+        transfer(new, policy.state_dict())
+        policy = new
+    policy = policy.to(device)
     policy.set_training_mode(False)
     fast_convolutions()
     return policy
+
+
+# For a load that only wants the weights: no reseeding of every random generator (SB3 seeds them all again from the
+# saved seed, restarting training's action sampling at the same point with every pool or reference load), and the
+# smallest rollout buffer it can build (a full one was most of a load's 730 MB and seconds).
+QUIET_LOAD = {"seed": None, "n_steps": 1}
 
 
 def make_env(port, levels):
@@ -308,12 +327,29 @@ def bonus_weight_from(rated, references):
     0.9. Only the frozen copies count: the scripted bots are already beaten ~90% and measure nothing of these plays.
     The 0.5 and 0.4 are ours, not from a paper.
     """
-    # The copies this rating fought: one added right after it (rating.ADD_AT) has no score yet.
-    snapshots = [r["name"] for r in references if r["kind"] == "snapshot" and r["name"] in rated["scores"]]
+    score = snapshot_score(rated, references)
+    return 1.0 if score is None else weight_for(score)
+
+
+def snapshot_score(rated, references):
+    """The model's average score against the frozen copies of itself this rating fought, or None. A copy made from
+    the model in this very rating (the anchor's first, rated["fresh"]) is left out: against itself it scores about
+    0.5 whatever it is, which says nothing; one added right after the rating (rating.ADD_AT) has no score yet."""
+    fresh = set(rated.get("fresh", ()))
+    snapshots = [r["name"] for r in references if r["kind"] == "snapshot" and r["name"] in rated["scores"] and r["name"] not in fresh]
     if not snapshots:
-        return 1.0
-    score = sum(rated["scores"][n] for n in snapshots) / len(snapshots)
+        return None
+    return sum(rated["scores"][n] for n in snapshots) / len(snapshots)
+
+
+def weight_for(score):
+    """Full at 0.5 against its frozen copies, nothing at 0.9 (ours, not from a paper)."""
     return float(min(max(1.0 - (score - 0.5) / 0.4, 0.0), 1.0))
+
+
+# The bonus weight follows the average of this many ratings, not one: with 32 rounds a score is about +-0.09, the weight
+# +-0.22, and since it only falls it followed the lowest of a noisy series (auto7 went from 1.0 to 0.22 on one rating).
+WEIGHT_OVER = 3
 
 
 class Progress(BaseCallback):
@@ -329,7 +365,8 @@ class Progress(BaseCallback):
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
         self.rated = None  # its last result: Elo and score per reference
-        self.bonus_weight = 1.0  # how much a fight's event bonuses count (bonus_weight_from, shaping.rs); only falls
+        self.bonus_weight = 1.0  # how much a fight's event bonuses count (weight_for, shaping.rs); only falls
+        self.snapshot_scores = []  # the last WEIGHT_OVER ratings' scores against the frozen copies
         self.pool = None  # pool.Pool: older versions to fight (train_sim sets it, with the vec's opponents)
         self.self_play = {}  # opponent ("latest" or a version) -> recent points, for status
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
@@ -411,7 +448,7 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "levels.json")
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
-        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight)))
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores)))
         os.replace(tmp, self.out / "latest.json")
         if self.pool is not None:
             self.pool.save()  # the versions' scores
@@ -567,7 +604,11 @@ class Progress(BaseCallback):
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
             if self.rated.get("added"):
                 print(f"rating: {self.rated['added']} added to the references at Elo {self.rated['elo']}", flush=True)
-            w = bonus_weight_from(self.rated, self.rating.references)
+            score = snapshot_score(self.rated, self.rating.references)
+            if score is not None:
+                self.snapshot_scores = (self.snapshot_scores + [score])[-WEIGHT_OVER:]
+            enough = len(self.snapshot_scores) == WEIGHT_OVER
+            w = weight_for(sum(self.snapshot_scores) / len(self.snapshot_scores)) if enough else 1.0
             if w < self.bonus_weight:  # only falls: a bad rating does not bring the bonuses back
                 self.set_bonus_weight(w)
                 print(f"event bonus weight now {w:.2f}", flush=True)

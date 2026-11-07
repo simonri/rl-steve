@@ -10,6 +10,7 @@ against it, and never changes after. Ratings are Elo's usual scale: 400 points i
 """
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -25,11 +26,12 @@ BOT_REFERENCES = ("slow walker", "medium walker", "walker", "strafer", "combo", 
 FIGHT = dict(arena=0, distance=1, yaw=1, gear=0, kb=0, count=0)
 ROUNDS = 32  # per reference and rating
 ANCHOR_ELO = 1000.0
-# When the model scores more than this against the references on average, a frozen copy of it joins them, rated at
-# the model's Elo then: against references it nearly always beats, a rating only says "much better" (scores are capped
-# at 0.98) and swung 1350-1660 from rating to rating in auto7. The new one is a little underrated, since the Elo it
-# gets comes from those capped scores; it is the scale's next step, not an exact value.
-ADD_AT = 0.85
+# When the model scores this much against the newest frozen copy of itself (the strongest reference), a new frozen copy
+# joins the references, rated at the model's Elo then: against references it nearly always beats, a rating only says
+# "much better" and swung 1350-1660 from rating to rating in auto7. 0.75 is about 190 Elo above it. Only the copies
+# count: the bots, beaten ~95 %, carried an average over all references past the line against an equal copy, and a
+# near-copy joined at every rating (auto7 210M, 212M, 214M).
+ADD_AT = 0.75
 MAX_SNAPSHOTS = 4  # the anchor and the three newest: each costs ROUNDS fights a rating
 
 
@@ -39,11 +41,17 @@ def elo_from_score(score, against):
     return against + 400.0 * math.log10(s / (1.0 - s))
 
 
+def _clamped(score, n):
+    """A score as `n` rounds can tell it: a clean sweep counts as half a round short of one (else the fit runs off)."""
+    return min(max(score, 0.5 / n), 1.0 - 0.5 / n)
+
+
 def fit_elo(results):
     """The one rating that best explains scores against several fixed ratings: [(score, rating, rounds)]."""
     def loglik(r):
         total = 0.0
         for score, rating, n in results:
+            score = _clamped(score, n)
             e = 1.0 / (1.0 + 10.0 ** ((rating - r) / 400.0))
             e = min(max(e, 1e-9), 1 - 1e-9)
             total += n * (score * math.log(e) + (1.0 - score) * math.log(1.0 - e))
@@ -54,6 +62,13 @@ def fit_elo(results):
     return float(fine[int(np.argmax([loglik(r) for r in fine]))])
 
 
+def outgrown(scores, references, fresh=()):
+    """The model is well past the newest frozen copy of itself (ADD_AT), so a new copy should join the references. The
+    bots do not count, nor a copy made in this very rating."""
+    older = [r for r in references if r["kind"] == "snapshot" and r["name"] not in fresh]
+    return bool(older) and scores.get(older[-1]["name"], 0.0) >= ADD_AT
+
+
 class Rating:
     """For train_sim: rates the model against the references, adding the anchor the first time."""
 
@@ -62,6 +77,8 @@ class Rating:
         self.folder.mkdir(parents=True, exist_ok=True)
         self.index = self.folder / "references.json"
         self.references = json.loads(self.index.read_text()) if self.index.exists() else []
+        # A reference whose file is gone (a stop at the wrong moment) is dropped rather than crash the next rating.
+        self.references = [r for r in self.references if r["kind"] == "bot" or (self.folder / r["file"]).exists()]
         self.vec = SimVecEnv(n, curriculum.Curriculum().levels, seed=424242)  # its own rounds: training's are untouched
         self.policies = {}
 
@@ -89,23 +106,26 @@ class Rating:
         n = self.vec.num_envs
         memory = (torch.zeros(lstm.num_layers, n, lstm.hidden_size, device=device), torch.zeros(lstm.num_layers, n, lstm.hidden_size, device=device))
         starts = torch.ones(n, device=device)
-        points = rounds = 0
+        # Each of the n rounds counts once, its first: counting the first n to finish counted quick wins and losses
+        # twice and left out the draws, which take the whole round.
+        result = [None] * n
         with torch.no_grad():
-            while rounds < ROUNDS:
+            while any(r is None for r in result):
                 dist, memory = policy.get_distribution(torch.as_tensor(obs, device=device), memory, starts)
                 self.vec.step_async(dist.get_actions(deterministic=False).cpu().numpy())
                 obs, _, dones, infos = self.vec.step_wait()
                 starts = torch.as_tensor(dones, dtype=torch.float32, device=device)
                 for i in np.flatnonzero(dones):
-                    rounds += 1
-                    info = infos[i]
-                    points += 1.0 if info["success"] else 0.0 if info["deaths"] > 0 else 0.5  # time ran out: a draw
+                    if result[i] is None:
+                        info = infos[i]
+                        result[i] = 1.0 if info["success"] else 0.0 if info["deaths"] > 0 else 0.5  # time ran out: a draw
         self.vec.opponents = None
-        return points / rounds
+        return sum(result) / n
 
     def rate(self, model, steps):
         """The model's Elo and its score against each reference; adds the anchor (a frozen copy of the model) first."""
         device = model.device
+        fresh = []  # references made from the model now: its score against them says nothing yet
         if not any(r["kind"] == "snapshot" for r in self.references):
             name = f"auto@{steps // 1_000_000}M"
             model.save(self.folder / name)
@@ -116,13 +136,21 @@ class Rating:
                 # The bot's rating from the anchor's score against it: elo_from_score gives the anchor's rating
                 # relative to the bot, so the bot is that far the other way.
                 self.references.append(dict(name=bot, kind="bot", elo=round(2 * ANCHOR_ELO - elo_from_score(score, ANCHOR_ELO), 1)))
-            self.index.write_text(json.dumps(self.references, indent=1))
+            self._write()
+            fresh.append(name)
+        n = self.vec.num_envs
         scores = {r["name"]: self._score(model.policy, r, device) for r in self.references}
-        elo = fit_elo([(scores[r["name"]], r["elo"], ROUNDS) for r in self.references])
-        result = dict(elo=round(elo, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps)
-        if sum(scores.values()) / len(scores) > ADD_AT:
+        elo = fit_elo([(scores[r["name"]], r["elo"], n) for r in self.references if r["name"] not in fresh])
+        result = dict(elo=round(elo, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps, fresh=fresh)
+        if outgrown(scores, self.references, fresh):
             result["added"] = self.add_snapshot(model, steps, elo)
         return result
+
+    def _write(self):
+        """references.json, replaced whole: a stop mid-write must not leave half a file."""
+        tmp = self.index.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.references, indent=1))
+        os.replace(tmp, self.index)
 
     def add_snapshot(self, model, steps, elo):
         """A frozen copy of the model now joins the references at Elo `elo`; past MAX_SNAPSHOTS the oldest after the
@@ -133,10 +161,13 @@ class Rating:
         model.save(self.folder / name)
         self.references.append(dict(name=name, kind="snapshot", file=name + ".zip", elo=round(elo, 1)))
         snaps = [r for r in self.references if r["kind"] == "snapshot"]
+        gone = []
         while len(snaps) > MAX_SNAPSHOTS:
-            gone = snaps.pop(1)
-            self.references.remove(gone)
-            self.policies.pop(gone["name"], None)
-            (self.folder / gone["file"]).unlink(missing_ok=True)
-        self.index.write_text(json.dumps(self.references, indent=1))
+            g = snaps.pop(1)
+            self.references.remove(g)
+            self.policies.pop(g["name"], None)
+            gone.append(g)
+        self._write()  # the index first: a stop between the two leaves a stray file, not a reference without one
+        for g in gone:
+            (self.folder / g["file"]).unlink(missing_ok=True)
         return name

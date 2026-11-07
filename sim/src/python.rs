@@ -179,7 +179,6 @@ impl Single {
         d.set_item("health", p.shown_health())?; // what its client shows (a hit's damage from the next tick)
         d.set_item("hurt_time", p.hurt_time)?;
         d.set_item("crouch_pose", p.crouch_pose)?;
-        d.set_item("slot", p.slot)?;
         d.set_item("resist", p.resist)?;
         d.set_item("attack_damage", p.attack_damage)?;
         d.set_item("armor", p.armor)?;
@@ -569,6 +568,7 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("EXTRA", EXTRA)?;
     m.add("ENEMY_F", crate::duel::ENEMY_F)?;
     m.add("ACTIONS", ACTIONS)?;
+    m.add("CHOICES", crate::duel::CHOICES.to_vec())?;
     Ok(())
 }
 

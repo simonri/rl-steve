@@ -22,6 +22,20 @@ assert abs(rating.elo_from_score(10 / 11, 1000) - 1400) < 1e-6
 assert abs(rating.fit_elo([(0.5, 1000, 32)]) - 1000) < 0.5
 mid = rating.fit_elo([(10 / 11, 1000, 32), (1 / 11, 1800, 32)])
 assert abs(mid - 1400) < 1, mid
+# A clean sweep is "much better", not 4000: it counts as half a round short of one.
+import math  # noqa: E402
+
+assert rating.fit_elo([(1.0, 1000, 32)]) < 1000 + 400 * math.log10((1 - 0.5 / 32) / (0.5 / 32)) + 1  # about 1720
+# A new frozen copy joins only when the model is well past the newest copy, whatever the bots say; not for one made in
+# this very rating.
+refs_ = [dict(name="a", kind="snapshot"), dict(name="b", kind="snapshot"), dict(name="walker", kind="bot")]
+assert not rating.outgrown(dict(a=0.95, b=0.5, walker=1.0), refs_)
+assert rating.outgrown(dict(a=0.95, b=0.8, walker=0.2), refs_)
+assert rating.outgrown(dict(a=0.95, b=0.5), refs_, fresh=("b",)), "b made now: a is the newest copy that counts"
+# The bonus weight reads only copies it did not just make, and follows the average of WEIGHT_OVER ratings.
+assert ta.snapshot_score(dict(scores=dict(a=0.5, b=0.9), fresh=["b"]), refs_) == 0.5
+assert ta.snapshot_score(dict(scores=dict(walker=1.0)), refs_) is None
+assert ta.weight_for(0.5) == 1.0 and ta.weight_for(0.9) == 0.0 and abs(ta.weight_for(0.7) - 0.5) < 1e-9
 
 # A short run: the anchor is added once (a frozen copy, Elo 1000), every bot gets a fixed rating, the model a score each.
 rating.ROUNDS = 4

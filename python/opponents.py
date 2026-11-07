@@ -39,10 +39,11 @@ class Opponents:
         if not keys:
             return acts
         has = np.asarray(batch.observe_opponents(self.obs))
+        players = np.asarray(self.players, dtype=object)  # once a tick, not a Python loop over every round per key
         for key in keys:
-            rows = [i for i in range(self.n) if self.players[i] == key and has[i]]
-            if rows:
-                acts[rows] = self._play(self.policies[key], rows)
+            rows = np.flatnonzero((players == key) & has)
+            if len(rows):
+                acts[rows] = self._play(self.policies[key], rows.tolist())
         return acts
 
     @torch.no_grad()

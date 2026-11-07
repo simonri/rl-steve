@@ -24,17 +24,17 @@ def reference_env(levels):
     return env
 
 
-def actions(rng, n):
-    """Inputs that do things: long presses, clicks, turns, some of everything."""
+def actions(rng, n, keys=0.03, sneak=0):
+    """Inputs that do things: long presses, clicks, turns, some of everything; a hotbar key on `keys` of the ticks."""
     a = np.zeros((n, 10), np.int64)
-    cur = np.array([1, 0, 0, 0, 0, 1, 5, 5, 0, 0])
+    cur = np.array([1, 0, sneak, 0, 0, 1 - sneak, 5, 5, 0, 0])  # sneaking on: it stays on the start long enough to be pushed
     for t in range(n):
         if rng.random() < 0.15:
             cur = np.array([rng.integers(3), rng.integers(3), rng.integers(2), 0, rng.integers(2), rng.integers(2), rng.integers(11), rng.integers(11), 0, 0])
         a[t] = cur
         a[t, 3] = rng.random() < 0.3
         a[t, 8] = rng.random() < 0.4  # left clicks: hits when something is in reach
-        a[t, 9] = int(rng.integers(1, 10)) if rng.random() < 0.03 else 0  # now and then a hotbar key
+        a[t, 9] = int(rng.integers(1, 10)) if rng.random() < keys else 0  # now and then a hotbar key
         if rng.random() < 0.5:
             a[t, 6] = a[t, 7] = 5
     return a
@@ -42,9 +42,19 @@ def actions(rng, n):
 
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-    rng = np.random.default_rng(1)
+    compare(rounds, ["hop", "path", "bridge", "bridge", "treenan", "stairs", "bedwars", "bedwars", "duel", "duel", "duel"], 1, 1000, keys=0.03)
+    # Pushes with hotbar keys pressed often: a push decided with the wrong hand differed between the two before
+    # (maybe_push), and the rounds above give almost no pushes.
+    import auto_env
+    auto_env.RANDOM_HAND = 0.0  # blocks in hand from the start: a push is only given when it can be saved
+    pushes = compare(max(40, rounds), ["bridge", "treenan", "bedwars"], 7, 5000, keys=0.01, push=True)
+    assert pushes > 0, "rounds with pushes"
+    print("sim env ok")
+
+
+def compare(rounds, families, seed0, course0, keys, push=False):
+    rng = np.random.default_rng(seed0)
     worst, ticks, bad, pushes = 0.0, 0, 0, 0
-    families = ["hop", "path", "bridge", "bridge", "treenan", "stairs", "bedwars", "bedwars", "duel", "duel", "duel"]
     ref = None
     for n in range(rounds):
         levels = curriculum.Curriculum().levels
@@ -52,13 +62,15 @@ def main():
         for d, values in curriculum.FAMILIES[family].items():
             if True:  # every dial, expert ones too
                 levels[family][d] = int(rng.integers(len(values)))
+        if push and "push" in curriculum.FAMILIES[family]:
+            levels[family]["push"] = len(curriculum.FAMILIES[family]["push"]) - 1
         if ref is None:
             ref = reference_env(levels)
         ref.set_levels(levels)
-        ref.set_exam(family)
+        ref.set_exam(family, all_dials=not push)
         maker = CourseMaker(levels)
-        maker.set_exam(family)
-        seed = 1000 + n
+        maker.set_exam(family, all_dials=not push)
+        seed = course0 + n
         spec, meta = maker.draw(seed=seed)
         o_ref, _ = ref.reset(seed=seed)
         batch = mcsim.Batch(1)
@@ -69,7 +81,9 @@ def main():
         diff = np.abs(obs[0] - o_ref).max()
         assert diff < 1e-5, f"round {n} {family}: first view differs by {diff} at {np.argmax(np.abs(obs[0] - o_ref))}"
         rew, done = np.zeros(1, np.float32), np.zeros(1, bool)
-        for t, a in enumerate(actions(rng, 3000)):
+        for t, a in enumerate(actions(rng, 3000, keys, int(push))):
+            if push and a[9] == 0 and rng.random() < 0.5:
+                a[9] = int(ref.obs.get("slot", 0)) + 1  # the slot already in hand: nothing changes in the game, nor may it here
             o_ref, r_ref, term, trunc, info = ref.step(a)
             batch.step(a[None], obs, rew, done)
             ticks += 1
@@ -90,9 +104,11 @@ def main():
                 for k, v in info["parts"].items():
                     assert abs(rep["parts"].get(k, 0.0) - v) < 1e-6, (n, k, rep["parts"].get(k), v)
                 break
+        else:
+            pushes += ref.pushes_given  # a round that ran on: its pushes count too
     print(f"{rounds} rounds, {ticks} ticks, {pushes} pushes, largest difference {worst:.2e}, rounds that differ {bad}")
     assert bad == 0
-    print("sim env ok")
+    return pushes
 
 
 if __name__ == "__main__":

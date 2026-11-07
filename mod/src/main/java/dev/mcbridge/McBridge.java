@@ -249,6 +249,9 @@ public final class McBridge implements ClientModInitializer {
         rules.set(GameRules.ADVANCE_TIME, false, s);
         rules.set(GameRules.ADVANCE_WEATHER, false, s);
         rules.set(GameRules.SPAWN_MOBS, false, s);
+        // A death keeps the hotbar, as the simulator does (Player.keep_gear): the respawn gives nothing back, and an
+        // empty hotbar after a real fall would be a round the simulator never plays.
+        rules.set(GameRules.KEEP_INVENTORY, true, s);
         if (watchPort > 0 && !watchPortOpen) {
             try {
                 // Loopback only, and offline auth so a second client on this machine can join to watch.
@@ -362,6 +365,11 @@ public final class McBridge implements ClientModInitializer {
         }
     }
 
+    /** Blocks in hand: the count of a block stack, 0 for anything else (a sword, a tool, nothing). */
+    private static int blocksInHand(ItemStack s) {
+        return s.getItem() instanceof net.minecraft.world.item.BlockItem ? s.getCount() : 0;
+    }
+
     private static java.util.Map<String, Item> itemsByName;
 
     /** An item by its registry name ("minecraft:white_wool"), or null. */
@@ -444,7 +452,7 @@ public final class McBridge implements ClientModInitializer {
         t.addProperty("pitch", player.getXRot());
         t.addProperty("on_ground", player.onGround());
         t.addProperty("health", player.getHealth());
-        t.addProperty("held_count", player.getMainHandItem().getCount());
+        t.addProperty("held_count", blocksInHand(player.getMainHandItem()));
         addHit(t, player.pick(player.blockInteractionRange(), 1.0f, false));
         var input = player.getLastClientInput();
         t.addProperty("forward", input.forward());
@@ -798,7 +806,8 @@ public final class McBridge implements ClientModInitializer {
                 return false;
             }
             case "gear" -> {
-                // The player's gear and the rules for this round (Fight18): sword in slot 1, Bedwars armor, Knockback.
+                // The player's gear and the rules for this round (Fight18): the sword's damage, Bedwars armor, Knockback,
+                // and the slot selected (the hotbar itself came with the reset).
                 float damage = cmd.get("damage").getAsFloat();
                 int armor = cmd.get("armor").getAsInt(), kb = cmd.get("kb").getAsInt(), slot = cmd.get("slot").getAsInt();
                 boolean rules18 = cmd.get("rules18").getAsBoolean();
@@ -1024,9 +1033,15 @@ public final class McBridge implements ClientModInitializer {
             // The client shows the hotbar the round gives (giveHotbar): every slot's count, and the slot selected.
             JsonArray h = resetSpec.getAsJsonArray("hotbar_items");
             for (int i = 0; i < Math.min(9, h.size()); i++) {
-                int want = h.get(i).getAsJsonArray().get(1).getAsInt();
-                settleReason = "slot " + i + " count " + pl.getInventory().getItem(i).getCount() + ", want " + want;
-                if (pl.getInventory().getItem(i).getCount() != want) return false;
+                JsonArray e = h.get(i).getAsJsonArray();
+                int want = e.get(1).getAsInt();
+                ItemStack have = pl.getInventory().getItem(i);
+                settleReason = "slot " + i + " count " + have.getCount() + ", want " + want;
+                if (have.getCount() != want) return false;
+                // The same item too: last round's 16 wool would pass a count check for this round's 16 end stone.
+                Item item = itemNamed(e.get(0).getAsString());
+                settleReason = "slot " + i + " item " + have.getItem() + ", want " + e.get(0).getAsString();
+                if (want > 0 && item != null && !have.is(item)) return false;
             }
             int slot = resetSpec.has("slot") ? resetSpec.get("slot").getAsInt() : 0;
             settleReason = "selected " + pl.getInventory().getSelectedSlot() + ", want " + slot;
@@ -1093,7 +1108,7 @@ public final class McBridge implements ClientModInitializer {
         o.addProperty("collision", pl.horizontalCollision);
         o.addProperty("fall_distance", pl.fallDistance);
         o.addProperty("eye_height", pl.getEyeHeight());
-        o.addProperty("held_count", pl.getMainHandItem().getCount()); // what is in hand (the hotbar below says what it is)
+        o.addProperty("held_count", blocksInHand(pl.getMainHandItem())); // blocks in hand, 0 with a sword (Player.held)
         o.addProperty("slot", pl.getInventory().getSelectedSlot());
         JsonArray hotbar = new JsonArray(); // each slot as the player sees it: registry name and count (items.py kind_of)
         for (int i = 0; i < 9; i++) {

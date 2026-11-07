@@ -92,6 +92,7 @@ def main():
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
         progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
+        progress.snapshot_scores = saved_state.get("snapshot_scores", [])
     # Self-play (docs/training-design.md#self-play): some duels against the latest model or an older version of it.
     progress.pool = Pool(out, seed=a.seed)
     vec.opponents = Opponents(vec.num_envs)
