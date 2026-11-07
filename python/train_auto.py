@@ -363,6 +363,8 @@ class Progress(BaseCallback):
         self.rounds = 0
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
+        self.rate_every = 0  # decisions between ratings (train_sim: every other exam, a rating now takes minutes)
+        self.last_rated = None
         self.bench_every = None  # decisions between fixed benchmarks (benchmark.py), when train_sim sets it
         self.last_bench = None
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
@@ -462,7 +464,7 @@ class Progress(BaseCallback):
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
         tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores,
-                                    last_bench=self.last_bench)))
+                                    last_bench=self.last_bench, last_rated=self.last_rated)))
         os.replace(tmp, self.out / "latest.json")
         if self.pool is not None:
             self.pool.save()  # the versions' scores
@@ -615,9 +617,12 @@ class Progress(BaseCallback):
             self.vec.opponents = playing
         if self.bench_every and (self.last_bench is None or self.num_timesteps - self.last_bench >= self.bench_every):
             self.benchmark()
-        if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
+        rate_due = self.last_rated is None or self.num_timesteps - self.last_rated >= self.rate_every
+        if self.rating is not None and rate_due:  # strength against frozen references (docs/training-design.md#referenser)
+            self.last_rated = self.num_timesteps
             self.rated = self.rating.rate(self.model, self.num_timesteps)
-            print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
+            print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']} +-{self.rated.get('ci', 0)}, "
+                  + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
             if self.rated.get("added"):
                 print(f"rating: {self.rated['added']} added to the references at Elo {self.rated['elo']}", flush=True)
             score = snapshot_score(self.rated, self.rating.references)

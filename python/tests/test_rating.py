@@ -37,6 +37,16 @@ assert ta.snapshot_score(dict(scores=dict(a=0.5, b=0.9), fresh=["b"]), refs_) ==
 assert ta.snapshot_score(dict(scores=dict(walker=1.0)), refs_) is None
 assert ta.weight_for(0.5) == 1.0 and ta.weight_for(0.9) == 0.0 and abs(ta.weight_for(0.7) - 0.5) < 1e-9
 
+# The joint fit: one that wins 10 to 1 against the anchor is about 400 above it; one that only ever met that one, and
+# won 10 to 1 against it, about 400 above that, with a wider interval (it is known only through the other).
+games = [("a", "anchor", 1000.0, 1100), ("b", "a", 1000.0, 1100)]
+f = rating.fit(games, "anchor")
+assert f["anchor"] == (1000.0, 0.0)
+assert abs(f["a"][0] - 1400) < 15 and abs(f["b"][0] - 1800) < 30, f
+assert f["b"][1] > f["a"][1] > 0, f
+# A clean sweep stays finite: the weak prior keeps it to "much better".
+assert rating.fit([("c", "anchor", 64.0, 64)], "anchor")["c"][0] < 3000
+
 # A short run: the anchor is added once (a frozen copy, Elo 1000), every bot gets a fixed rating, the model a score each.
 rating.ROUNDS = 4
 auto_env.DUEL_TICKS = 100  # short fights: what is checked here is the bookkeeping, not who wins
@@ -52,6 +62,9 @@ with tempfile.TemporaryDirectory() as d:
     assert [x["name"] for x in refs[1:]] == list(rating.BOT_REFERENCES)
     assert set(result["scores"]) == {x["name"] for x in refs} and all(0 <= v <= 1 for v in result["scores"].values())
     assert rating.Rating(Path(d), n=4).references == refs  # a restart reads them back as they were, ratings and all
+    # Every game is kept, one line per reference and kind of fight, and the rating comes with its interval.
+    lines = (Path(d) / "references" / "games.jsonl").read_text().splitlines()
+    assert len(lines) == len(refs) * len(rating.FIGHTS) and result["ci"] > 0, (len(lines), result)
     # A model that outgrows the references adds a frozen copy at its Elo; the anchor stays, the oldest others go.
     r = rating.Rating(Path(d), n=4)
     for m in range(10, 10 + rating.MAX_SNAPSHOTS + 1):
