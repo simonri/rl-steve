@@ -108,6 +108,7 @@ public final class McBridge implements ClientModInitializer {
     private JsonObject pendingReply; // the command being answered
     private boolean resetting;
     private boolean died; // a death since the last reply (the respawn follows at once)
+    private boolean beatenLastTick; // a fight beat it during the last reply's tick (Fight18.takeDowned)
     private int settleTicks;
     private long settleStart;
     private String settleReason = "";
@@ -706,6 +707,8 @@ public final class McBridge implements ClientModInitializer {
                 applyAction(mc, new JsonObject());
                 resetSpec = cmd;
                 died = false;
+                Fight18.takeDowned(); // a beating from the last round is not this round's
+                beatenLastTick = false;
                 if (cmd.has("beam")) beam = cmd.getAsJsonArray("beam");
                 resetting = true;
                 settleTicks = 0;
@@ -822,6 +825,7 @@ public final class McBridge implements ClientModInitializer {
 
         if (resetting) {
             settleTicks++;
+            if (settleTicks % 200 == 0) LOG.info("reset still settling after {} ticks: {}", settleTicks, settleReason); // a slow one shows why
             if (settleTicks % 20 == 0 && serverAppliedReset) {
                 // A click from just before the reset can reach the server after it, and bring back a
                 // block or change the item count. Apply the reset again until both sides agree.
@@ -1046,7 +1050,12 @@ public final class McBridge implements ClientModInitializer {
         }
         o.add("players", Fight18.players());
         o.addProperty("health", pl.getHealth());
-        if (died) { // it died since the last reply and is already back at the spawn: the round has to know
+        // It died since the last reply and is already back at the spawn (a fall), or a fight beat it without killing
+        // it (Fight18): either way the round has to know.
+        // A beating shows a reply later, as the client shows a hit's damage a tick later (the simulator's lost tick).
+        boolean beaten = beatenLastTick;
+        beatenLastTick = Fight18.takeDowned();
+        if (beaten | died) {
             o.addProperty("died", true);
             died = false;
         }

@@ -67,6 +67,16 @@ public final class Fight18 {
 
     static final Map<UUID, State> STATES = new HashMap<>();
 
+    /** The model was beaten since this was last read (attack): server thread sets it, the client's reply reads it. */
+    private static volatile boolean downed;
+
+    /** Whether the model was beaten since the last call; clears it. */
+    public static boolean takeDowned() {
+        boolean was = downed;
+        downed = false;
+        return was;
+    }
+
     public static State of(Entity e) {
         return STATES.computeIfAbsent(e.getUUID(), k -> new State());
     }
@@ -96,7 +106,15 @@ public final class Fight18 {
             knock = true;
         }
         dealt = dealt * (25 - v.armor) / 25.0f;
-        victim.setHealth(Math.max(0.0f, victim.getHealth() - dealt));
+        if (victim.getHealth() - dealt <= 0.0f && !(victim instanceof Bot) && victim instanceof ServerPlayer) {
+            // The model is beaten. It is not killed in the game: a death goes through the game's own respawn, which
+            // the next round's reset races and the client was left half dead for 30 s. It keeps a sliver of health,
+            // and the round is told it lost (McBridge "died").
+            victim.setHealth(1.0f);
+            downed = true;
+        } else {
+            victim.setHealth(Math.max(0.0f, victim.getHealth() - dealt));
+        }
         ServerLevel level0 = (ServerLevel) victim.level();
         level0.broadcastDamageEvent(victim, level0.damageSources().playerAttack(attacker)); // the red flash and the sound
         Vec3 motion = null;
