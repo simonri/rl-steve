@@ -199,6 +199,12 @@ pub struct Opponent {
     /// (feet distance across, critical). The reward is zero-sum, so these count against the model's (shaping.rs).
     pub swing: Option<bool>,
     pub landed: Option<(f64, bool)>,
+    /// Played by a model this tick (self-play), not by its bot.
+    played: bool,
+    /// A model-played opponent's hit, reaching the server next tick as the model's own does (`queued` in fight_tick):
+    /// it stands in for another player's client, whose packet comes a tick after the click. A bot acts on the server
+    /// and hits at once. Without this the copy on the opponent's side won 64 % of its own mirror fights.
+    queued: Option<Swing>,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -370,7 +376,7 @@ impl Env {
         };
         if let Some(d) = env.course.duel.clone() {
             for r in &d.opponents {
-                env.opponents.push(Opponent::new(r, env.course.rules18));
+                env.opponents.push(Opponent::new(r, env.course.rules18, env.course.blocks));
             }
         }
         env.track_target();
@@ -1091,6 +1097,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         let given = o.next.take(); // self-play: a model's action for this opponent
         o.swing = None;
         o.landed = None;
+        o.played = given.is_some();
         let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else if let Some(a) = given { a } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
@@ -1109,6 +1116,25 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             }
         }
     }
+    // Model-played opponents' hits from last tick's clicks reach the server now, as the model's do.
+    let at_start = player.health;
+    for o in opponents.iter_mut() {
+        if let Some(s) = o.queued.take() {
+            if !o.dead() {
+                let at = player.pos;
+                let (counted, broke) = combat::hit(&s, player, at);
+                if counted {
+                    *since_hurt = 0;
+                    o.since_hit = 0;
+                    o.landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling));
+                }
+                if broke {
+                    o.player.server_sprinting = false;
+                }
+            }
+        }
+    }
+    let early = at_start - player.health; // shown a tick late, as the other hits are
     player.unseen = 0.0;
     player.begin(input);
     for (o, i) in opponents.iter_mut().zip(&inputs) {
@@ -1129,7 +1155,11 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             let on = combat::click(&mut o.player, world, &[my_box]).is_some();
             o.swing = Some(on);
             if on {
-                their_hits.push((j, Swing::of(&o.player)));
+                if o.played {
+                    o.queued = Some(Swing::of(&o.player));
+                } else {
+                    their_hits.push((j, Swing::of(&o.player)));
+                }
                 combat::recoil(&mut o.player);
             }
         }
@@ -1158,7 +1188,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             opponents[j].player.server_sprinting = false;
         }
     }
-    player.unseen = before_hits - player.health;
+    player.unseen = early + before_hits - player.health;
     player.count_down(); // Fight18.serverTick: hurt resistance and healing after the bots' hits
     *since_hit += 1;
     *since_hurt += 1;
@@ -1181,8 +1211,11 @@ impl Opponent {
     }
 
     /// An opponent standing where a round puts it, as after the mod's reset.
-    pub fn new(r: &Rival, rules18: bool) -> Opponent {
-        let mut p = Player::new(r.pos, r.yaw, 0.0, 0);
+    /// `blocks`: as many as the model has. A scripted bot never places one (duel::action never right-clicks), but a
+    /// model playing it (self-play) has learned to save itself with them: without, a copy of the model fell off three
+    /// times as often from the opponent's side as from its own, and lost 73 % of the fights against itself.
+    pub fn new(r: &Rival, rules18: bool, blocks: i32) -> Opponent {
+        let mut p = Player::new(r.pos, r.yaw, 0.0, blocks);
         settle(&mut p);
         p.rules18 = rules18;
         p.attack_damage = r.damage;
@@ -1205,6 +1238,8 @@ impl Opponent {
             next: None,
             swing: None,
             landed: None,
+            played: false,
+            queued: None,
         }
     }
 }
@@ -1221,7 +1256,7 @@ mod tests {
         let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
         settle(&mut p);
         p.rules18 = true;
-        let o = Opponent::new(&Rival { bot, pos: [0.5, 100.0, 0.5 + ahead], yaw: 180.0, damage: 1.0, armor: 0, kb: 0 }, true);
+        let o = Opponent::new(&Rival { bot, pos: [0.5, 100.0, 0.5 + ahead], yaw: 180.0, damage: 1.0, armor: 0, kb: 0 }, true, 0);
         (w, p, vec![o])
     }
 
@@ -1373,6 +1408,32 @@ mod tests {
         p.yaw = 90.0;
         let ev = fight_tick(&mut w, &mut p, &mut o, &click, [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut None);
         assert!(!ev.struck, "looking the other way");
+    }
+
+    /// A bot's hit lands the tick it clicks (it is on the server); a model playing the opponent hits a tick later, as
+    /// the model does (its client's packet), so self-play is fair to both sides.
+    #[test]
+    fn a_model_played_opponent_hits_a_tick_late() {
+        let swing = [0, 0, 0, 0, 0, 0, 5, 5, 1];
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.0);
+        let (mut since_hit, mut since_hurt) = (99, 99);
+        o[0].next = Some(swing);
+        let full = p.health;
+        fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut None);
+        assert_eq!(o[0].swing, Some(true));
+        assert_eq!(p.health, full, "not yet");
+        fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 1, &mut since_hit, &mut since_hurt, &mut None);
+        assert!(p.health < full && o[0].landed.is_some(), "the next tick");
+        let (mut w, mut p, mut o) = arena(Bot::Walker, 2.0);
+        let mut hurt_at = None;
+        for t in 0..20 {
+            fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, &mut None);
+            if o[0].swing == Some(true) {
+                hurt_at = Some(p.health < full);
+                break;
+            }
+        }
+        assert_eq!(hurt_at, Some(true), "a bot's hit lands the tick it clicks");
     }
 
     /// Bots turn by the step itself, as Fight18.drive adds it; the model turns through the mouse (multiples of 0.15).

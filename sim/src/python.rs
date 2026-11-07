@@ -80,7 +80,7 @@ impl Single {
     #[allow(clippy::too_many_arguments)]
     fn add_opponent(&mut self, bot: i32, pos: [f64; 3], yaw: f32, damage: f32, armor: i32, kb: i32, rules18: bool, centre: [f64; 3], fall_line: f64) {
         self.fall_line = fall_line;
-        self.opponents.push(Opponent::new(&Rival { bot: Bot::from_index(bot), pos, yaw, damage, armor, kb }, rules18));
+        self.opponents.push(Opponent::new(&Rival { bot: Bot::from_index(bot), pos, yaw, damage, armor, kb }, rules18, 0)); // the game's bots have none
         self.centre = centre;
         self.t = 0;
         self.since_hit = 99;
