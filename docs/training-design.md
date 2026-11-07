@@ -178,6 +178,28 @@ Måtten vi styrde efter var till stor del brus (auto7, november 2026): reglagen 
   nät och slås ihop (max och summa), som i OpenAI Five och AlphaStar: det som lärs om en motståndare gäller alla,
   i vilken ordning och hur många de än är. Läggs till genom ett lager som startar på noll.
 - Inte prövat nu: bredare nät och separat värdenät; spelandet tar redan 6–7 av 10 s per omgång.
+- Resultat efter 3M beslut från smoke_v4: alla skillnader inom felmarginalen (±0,06). Inget av dem löser
+  handrundan (0/128).
+
+<a id="fem"></a>
+### Lärdomar från OpenAI Five (arXiv 1912.06680)
+
+- **Lika lång tid, inte lika många beslut:** Five fann att varje datapunkt bara ska användas ungefär en gång (2–3
+  gånger halverade farten, 8 stoppade inlärningen). Vi kör 4 pass. `--epochs` jämförs med `--minutes`, så att
+  färre pass får spela mer under samma tid.
+- **En diskonteringsfaktor per körning** (`--gamma`, i net.json): längre horisont hjälpte en redan tränad Five. Vår
+  0,995 är ungefär 10 s. Siktets potential (env.rs `Env.gamma`) får alltid samma γ som PPO, annars kan stöttningen
+  ändra vad som är bäst.
+- **Infasning** (`Progress.phase_in`): en ny regel går från 0 till full andel under N beslut. Slumpad hand påslagen
+  på en gång tog provet från 31 till 19 (bridge) och 10 (stairs). Five såg samma sak med buyback.
+- **Stilla start efter omformning:** när `transfer()` har ändrat nätet lär den sig med takt 0 i 300k beslut
+  (`STILL_AFTER_SURGERY`), så att Adams moment hinner ikapp innan något rör sig.
+- **Rating mot jämbördiga:** en bot som slagits ≥ 95 % (eller ≤ 5 %) spelas bara var fjärde rating; frusna kopior
+  alltid. Five spelade bara referenser inom 15–85 %.
+- **Börja om från noll när koden satt sig:** Fives omkörning med slutlig kod nådde samma nivå på ~20 % av
+  beräkningen och vann sedan 98 % mot originalet, som hade fastnat lägre efter 20 omformningar. Ingen inspelad data:
+  den nya ska inte ärva den gamlas vanor. Går det för sakta finns kickstarting (Schmitt m.fl. 2018): en dragning
+  mot auto7:s val som trappas ner till noll.
 
 ## Det vi inte gör (nu)
 

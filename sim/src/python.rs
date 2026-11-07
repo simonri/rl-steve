@@ -266,6 +266,7 @@ pub struct Batch {
     envs: Vec<Option<Env>>,
     tick_count: i64,
     bonus_weight: f64, // Env.bonus_weight for every round, set from training (train_auto.Progress)
+    gamma: f64,        // Env.gamma for every round: the discount the run learns with (train_sim --gamma)
 }
 
 impl Batch {
@@ -287,7 +288,7 @@ fn get<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyR
 impl Batch {
     #[new]
     fn new(n: usize) -> Self {
-        Batch { envs: (0..n).map(|_| None).collect(), tick_count: 0, bonus_weight: 1.0 }
+        Batch { envs: (0..n).map(|_| None).collect(), tick_count: 0, bonus_weight: 1.0, gamma: crate::shaping::GAMMA }
     }
 
     #[getter]
@@ -373,6 +374,7 @@ impl Batch {
         let n = self.envs.len();
         let mut env = Env::new(course, self.tick_count);
         env.bonus_weight = self.bonus_weight;
+        env.gamma = self.gamma;
         *self.envs.get_mut(i).ok_or_else(|| pyo3::exceptions::PyIndexError::new_err(format!("round {i} of {n}")))? = Some(env);
         Ok(())
     }
@@ -383,6 +385,19 @@ impl Batch {
         for e in self.envs.iter_mut().flatten() {
             e.bonus_weight = w;
         }
+    }
+
+    /// The discount training learns with, for every round from now on, the running ones too: the aim potential's
+    /// shaping uses it (Env.gamma).
+    fn set_gamma(&mut self, gamma: f64) -> PyResult<()> {
+        if !(0.0..1.0).contains(&gamma) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!("gamma {gamma} is not in [0, 1)")));
+        }
+        self.gamma = gamma;
+        for e in self.envs.iter_mut().flatten() {
+            e.gamma = gamma;
+        }
+        Ok(())
     }
 
     /// Writes what round `i` sees now into `out`.

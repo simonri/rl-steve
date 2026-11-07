@@ -94,6 +94,8 @@ class AutoEnv(SkillEnv):
     hand = None  # "random" or "blocks": how every course starts, whatever the round (benchmark.py); None as in training
     pending_hotbar = 0  # the hotbar key of the tick being played (step), 0 for none
     bonus_weight = 1.0  # env.rs Env.bonus_weight: how much a fight's event bonuses count (shaping.rs), set by training
+    random_hand = RANDOM_HAND  # this share of practice courses start with another slot (train_auto.Progress.phase_in can ramp it)
+    gamma = mcsim.GAMMA  # env.rs Env.gamma: the discount training learns with, which the aim potential must use too
     exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
     exam_all = True
     can_push = True
@@ -255,7 +257,7 @@ class AutoEnv(SkillEnv):
         # Only in rounds that test nothing: in exams and in the rounds that move a dial, a hand it has not learned to
         # change yet failed a third of them (bridge exam 31 -> 19/32, stairs 31 -> 10/32) and could lower its levels.
         practice = self.tested is None and not self.exam_family
-        hold = "sword" if self.family == "duel" else "random" if r.random() < RANDOM_HAND and practice else "blocks"
+        hold = "sword" if self.family == "duel" else "random" if r.random() < self.random_hand and practice else "blocks"
         if self.hand is not None and self.family != "duel":  # set from outside: the benchmark's hand round (benchmark.py)
             hold = self.hand
         self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)
@@ -991,7 +993,7 @@ class AutoEnv(SkillEnv):
         term = won or lost or self.t >= self.limit
         # Aim as a potential (shaping.rs): γ·Φ(s′) − Φ(s), Φ = 0 once the round is over.
         now = 0.0 if term else self._fight_potential(o)
-        reward += self._points("aim", mcsim.GAMMA * now - self.potential)
+        reward += self._points("aim", self.gamma * now - self.potential)
         self.potential = now
         info = {"success": won, "clean": won, "fell": self.deaths > 0, "deaths": self.deaths, "respawned": False, "stalled": False, "damage": self.damage,
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,

@@ -325,6 +325,9 @@ pub struct Env {
     /// How much the event bonuses (long hit, critical hit, missed swing) count, from 1 down to 0 as the model gets
     /// stronger against the references (train_auto.Progress; docs/training-design.md#nedtrappning). Never observed.
     pub bonus_weight: f64,
+    /// The discount PPO learns with (shaping::GAMMA unless the run sets another): the aim potential's γ·Φ(s′) − Φ(s)
+    /// must use the same one, or the shaping can change which play is best.
+    pub gamma: f64,
     hit: Option<Hit>,
     k: i32,
     tick_count: i64,
@@ -433,6 +436,7 @@ impl Env {
             report: Report::default(),
             potential: 0.0,
             bonus_weight: 1.0,
+            gamma: shaping::GAMMA,
             hit: None,
             k,
             tick_count,
@@ -842,7 +846,7 @@ impl Env {
         let done = won || lost || self.t >= self.course.limit;
         // Φ is 0 once the round is over, so over a round the aim points add up to about −Φ(start): nothing to farm.
         let now = if done { 0.0 } else { self.fight_potential() };
-        reward += self.points(P_AIM, shaping::GAMMA * now - self.potential);
+        reward += self.points(P_AIM, self.gamma * now - self.potential);
         self.potential = now;
         self.report = Report {
             success: won,

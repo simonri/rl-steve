@@ -40,6 +40,12 @@ PRIOR_SD = 800.0  # a weak pull of every rating toward 1000: a clean sweep says 
 # average over all references past the line against an equal copy, and a near-copy joined at every rating.
 ADD_AT = 0.75
 MAX_SNAPSHOTS = 4  # the anchor and the three newest: each costs ROUNDS fights per kind a rating
+# A bot the model scored at least SURE against (or at most 1 - SURE) last time is skipped, except every RECHECK_EVERY-th
+# rating, which plays them all and would catch forgetting. Why: a 98 % result says almost nothing about the rating
+# (OpenAI Five only played references within 15-85 %, arXiv 1912.06680 appendix J), and the bots were 6 of 10
+# references. The frozen copies are always played: the bonus weight (train_auto.snapshot_score) and outgrown use them.
+SURE = 0.95
+RECHECK_EVERY = 4
 
 
 def elo_from_score(score, against):
@@ -166,21 +172,28 @@ class Rating:
             fresh.append(name)
         me = f"model@{steps}"
         scores = {}
+        recheck = len({g[0] for g in self.games()}) % RECHECK_EVERY == 0  # ratings so far
+        skipped = []
         with open(self.games_file, "a") as f:
             for ref in self.references:
+                last = ref.get("last")
+                if ref["kind"] == "bot" and not recheck and last is not None and not (1 - SURE < last < SURE):
+                    skipped.append(ref["name"])
+                    continue
                 total = rounds = 0.0
                 for fight in FIGHTS:
                     pts, n = self._play(model.policy, ref, fight, device)
                     total, rounds = total + pts, rounds + n
                     f.write(json.dumps(dict(steps=steps, player=me, ref=ref["name"], fight=fight, points=pts, rounds=n)) + "\n")
                 scores[ref["name"]] = total / rounds
+                ref["last"] = round(total / rounds, 3)
         anchor = next(r["name"] for r in self.references if r["kind"] == "snapshot") if self.references else me
         fitted = fit(self.games(), anchor)
         for r in self.references:  # for showing; the fit is what counts
             r["elo"] = round(fitted[r["name"]][0], 1) if r["name"] in fitted else r.get("elo")
         self._write()
         elo, ci = fitted[me]
-        result = dict(elo=round(elo, 1), ci=round(ci, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps, fresh=fresh)
+        result = dict(elo=round(elo, 1), ci=round(ci, 1), scores={k: round(v, 3) for k, v in scores.items()}, steps=steps, fresh=fresh, skipped=skipped)
         if outgrown(scores, self.references, fresh):
             result["added"] = self.add_snapshot(model, steps, elo)
         return result

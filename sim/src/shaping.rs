@@ -14,7 +14,8 @@
 
 use crate::player::Player;
 
-/// train_auto.GAMMA: a potential's shaping keeps the best play the same only with the discount PPO learns with.
+/// The default discount (train_auto.GAMMA). A potential's shaping keeps the best play the same only with the discount
+/// PPO learns with, so a run that learns with another one sets it on every round (Env.gamma, Batch.set_gamma).
 pub const GAMMA: f64 = 0.995;
 /// Per radian between the view and the line to the opponent's chest: turning from beside it (90°) to it pays 0.16.
 pub const AIM_POTENTIAL: f64 = 0.1;

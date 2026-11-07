@@ -37,6 +37,7 @@ WINDOW = 100
 GAMMA, GAE_LAMBDA = 0.995, 0.975
 # Learning calms down over this stretch, so what has been learned is not constantly overwritten.
 CALM_FROM, CALM_OVER = 500_000, 5_000_000  # decisions into a run: the old 16M was meant for one run and left new ones wild
+STILL_AFTER_SURGERY = 300_000  # decisions at learning rate 0 after a model was reshaped (Progress.still_until)
 LEARNING_RATE, LEARNING_RATE_END = 3e-4, 3e-5
 ENTROPY, ENTROPY_END = 0.01, 0.004  # the end was 0.002: late in a run new skills (fighting) were hardly explored
 # Learning stops going over a stretch again once the way it plays has moved this far. With the memory, 8 passes moved
@@ -432,6 +433,12 @@ class Progress(BaseCallback):
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
         self.value_warmup = 0  # until this many decisions only the value learns (a new critic memory: freeze_all_but_value)
+        # Until this many decisions the learning rate is 0 (STILL_AFTER_SURGERY): after the weights were reshaped the
+        # optimizer's moment estimates catch up, and the rounds reach a steady mix, before anything moves. OpenAI Five
+        # (arXiv 1912.06680, appendix B) did the same after every surgery.
+        self.still_until = 0
+        # attr -> [full value, first decision, over how many]: a new rule ramps in from 0 to full (phase_in).
+        self.phase_ins = {}
         self.rate_every = 0  # decisions between ratings (train_sim: every other exam, a rating now takes minutes)
         self.last_rated = None
         self.bench_every = None  # decisions between fixed benchmarks (benchmark.py), when train_sim sets it
@@ -524,6 +531,19 @@ class Progress(BaseCallback):
         else:
             self.vec.set_attr("bonus_weight", w)
 
+    def phase_in(self, attr, full, over):
+        """A new rule (a round setting, e.g. AutoEnv.random_hand) ramps from 0 to `full` over `over` decisions from
+        now, instead of all at once. Why: switched on at once it changes too much of what the model meets, and it
+        relearns far more than the rule itself. The random hand at once took exam scores from 31 to 19 (bridge)
+        and 10 (stairs); OpenAI Five saw the same when it handed the model buyback (arXiv 1912.06680, appendix B)."""
+        self.phase_ins[attr] = [float(full), int(self.num_timesteps), int(over)]
+        self._phase()
+
+    def _phase(self):
+        for attr, (full, start, over) in self.phase_ins.items():
+            share = min(1.0, max(0.0, (self.num_timesteps - start) / max(over, 1)))
+            self.vec.set_attr(attr, full * share)
+
     def save_latest(self):
         self.model.save(self.out / "latest_tmp")
         os.replace(self.out / "latest_tmp.zip", self.out / "latest.zip")
@@ -533,7 +553,8 @@ class Progress(BaseCallback):
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
         tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight, snapshot_scores=self.snapshot_scores,
-                                    last_bench=self.last_bench, last_rated=self.last_rated, value_warmup=self.value_warmup)))
+                                    last_bench=self.last_bench, last_rated=self.last_rated, value_warmup=self.value_warmup,
+                                    still_until=self.still_until, phase_ins=self.phase_ins)))
         os.replace(tmp, self.out / "latest.json")
         if self.pool is not None:
             self.pool.save()  # the versions' scores
@@ -648,7 +669,10 @@ class Progress(BaseCallback):
         torch.set_num_threads(1)  # one action at a time is too small to share out, and spare threads only spin
         share = min(1.0, max(0.0, (self.num_timesteps - CALM_FROM) / CALM_OVER))
         rate = LEARNING_RATE * (LEARNING_RATE_END / LEARNING_RATE) ** share
+        if self.num_timesteps < self.still_until:
+            rate = 0.0  # Adam still sees the gradients, so its moments are ready when learning starts
         self.model.lr_schedule = get_schedule_fn(rate)
+        self._phase()
         self.model.ent_coef = ENTROPY * (ENTROPY_END / ENTROPY) ** share
 
     def _on_rollout_end(self):

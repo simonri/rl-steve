@@ -10,9 +10,11 @@ import argparse
 import json
 import os
 import signal
+import time
 from pathlib import Path
 
 import torch
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from torch.distributions import Distribution
 
 import train_auto as ta
@@ -47,6 +49,8 @@ def main():
     p.add_argument("--entities", action="store_true", help="opponents and hotbar slots through their own shared networks")
     p.add_argument("--hl-gauss", action="store_true", help="the value as a distribution over bins (HL-Gauss)")
     p.add_argument("--exploit", help="train only to beat this frozen model in duels, then measure how often it does (exploit.json)")
+    p.add_argument("--gamma", type=float, help=f"the discount (default {ta.GAMMA}); the aim potential's shaping uses the same one. Kept in net.json")
+    p.add_argument("--minutes", type=float, help="stop after this long (experiments that compare settings at the same wall-clock time)")
     p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
     os.environ.setdefault("RAYON_NUM_THREADS", str(a.sim_threads))
@@ -71,11 +75,16 @@ def main():
     vec = SimVecEnv(a.envs, curriculum.levels, seed=a.seed)
     net_file = out / "net.json"
     net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities,
-                                                                           hl_gauss=a.hl_gauss)
+                                                                           hl_gauss=a.hl_gauss, gamma=a.gamma or ta.GAMMA)
     net.setdefault("hl_gauss", False)
+    net.setdefault("gamma", ta.GAMMA)  # runs from before it could be set
+    if a.gamma and a.gamma != net["gamma"]:
+        print(f"--gamma {a.gamma} ignored: this run learns with {net['gamma']} (net.json)", flush=True)
+    # PPO's discount and the aim potential's (env.rs Env.gamma) must be the same, or the shaping can change what is best.
+    vec.batch.set_gamma(net["gamma"])
     net_file.write_text(json.dumps(net))
     print(f"network: {net}", flush=True)
-    kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=ta.GAMMA, gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
+    kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=net["gamma"], gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"], hl_gauss=net["hl_gauss"]), seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     ta.fast_convolutions()
@@ -85,6 +94,10 @@ def main():
         # The eyes and hands may have grown since that model was saved: what was there is kept exactly.
         grew, steps = ta.load_weights(model, out / "latest.zip" if continuing else a.resume)
         print(f"continuing from {out / 'latest.zip' if continuing else a.resume}: grown {grew}", flush=True)
+        still = 0
+        if not continuing and grew:
+            still = steps + ta.STILL_AFTER_SURGERY  # a reshaped model: the optimizer catches up before anything moves
+            print(f"reshaped: learning rate 0 until {still}", flush=True)
         if not continuing:
             # A model that has learned for a while goes on at its calmer learning rate and exploration: from step 0
             # the schedule's first ones undid much of what it could (bridging fell from 0.82 to 0.66 in 500k).
@@ -115,6 +128,8 @@ def main():
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     progress = ta.Progress(vec, out, curriculum, 2)
     progress.value_warmup = warmup
+    progress.still_until = saved_state.get("still_until", still if (continuing or a.resume) else 0)
+    progress.phase_ins = saved_state.get("phase_ins", {})
     progress.rating = None if a.no_evals else Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
     progress.bench_every = None if a.no_evals else 10_000_000  # the fixed benchmark (benchmark.py): a few minutes, about every hour
     if a.no_evals:
@@ -153,12 +168,27 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     try:
-        model.learn(a.steps, callback=progress, reset_num_timesteps=resumed_steps == 0)
+        callback = progress if a.minutes is None else CallbackList([progress, Deadline(a.minutes)])
+        model.learn(a.steps, callback=callback, reset_num_timesteps=resumed_steps == 0)
+        if a.minutes is not None:
+            progress.save_latest()
+            print(f"{a.minutes} minutes: stopped at {model.num_timesteps} decisions, saved", flush=True)
     except KeyboardInterrupt:
         progress.save_latest()  # nothing since the last save is lost
         print(f"stopped at {model.num_timesteps} decisions: saved", flush=True)
     if a.exploit:
         exploit_score(model, a.exploit, out)
+
+
+class Deadline(BaseCallback):
+    """Ends learning after a wall-clock time: settings that change speed (fewer passes per stretch) compared fairly."""
+
+    def __init__(self, minutes):
+        super().__init__()
+        self.end = time.time() + 60 * minutes
+
+    def _on_step(self):
+        return time.time() < self.end
 
 
 def exploit_score(model, target, out, rounds=64):
