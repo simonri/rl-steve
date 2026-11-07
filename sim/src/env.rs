@@ -167,6 +167,9 @@ pub struct Course {
     /// so the model has to look at its hotbar to find them (AutoEnv._hotbar).
     pub hotbar: [Stack; SLOTS],
     pub slot: u8,
+    /// A fight where the opponent can only be reached by building (the "gap" arena with more void than a jump): finding
+    /// the blocks pays as on a course (TOOK_BLOCKS_BONUS).
+    pub needs_blocks: bool,
 }
 
 /// The sword for an attack attribute (combat18.SWORDS: 1 plus 4 to 7).
@@ -236,7 +239,7 @@ pub struct Opponent {
     /// This tick (fight_tick): its left click (Some(whether it was on the model in reach)) and its hit that counted
     /// (feet distance across, critical). The reward is zero-sum, so these count against the model's (shaping.rs).
     pub swing: Option<bool>,
-    pub landed: Option<(f64, bool)>,
+    pub landed: Option<(f64, bool, bool)>,
     /// Played by a model this tick (self-play), not by its bot.
     played: bool,
     /// A model-played opponent's hit, reaching the server next tick as the model's own does (`queued` in fight_tick):
@@ -423,7 +426,7 @@ impl Env {
         }
         env.track_target();
         env.potential = env.fight_potential();
-        env.took_blocks = env.course.duel.is_some() || env.player.blocks() == 0 || env.player.held() > 0;
+        env.took_blocks = (env.course.duel.is_some() && !env.course.needs_blocks) || env.player.blocks() == 0 || env.player.held() > 0;
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
@@ -751,6 +754,10 @@ impl Env {
         // Points: what was dealt and taken, the result, and the shaping (shaping.rs: zero-sum, the event bonuses
         // weighted, aim as a potential).
         let mut reward = self.points(P_TIME, -TICK_COST);
+        if !self.took_blocks && self.player.held() > 0 {
+            self.took_blocks = true; // a fight that needs blocks to get to the opponent (Course.needs_blocks)
+            reward += self.points(P_TOOK_BLOCKS, TOOK_BLOCKS_BONUS);
+        }
         let mine = shaping::events(ev.landed, if input.attack { Some(ev.struck) } else { None });
         let theirs: Vec<[f64; 3]> = self.opponents.iter().map(|o| shaping::events(o.landed, o.swing)).collect();
         let [long, crit, swing] = shaping::zero_sum(mine, &theirs, self.opponents.len(), self.bonus_weight);
@@ -759,7 +766,9 @@ impl Env {
         reward += self.points(P_SWING, swing);
         let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);
-        reward += self.points(P_DEALT, HEALTH_POINTS * dealt as f64);
+        // Damage pays in full only from a hit with a sword: a hit with blocks or a tool in hand pays a sliver (NON_SWORD).
+        let with = if ev.landed.is_some_and(|l| !l.2) { shaping::NON_SWORD } else { 1.0 };
+        reward += self.points(P_DEALT, with * HEALTH_POINTS * dealt as f64);
         reward += self.points(P_TAKEN, -HEALTH_POINTS * taken as f64);
         self.damage += taken as f64;
         let line = self.fall_line();
@@ -1169,7 +1178,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             if counted {
                 *since_hit = 0;
                 opponents[j].since_hurt = 0;
-                landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling));
+                landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling, s.sword));
             }
             if broke {
                 player.server_sprinting = false;
@@ -1186,7 +1195,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
                 if counted {
                     *since_hurt = 0;
                     o.since_hit = 0;
-                    o.landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling));
+                    o.landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling, s.sword));
                 }
                 if broke {
                     o.player.server_sprinting = false;
@@ -1242,7 +1251,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         if counted {
             *since_hurt = 0;
             opponents[j].since_hit = 0;
-            opponents[j].landed = Some(((s.pos[0] - my_pos[0]).hypot(s.pos[2] - my_pos[2]), s.falling));
+            opponents[j].landed = Some(((s.pos[0] - my_pos[0]).hypot(s.pos[2] - my_pos[2]), s.falling, s.sword));
         }
         if broke {
             opponents[j].player.server_sprinting = false;
@@ -1352,6 +1361,7 @@ mod tests {
             blocks: 0, // as the opponent: the same gear on both sides
             hotbar: rival_hotbar(&[Stack::default(); SLOTS], 5.0).0,
             slot: 0,
+            needs_blocks: false,
             world: w,
             settle: false,
             pushes: vec![],
@@ -1449,14 +1459,14 @@ mod tests {
         let mut queued = Some((Swing::of(&p), 0));
         let (mut since_hit, mut since_hurt) = (99, 99);
         let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut queued);
-        let (across, critical) = ev.landed.expect("the hit counts");
+        let (across, critical, _) = ev.landed.expect("the hit counts");
         assert!((across - 2.5).abs() < 1e-9 && !critical, "{across} {critical}");
         let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.5);
         p.fall_distance = 0.5;
         p.on_ground = false;
         let mut queued = Some((Swing::of(&p), 0));
         let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut queued);
-        assert!(ev.landed.is_some_and(|(_, c)| c), "a hit while falling is critical");
+        assert!(ev.landed.is_some_and(|(_, c, _)| c), "a hit while falling is critical");
         let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 1, &mut since_hit, &mut since_hurt, &mut None);
         assert!(ev.landed.is_none(), "nothing landed this tick");
     }

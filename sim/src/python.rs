@@ -146,8 +146,8 @@ impl Single {
             ev
         };
         let d = self.state(py)?;
-        if let Some((across, critical)) = ev.landed {
-            d.set_item("landed", (across, critical))?; // as the mod reports the model's counted hit
+        if let Some((across, critical, sword)) = ev.landed {
+            d.set_item("landed", (across, critical, sword))?; // as the mod reports the model's counted hit
         }
         if ev.struck {
             d.set_item("struck", true)?; // its click was on an opponent, as the mod reports it
@@ -346,6 +346,7 @@ impl Batch {
                 _ => crate::player::blocks_hotbar(get(spec, "blocks")?), // the blocks in the first slot, selected
             },
             slot: spec.get_item("slot")?.map(|v| v.extract::<u8>()).transpose()?.unwrap_or(0),
+            needs_blocks: spec.get_item("needs_blocks")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
             world,
             settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
             rules18: spec.get_item("rules18")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
@@ -560,6 +561,7 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fight_potential, m)?)?;
     m.add_function(wrap_pyfunction!(fight_events, m)?)?;
     m.add("GAMMA", crate::shaping::GAMMA)?;
+    m.add("NON_SWORD", crate::shaping::NON_SWORD)?;
     m.add_function(wrap_pyfunction!(bot_action, m)?)?;
     m.add("MOVE_OBS", MOVE_OBS)?;
     m.add("EXTRA", EXTRA)?;
@@ -621,7 +623,7 @@ fn fight_potential(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, enemies
 /// each opponent's (landed, swing), as the game reports them.
 #[pyfunction]
 #[pyo3(signature = (landed, swing, foes, weight))]
-fn fight_events(landed: Option<(f64, bool)>, swing: Option<bool>, foes: Vec<(Option<(f64, bool)>, Option<bool>)>, weight: f64) -> [f64; 3] {
+fn fight_events(landed: Option<(f64, bool, bool)>, swing: Option<bool>, foes: Vec<(Option<(f64, bool, bool)>, Option<bool>)>, weight: f64) -> [f64; 3] {
     let theirs: Vec<[f64; 3]> = foes.iter().map(|(l, s)| crate::shaping::events(*l, *s)).collect();
     crate::shaping::zero_sum(crate::shaping::events(landed, swing), &theirs, foes.len(), weight)
 }

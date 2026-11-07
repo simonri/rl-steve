@@ -77,7 +77,7 @@ class CourseMaker(AutoEnv):
             settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
             pushes=[(int(a), int(b), int(c), float(d), float(e)) for a, b, c, d, e in self.pushes],
             rules18=RULES18,
-            hotbar=[(int(k), int(c)) for k, c in spec["hotbar"]], slot=int(spec["slot"]),  # AutoEnv._with_hotbar
+            hotbar=[(int(k), int(c)) for k, c in spec["hotbar"]], slot=int(spec["slot"]), needs_blocks=bool(spec["needs_blocks"]),  # AutoEnv._with_hotbar
             duel=dict(damage=float(self.duel["damage"]), armor=int(self.duel["armor"]), kb=int(self.duel["kb"]), centre=[float(v) for v in self.duel["centre"]],
                       opponents=[(int(b), [float(v) for v in p], float(y), float(d), int(a), int(k)) for b, p, y, d, a, k in self.duel["opponents"]]) if self.family == "duel" else None,
         ), dict(family=self.family, tested=self.tested, at=[self.levels[self.family][d] for d in curriculum.FAMILIES[self.family]])

@@ -120,6 +120,7 @@ pub struct Swing {
     pub sprinting: bool, // the server's sprint flag
     pub damage: f32,     // attack attribute
     pub kb_enchant: i32,
+    pub sword: bool, // a sword in hand: only its hits pay in full (shaping::NON_SWORD)
 }
 
 impl Swing {
@@ -131,6 +132,7 @@ impl Swing {
             sprinting: p.server_sprinting,
             damage: if p.holds_sword() { p.attack_damage } else { 1.0 }, // the sword in hand, or a bare hit (blocks, fist, a tool)
             kb_enchant: p.kb_enchant,
+            sword: p.holds_sword(),
         }
     }
 }
@@ -206,7 +208,7 @@ mod tests {
     }
 
     fn swing(sword: f32, falling: bool, sprinting: bool) -> Swing {
-        Swing { pos: [1.3, 100.0, 0.4], yaw: -72.0, falling, sprinting, damage: 1.0 + sword, kb_enchant: 0 }
+        Swing { pos: [1.3, 100.0, 0.4], yaw: -72.0, falling, sprinting, damage: 1.0 + sword, kb_enchant: 0, sword: true }
     }
 
     /// The same cases as python/combat18.py vectors(): health and motion after one hit.
@@ -251,7 +253,7 @@ mod tests {
     #[test]
     fn resistance() {
         let mut v = victim();
-        let s = |d: f32| Swing { pos: [1.0, 100.0, 0.0], yaw: 0.0, falling: false, sprinting: false, damage: d, kb_enchant: 0 };
+        let s = |d: f32| Swing { pos: [1.0, 100.0, 0.0], yaw: 0.0, falling: false, sprinting: false, damage: d, kb_enchant: 0, sword: true };
         assert!({ let at = v.pos; hit(&s(5.0), &mut v, at) }.0);
         v.resist -= 5;
         assert!(!{ let at = v.pos; hit(&s(4.0), &mut v, at) }.0, "a weaker hit inside the resistance does nothing");

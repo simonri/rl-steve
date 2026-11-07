@@ -1123,6 +1123,7 @@ public final class McBridge implements ClientModInitializer {
             JsonArray h = new JsonArray();
             h.add(hit[0]);
             h.add(hit[1] != 0);
+            h.add(hit[2] != 0); // with a sword in hand
             o.add("landed", h);
         }
         o.addProperty("health", pl.getHealth());

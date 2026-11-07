@@ -207,6 +207,8 @@ class AutoEnv(SkillEnv):
             x, z = world(a, s)
             boxes.append([x, Y, z, x, Y, z])
         self.goal_x, self.goal_z = world(d, 0)
+        # Only by building: more void between the islands than a jump clears (a 2-block gap is jumped).
+        self.needs_blocks = t["arena"] == "gap" and d - 2 >= 3
         self.dy = 0
         self.par, self.blocks_given, self.walk_par = 0, DUEL_BLOCKS, 0
         mine, theirs = combat18.duel_gear(t["gear"])
@@ -254,6 +256,7 @@ class AutoEnv(SkillEnv):
         spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
         spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give
         spec["slot"] = self.hotbar_slot
+        spec["needs_blocks"] = bool(self.family == "duel" and self.needs_blocks)
         # The course's own blocks are Bed Wars shop blocks too (the mod builds its platforms of this). Not glass: the
         # simulator builds platforms as full cubes, and glass does not push a player out of it (world.rs CLEAR).
         floor = ("wool", "hardened clay", "end stone", "oak planks", "obsidian")
@@ -791,7 +794,8 @@ class AutoEnv(SkillEnv):
     def _begin_episode(self):
         k, c = self.hotbar[self.hotbar_slot] if getattr(self, "hotbar", None) else (0, 0)
         has_blocks = any(items.placeable(k_) and c_ > 0 for k_, c_ in getattr(self, "hotbar", []))
-        self.took_blocks = self.family == "duel" or not has_blocks or (items.placeable(k) and c > 0)  # env.rs took_blocks
+        needs = self.family == "duel" and getattr(self, "needs_blocks", False)
+        self.took_blocks = (self.family == "duel" and not needs) or not has_blocks or (items.placeable(k) and c > 0)  # env.rs took_blocks
         self.visited = set()
         self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
@@ -881,6 +885,14 @@ class AutoEnv(SkillEnv):
         self.delayed.append(vec)
         return self._with_timer(np.concatenate([self.delayed[0], *self.history, self._combat(self.obs)]))
 
+    @staticmethod
+    def _landed(h):
+        """A counted hit as the game reports it: (feet distance across, critical, with a sword); a report without the
+        third value is from a sword (the bots always hold theirs)."""
+        if not h:
+            return None
+        return (float(h[0]), bool(h[1]), bool(h[2]) if len(h) > 2 else True)
+
     def _fight_potential(self, o):
         """shaping::potential (env.rs fight_potential): its aim at the opponents still in the fight, minus theirs at it."""
         return mcsim.fight_potential(list(o["pos"]), float(o["yaw"]), float(o["pitch"]), bool(o.get("crouch_pose", o.get("sneaking", False))),
@@ -926,19 +938,24 @@ class AutoEnv(SkillEnv):
             self._mark_dirty(c)
             self.placed_cells.append(c[:3])
         reward = self._points("time", -TICK_COST)
+        if not self.took_blocks and self._in_hand(o) > 0:  # a fight that needs blocks (env.rs needs_blocks): found them
+            self.took_blocks = True
+            reward += self._points("took blocks", TOOK_BLOCKS_BONUS)
         players = o.get("players", [])
         # The event bonuses, zero-sum and weighted (shaping.rs): the game says whether its click was on an opponent in
-        # reach ("struck"), its hit that counted ("landed": feet distance across, critical), and the same per opponent.
-        landed = o.get("landed")
-        foes = [(tuple(p["landed"]) if p.get("landed") else None, p.get("swing")) for p in players]
-        long, crit, swing = mcsim.fight_events(tuple(landed) if landed else None, bool(o.get("struck")) if attack else None, foes, self.bonus_weight)
+        # reach ("struck"), its hit that counted ("landed": feet distance across, critical, with a sword), and the same
+        # per opponent. Only a hit with a sword pays in full (shaping.rs NON_SWORD).
+        landed = self._landed(o.get("landed"))
+        foes = [(self._landed(p.get("landed")), p.get("swing")) for p in players]
+        long, crit, swing = mcsim.fight_events(landed, bool(o.get("struck")) if attack else None, foes, self.bonus_weight)
         reward += self._points("long hit", long)
         reward += self._points("critical hit", crit)
         reward += self._points("missed swing", swing)
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
         died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost
         taken = mine if died else max(0.0, mine - o["health"])
-        reward += self._points("damage dealt", HEALTH_POINTS * dealt)
+        with_ = mcsim.NON_SWORD if landed is not None and not landed[2] else 1.0  # env.rs: damage pays in full only from a sword
+        reward += self._points("damage dealt", with_ * HEALTH_POINTS * dealt)
         reward += self._points("damage taken", -HEALTH_POINTS * taken)
         self.damage += taken
         line = self._fall_line()

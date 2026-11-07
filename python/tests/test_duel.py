@@ -185,6 +185,40 @@ def main():
         v.step_wait()
     paid = np.array([v.batch.report(i)["parts"].get("took blocks", 0.0) for i in range(64)])
     assert np.allclose(paid[~holds], auto_env.TOOK_BLOCKS_BONUS * 0.1) and np.all(paid[holds] == 0), (paid, holds)
+    # The same in a fight that can only be won by building (gap arena, 5+ blocks of void): it starts with the sword,
+    # and the first time it has blocks in hand pays once. A fight on a platform never pays it.
+    for arena, distance, pays in (("gap", 2, True), ("gap", 1, False), ("platform", 2, False)):
+        lv = curriculum.Curriculum().levels
+        lv["duel"].update(arena=curriculum.FAMILIES["duel"]["arena"].index(arena), distance=distance, bot=0)
+        v = SimVecEnv(8, lv, seed=9)
+        v.env_method("set_exam", "duel", True)
+        obs = v.reset()
+        hb = obs[:, mcsim.MOVE_OBS + mcsim.EXTRA - items.HOTBAR_F :]
+        a = idle(obs, 0)
+        a[:, 9] = [next(s for s in range(items.SLOTS) if items.placeable(int(np.argmax(hb[i, s * K : s * K + K - 1])))) + 1 for i in range(8)]
+        v.step_async(a)
+        v.step_wait()
+        paid = [v.batch.report(i)["parts"].get("took blocks", 0.0) for i in range(8)]
+        assert all((p > 0) == pays for p in paid), (arena, distance, paid)
+    # Only a hit with a sword pays in full: the same hits on the dummy with blocks in hand pay NON_SWORD of it.
+    dealt = {}
+    for hand in ("sword", "blocks"):
+        lv = curriculum.Curriculum().levels
+        lv["duel"].update(bot=0, distance=0, yaw=0, arena=0)
+        v = SimVecEnv(4, lv, seed=5)
+        v.env_method("set_exam", "duel", True)
+        obs = v.reset()
+        hb = obs[:, mcsim.MOVE_OBS + mcsim.EXTRA - items.HOTBAR_F :]
+        for t in range(30):
+            a = idle(obs, t)
+            a[:, 8] = t % 3 == 0
+            if t == 0 and hand == "blocks":
+                a[:, 9] = [next(s for s in range(items.SLOTS) if items.placeable(int(np.argmax(hb[i, s * K : s * K + K - 1])))) + 1 for i in range(4)]
+            v.step_async(a)
+            obs, _, _, _ = v.step_wait()
+        dealt[hand] = v.batch.report(0)["parts"].get("damage dealt", 0.0)
+    # A sword does 5 a hit, blocks 1: per hit that lands, blocks pay 1/5 of the damage and NON_SWORD of the points for it.
+    assert dealt["sword"] > 0 and 0 < dealt["blocks"] < dealt["sword"] * mcsim.NON_SWORD, dealt
     print("duel ok")
 
 

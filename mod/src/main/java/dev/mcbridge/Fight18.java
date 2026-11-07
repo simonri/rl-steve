@@ -162,7 +162,8 @@ public final class Fight18 {
         }
         a.sinceHit = 0;
         v.sinceHurt = 0;
-        double[] hit = {Math.hypot(attacker.getX() - victim.getX(), attacker.getZ() - victim.getZ()), falling ? 1 : 0};
+        // Feet distance across, critical, and a sword in hand (only a sword's hit pays in full: shaping.rs NON_SWORD).
+        double[] hit = {Math.hypot(attacker.getX() - victim.getX(), attacker.getZ() - victim.getZ()), falling ? 1 : 0, isSword(attacker.getMainHandItem()) ? 1 : 0};
         if (!(attacker instanceof Bot)) landed = hit;
         return hit;
     }
@@ -514,6 +515,7 @@ public final class Fight18 {
                 JsonArray h = new JsonArray();
                 h.add(hit[0]);
                 h.add(hit[1] != 0);
+                h.add(hit[2] != 0);
                 e.add("landed", h);
             }
             out.add(e);

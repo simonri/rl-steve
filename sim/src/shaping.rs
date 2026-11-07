@@ -26,6 +26,10 @@ pub const LONG_HIT_FROM: f64 = 2.0;
 pub const CRIT_POINTS: f64 = 0.3;
 /// A left click that is not on an opponent in reach.
 pub const SWING_COST: f64 = 0.01;
+/// A hit with anything but a sword in hand (blocks, a tool, a bare hand) pays this share of a sword's: its damage and
+/// its long-hit and critical-hit points. Fights are won with the sword; a hit with blocks in hand is a mistake that
+/// happens to land.
+pub const NON_SWORD: f64 = 0.1;
 
 /// The angle, in radians, between `p`'s view and the line from its eyes to the chest of a player standing at `at`.
 pub fn aim_error(p: &Player, at: [f64; 3]) -> f64 {
@@ -57,13 +61,15 @@ pub fn potential(me: &Player, foes: &[(&Player, bool)]) -> f64 {
 }
 
 /// One player's event points this tick, before the weight: [long hit, critical hit, missed swing]. `landed` is its
-/// hit that counted (distance across, critical), `swing` its left click (Some(whether it was on an opponent)).
-pub fn events(landed: Option<(f64, bool)>, swing: Option<bool>) -> [f64; 3] {
+/// hit that counted (distance across, critical, with a sword), `swing` its left click (Some(whether it was on an
+/// opponent)).
+pub fn events(landed: Option<(f64, bool, bool)>, swing: Option<bool>) -> [f64; 3] {
     let mut e = [0.0; 3];
-    if let Some((across, critical)) = landed {
-        e[0] = LONG_HIT_POINTS * (across - LONG_HIT_FROM).max(0.0);
+    if let Some((across, critical, sword)) = landed {
+        let k = if sword { 1.0 } else { NON_SWORD };
+        e[0] = k * LONG_HIT_POINTS * (across - LONG_HIT_FROM).max(0.0);
         if critical {
-            e[1] = CRIT_POINTS;
+            e[1] = k * CRIT_POINTS;
         }
     }
     if swing == Some(false) {
@@ -110,7 +116,8 @@ mod tests {
 
     #[test]
     fn the_same_play_on_both_sides_nets_nothing() {
-        let e = events(Some((3.0, true)), Some(true));
+        let e = events(Some((3.0, true, true)), Some(true));
+        assert!((events(Some((3.0, true, false)), Some(true))[1] - NON_SWORD * CRIT_POINTS).abs() < 1e-12, "a hit with blocks pays a sliver");
         assert_eq!(zero_sum(e, &[e], 1, 1.0), [0.0; 3]);
         let missed = events(None, Some(false));
         assert_eq!(zero_sum(missed, &[[0.0; 3]], 1, 0.5)[2], -SWING_COST * 0.5);
