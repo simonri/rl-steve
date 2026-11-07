@@ -240,6 +240,7 @@ pub struct Env {
     pub opponents: Vec<Opponent>,
     history2: [[f32; HIST_F]; HISTORY],
     queued: Option<(Swing, usize)>, // the model's hit, on its way to the server
+    target: Option<[f64; 3]>,       // in a fight, the goal: the nearest opponent where it last stood over the floor
     since_hit: i32,
     since_hurt: i32,
 }
@@ -341,6 +342,7 @@ impl Env {
             opponents: Vec::new(),
             history2: [[0.0; HIST_F]; HISTORY],
             queued: None,
+            target: None,
             since_hit: 99,
             since_hurt: 99,
             course,
@@ -350,10 +352,25 @@ impl Env {
                 env.opponents.push(Opponent::new(r, env.course.rules18));
             }
         }
+        env.track_target();
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
         env
+    }
+
+    /// AutoEnv._target: in a fight, the goal moves to the nearest opponent still in it that stands over the arena's
+    /// floor. One going over the edge leaves it where it last was over the floor, so the goal is never out over the void.
+    fn track_target(&mut self) {
+        if self.course.duel.is_none() {
+            return;
+        }
+        let me = self.player.pos;
+        let world = &self.world;
+        let over_floor = |p: &[f64; 3]| world.present(p[0].floor() as i32, Y, p[2].floor() as i32);
+        if let Some(t) = self.opponents.iter().filter(|o| !o.gone() && over_floor(&o.player.pos)).map(|o| o.player.pos).min_by(|a, b| duel::dist2(a, &me).total_cmp(&duel::dist2(b, &me))) {
+            self.target = Some(t);
+        }
     }
 
     // ---- Where it is on the course ----
@@ -622,6 +639,7 @@ impl Env {
         let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
         let my_health = self.player.shown_health();
         fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
+        self.track_target();
         self.tick_count += 1;
         self.t += 1;
         self.hit = self.player.pick(&self.world);
@@ -642,7 +660,9 @@ impl Env {
         if matches!(combat::aim(&self.player, &self.world, &boxes), combat::Aim::Player(_)) {
             reward += self.points(P_AIMED, AIM_POINTS);
         }
-        let won = self.opponents.iter().all(|o| o.out);
+        // Won only alive and standing: knocking the last opponent off by falling after it is a loss, however late the
+        // fall would count.
+        let won = self.opponents.iter().all(|o| o.out) && self.player.on_ground && self.player.pos[1] >= line && self.player.shown_health() > 0.0;
         let lost = !won && (self.player.shown_health() <= 0.0 || self.player.pos[1] < line);
         if won {
             reward += self.points(P_WON, FIGHT_RESULT);
@@ -739,10 +759,9 @@ impl Env {
         let turn = (p.yaw as f64).to_radians();
         let (fw, rt) = ((-turn.sin(), turn.cos()), (-turn.cos(), -turn.sin()));
         let ego = |dx: f64, dz: f64| (dx * fw.0 + dz * fw.1, dx * rt.0 + dz * rt.1);
-        // The goal: the course's, or in a fight the nearest opponent still in it, wherever it is now (AutoEnv._target).
-        let fight = self.opponents.iter().filter(|o| !o.gone()).map(|o| o.player.pos).min_by(|a, b| duel::dist2(a, &p.pos).total_cmp(&duel::dist2(b, &p.pos)));
-        let (gx, gz, goal_up) = match fight {
-            Some(t) if c.duel.is_some() => (t[0] - x, t[2] - z, t[1] - y),
+        // The goal: the course's, or in a fight the nearest opponent over the floor (track_target).
+        let (gx, gz, goal_up) = match self.target {
+            Some(t) => (t[0] - x, t[2] - z, t[1] - y),
             _ => (c.goal[0] as f64 + 0.5 - x, c.goal[1] as f64 + 0.5 - z, (Y + 1 + c.dy) as f64 - y),
         };
         let distance = gx.hypot(gz);

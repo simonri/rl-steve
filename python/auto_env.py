@@ -743,6 +743,7 @@ class AutoEnv(SkillEnv):
         self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
         self.placed_cells = []  # blocks placed this round (_arena_floor)
+        self.target = None  # in a fight, the goal (_target)
         self._plan_pushes()
         self.next_push, self.pushed, self.push_airborne, self.pushes_given = 0, False, False, 0
         super()._begin_episode()
@@ -873,7 +874,9 @@ class AutoEnv(SkillEnv):
         tail = self._combat(o)  # feature 17 of the nearest opponent: the crosshair is on it, in reach (env.rs aim)
         if any(tail[i * mcsim.ENEMY_F + 17] > 0.5 for i in range(3)):
             reward += self._points("aimed", AIM_POINTS)
-        won = all(self.out)
+        # Won only alive and standing: knocking the last opponent off by falling after it is a loss (env.rs). A death
+        # the game has already respawned from stands at the spawn, so it is checked first.
+        won = all(self.out) and not died and o["health"] > 0 and bool(o["on_ground"]) and o["pos"][1] >= line
         lost = not won and (died or o["health"] <= 0 or o["pos"][1] < line)
         if won:
             reward += self._points("won", FIGHT_RESULT)
@@ -887,14 +890,19 @@ class AutoEnv(SkillEnv):
         return float(reward) * self.reward_scale, term, False, info
 
     def _target(self, o):
-        """In a fight, where the nearest opponent still in it stands (env.rs observe): the goal the model goes for.
-        None outside fights, and before the game shows any opponent."""
+        """In a fight, the goal the model goes for (env.rs track_target): the nearest opponent still in it that stands
+        over the arena's floor. One going over the edge leaves the goal where it last was over the floor, so the goal is
+        never out over the void. None outside fights, and before the game shows any opponent."""
         if self.family != "duel":
             return None
         out = getattr(self, "out", [])
         here = o["pos"]
-        alive = [p["pos"] for i, p in enumerate(o.get("players", [])) if not (i < len(out) and out[i]) and p["health"] > 0]
-        return min(alive, key=lambda q: (q[0] - here[0]) ** 2 + (q[1] - here[1]) ** 2 + (q[2] - here[2]) ** 2) if alive else None
+        floor = self._arena_floor()
+        over = lambda q: any(b[0] <= math.floor(q[0]) <= b[3] and b[1] <= Y <= b[4] and b[2] <= math.floor(q[2]) <= b[5] for b in floor)
+        alive = [p["pos"] for i, p in enumerate(o.get("players", [])) if not (i < len(out) and out[i]) and p["health"] > 0 and over(p["pos"])]
+        if alive:
+            self.target = min(alive, key=lambda q: (q[0] - here[0]) ** 2 + (q[1] - here[1]) ** 2 + (q[2] - here[2]) ** 2)
+        return getattr(self, "target", None)
 
     def _fall_line(self):
         """Below this the round counts as a fall (env.rs fall_line): the lower of start and goal, less the margin."""

@@ -80,6 +80,33 @@ def main():
         obs, _, dones, infos = vec.step_wait()
         aimed += [infos[i]["parts"].get("aimed", 0.0) for i in np.flatnonzero(dones)]
     assert aimed and max(aimed) > 0 and max(aimed) <= 3.0 * 0.1 + 1e-9, aimed  # parts are after the reward scale (0.1)
+    # A win is only a win alive and standing: a fighter that runs on after its hit, off the island, never wins while it
+    # is in the air or falling, and falling off after the dummy is a loss.
+    import skill_env
+    from auto_env import AutoEnv
+    from sim_env import FakeClient
+    skill_env.McClient = FakeClient
+    levels = curriculum.Curriculum().levels
+    levels["duel"].update(bot=0, arena=1)
+    results = []
+    for seed in range(8):
+        env = AutoEnv(0)
+        env.set_levels(levels)
+        env.set_exam("duel", False)
+        env.reset(seed=seed)
+        while True:
+            o = env.obs
+            p = o["players"][0]
+            dx, dz = p["pos"][0] - o["pos"][0], p["pos"][2] - o["pos"][2]
+            dyaw = (np.degrees(np.arctan2(-dx, dz)) - o["yaw"] + 540) % 360 - 180
+            yaw = int(np.argmin([abs(s - dyaw) for s in (-60, -15, -5, -2, -0.5, 0, 0.5, 2, 5, 15, 60)]))
+            _, _, term, trunc, info = env.step(np.array([1, 0, 0, 0, 0, 1, yaw, 5, env.t % 2]))  # sprint on, through it
+            if term or trunc:
+                if info["success"]:
+                    assert env.obs["on_ground"] and env.obs["pos"][1] >= env._fall_line(), (seed, env.obs["pos"], env.obs["on_ground"])
+                results.append((info["success"], info["deaths"]))
+                break
+    assert any(lost for _, lost in results), results  # running on, it does go over the edge
     print("duel ok")
 
 
