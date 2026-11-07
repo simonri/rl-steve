@@ -679,7 +679,7 @@ impl Env {
             }
         }
         let boxes: Vec<Option<_>> = self.opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
-        if matches!(combat::aim(&self.player, &self.world, &boxes), combat::Aim::Player(_)) {
+        if combat::aimed_at(&self.player, &self.world, &boxes).is_some() {
             reward += self.points(P_AIMED, AIM_POINTS);
         }
         // Won only alive and standing: knocking the last opponent off by falling after it is a loss, however late the

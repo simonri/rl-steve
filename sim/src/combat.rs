@@ -67,6 +67,27 @@ pub fn aim(p: &Player, world: &World, others: &[Option<Aabb>]) -> Aim {
     }
 }
 
+/// The view within this of the line to an opponent's chest counts as aiming at it (aimed_at).
+const AIM_CONE_COS: f64 = 0.8660254037844387; // cos 30 degrees
+
+/// Aiming at an opponent the way a player does: the crosshair on it (`aim`) from outside its box, the view toward its
+/// chest. The game also lands a click from inside the box whatever the view (players pass through each other), but
+/// that is standing in someone, not aiming: the model's input and its aim points go by this instead.
+pub fn aimed_at(p: &Player, world: &World, others: &[Option<Aabb>]) -> Option<usize> {
+    let Aim::Player(i) = aim(p, world, others) else { return None };
+    let b = others[i]?;
+    let eye = p.eye();
+    let inside = (0..3).all(|k| b.min[k] <= eye[k] && eye[k] <= b.max[k]);
+    if inside {
+        return None;
+    }
+    let chest = [(b.min[0] + b.max[0]) / 2.0, b.min[1] + 1.2, (b.min[2] + b.max[2]) / 2.0];
+    let d = [chest[0] - eye[0], chest[1] - eye[1], chest[2] - eye[2]];
+    let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let v = p.view();
+    (n > 1e-6 && (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / n >= AIM_CONE_COS).then_some(i)
+}
+
 /// A left click: hits whoever `aim` finds. Returns the target.
 ///
 /// A click on nothing never makes the next one wait: the 10-tick attack lock it sets (26.3 Minecraft.missTime, 1.8.9
@@ -238,6 +259,21 @@ mod tests {
         assert!((v.health - 12.5).abs() < 1e-6, "only the difference counts: {}", v.health);
         v.resist = 10;
         assert!({ let at = v.pos; hit(&s(1.0), &mut v, at) }.0, "from the second half on, any hit counts in full");
+    }
+
+    /// Aiming means from outside the box and toward the chest: standing in someone and looking up is not aiming, though
+    /// a click from there lands.
+    #[test]
+    fn aiming_is_looking_at_it() {
+        let w = World::new([-10, 90, -10], [10, 110, 10]);
+        let foe = Player::new([0.5, 100.0, 2.5], 0.0, 0.0, 0);
+        let p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
+        assert_eq!(aimed_at(&p, &w, &[Some(body(&foe))]), Some(0), "straight at it, 2 blocks");
+        let up = Player::new([0.5, 100.0, 0.5], 0.0, -80.0, 0);
+        assert_eq!(aimed_at(&up, &w, &[Some(body(&foe))]), None, "looking up");
+        let inside = Player::new([0.5, 100.0, 2.4], 0.0, -80.0, 0);
+        assert_eq!(aim(&inside, &w, &[Some(body(&foe))]), Aim::Player(0), "the game lands it from inside");
+        assert_eq!(aimed_at(&inside, &w, &[Some(body(&foe))]), None, "but that is not aiming");
     }
 
     /// A sword hits for its damage; blocks or a bare hand in hand hit for 1, as in 1.8.
