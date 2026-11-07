@@ -50,6 +50,9 @@ def main():
     p.add_argument("--hl-gauss", action="store_true", help="the value as a distribution over bins (HL-Gauss)")
     p.add_argument("--exploit", help="train only to beat this frozen model in duels, then measure how often it does (exploit.json)")
     p.add_argument("--gamma", type=float, help=f"the discount (default {ta.GAMMA}); the aim potential's shaping uses the same one. Kept in net.json")
+    p.add_argument("--kick", help="kickstart from this teacher model: a pull toward its moves that fades out (train_auto.Kickstart). Kept in net.json")
+    p.add_argument("--kick-weight", type=float, default=1.0, help="the pull at the start")
+    p.add_argument("--kick-over", type=int, default=20_000_000, help="decisions until the pull is gone")
     p.add_argument("--minutes", type=float, help="stop after this long (experiments that compare settings at the same wall-clock time)")
     p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
@@ -75,7 +78,8 @@ def main():
     vec = SimVecEnv(a.envs, curriculum.levels, seed=a.seed)
     net_file = out / "net.json"
     net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities,
-                                                                           hl_gauss=a.hl_gauss, gamma=a.gamma or ta.GAMMA)
+                                                                           hl_gauss=a.hl_gauss, gamma=a.gamma or ta.GAMMA,
+                                                                           kick=dict(teacher=str(Path(a.kick).resolve()), weight=a.kick_weight, over=a.kick_over) if a.kick else None)
     net.setdefault("hl_gauss", False)
     net.setdefault("gamma", ta.GAMMA)  # runs from before it could be set
     if a.gamma and a.gamma != net["gamma"]:
@@ -87,6 +91,11 @@ def main():
     kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=net["gamma"], gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"], hl_gauss=net["hl_gauss"]), seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
+    if net.get("kick"):
+        k = net["kick"]
+        model.rollout_buffer.kick = ta.Kickstart(ta.load_policy(k["teacher"], model.device), k["weight"], k["over"])
+        model.rollout_buffer.reset()
+        print(f"kickstart from {k['teacher']}: pull {k['weight']} fading to 0 at {k['over']} decisions", flush=True)
     ta.fast_convolutions()
     resumed_steps = 0
     warmup = saved_state.get("value_warmup", 0)

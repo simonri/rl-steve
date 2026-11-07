@@ -200,6 +200,11 @@ Måtten vi styrde efter var till stor del brus (auto7, november 2026): reglagen 
   beräkningen och vann sedan 98 % mot originalet, som hade fastnat lägre efter 20 omformningar. Ingen inspelad data:
   den nya ska inte ärva den gamlas vanor. Går det för sakta finns kickstarting (Schmitt m.fl. 2018): en dragning
   mot auto7:s val som trappas ner till noll.
+- **Kickstarting** (`--kick LÄRARE`, `train_auto.Kickstart`): auto8 från noll hittade aldrig bridge (0 av 60 på
+  första nivån efter 10M). Lärarens val sparas för varje tick i rundorna modellen själv spelar, och
+  korsentropin mot dem läggs till förlusten med vikt 1, som faller linjärt till 0 vid 20M beslut. Därefter räknas
+  bara belöningen. Hotbar-tangenten lärs inte ut: läraren tar aldrig fram sina block, och det är en vana den nya
+  inte ska få.
 
 ## Det vi inte gör (nu)
 

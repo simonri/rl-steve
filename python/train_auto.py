@@ -249,6 +249,49 @@ def make_env(port, levels):
 STRETCH = 32
 
 
+KICK_HEADS = 9  # the hotbar key (the last action) is left out: the teacher never learnt to find its blocks
+
+
+class Kickstart:
+    """A teacher's moves as an extra pull on a model learning from scratch, fading to nothing (Schmitt et al. 2018,
+    "Kickstarting Deep Reinforcement Learning", arXiv 1803.03835).
+
+    Why: from scratch auto8 never found bridging (0 of 60 rounds at the first level after 10M decisions): a bridge pays
+    only after crouching to the edge, looking back down and placing, in that order. A teacher shows how, on the
+    rounds the new model itself is playing, which old recordings could not. The pull is the cross-entropy from the
+    teacher's choices to the model's, weighted by `weight` at the start and falling linearly to 0 at `over` decisions:
+    after that only the reward counts, so it keeps none of the teacher's habits it cannot justify. The hotbar key is
+    not taught (KICK_HEADS): the teacher never takes its blocks out, and that is a habit to lose."""
+
+    def __init__(self, teacher, weight=1.0, over=20_000_000):
+        self.policy = teacher
+        self.policy.set_training_mode(False)
+        self.weight0, self.over = float(weight), int(over)
+        self.width = int(sum(teacher.action_space.nvec[:KICK_HEADS]))
+        self.state = None
+
+    def weight(self, steps):
+        return self.weight0 * max(0.0, 1.0 - steps / self.over)
+
+    @torch.no_grad()
+    def label(self, obs, starts):
+        """The teacher's log-probabilities for these observations, its memory carried tick to tick like the model's."""
+        p = self.policy
+        lstm = p.lstm_actor
+        if self.state is None or self.state[0].shape[1] != len(obs):
+            zeros = torch.zeros(lstm.num_layers, len(obs), lstm.hidden_size, device=p.device)
+            self.state = (zeros, zeros.clone())
+        dist, self.state = p.get_distribution(torch.as_tensor(obs, device=p.device), self.state,
+                                              torch.as_tensor(starts, dtype=torch.float32, device=p.device))
+        return torch.cat([torch.log_softmax(d.logits, -1) for d in dist.distribution[:KICK_HEADS]], 1).cpu().numpy()
+
+    @staticmethod
+    def cross_entropy(teacher, dist):
+        """Per tick: -sum over the taught actions of p_teacher * log p_model."""
+        mine = torch.cat([torch.log_softmax(d.logits, -1) for d in dist.distribution[:KICK_HEADS]], 1)
+        return -(teacher.exp() * mine).sum(-1)  # a padding row (teacher -inf) gives 0
+
+
 class ShortStretches(RecurrentRolloutBuffer):
     """Hands the learner its batches as pieces of rounds, each padded to the longest piece.
 
@@ -257,9 +300,23 @@ class ShortStretches(RecurrentRolloutBuffer):
     graphics card on its own, thousands of small copies that took most of the learning time; this sends the whole
     stretch of play once and does the padding there."""
 
+    kick = None  # a Kickstart: the teacher's choices are kept for every tick (train_sim --kick)
+
     def reset(self):
         super().reset()
         self.on_card = {}
+        if self.kick is not None:
+            self.teacher = np.zeros((self.buffer_size, self.n_envs, self.kick.width), np.float32)
+
+    def add(self, *args, lstm_states, **kwargs):
+        if self.kick is not None:  # args: observations, actions, rewards, episode starts, values, log-probs
+            self.teacher[self.pos] = self.kick.label(args[0], args[3])
+        super().add(*args, lstm_states=lstm_states, **kwargs)
+
+    def get(self, batch_size=None):
+        if self.kick is not None and not self.generator_ready:
+            self.teacher = self.swap_and_flatten(self.teacher)  # in the same order as everything else
+        yield from super().get(batch_size)
 
     def _card(self, name):
         if name not in self.on_card:
@@ -287,6 +344,9 @@ class ShortStretches(RecurrentRolloutBuffer):
         firsts = picked[torch.as_tensor(first, device=self.device)]
         states = [self._card(name)[firsts].swapaxes(0, 1).contiguous() for name in ("hidden_states_pi", "cell_states_pi", "hidden_states_vf", "cell_states_vf")]
         self.last_returns = column("returns")  # for an HL-Gauss value's loss (SplitPPO.train)
+        if self.kick is not None:
+            # Padding rows get -inf: no teacher choice there, so they add nothing to the pull (SplitPPO.train).
+            self.last_teacher = pad(self._card("teacher")[picked], float("-inf"))
         return RecurrentRolloutBufferSamples(
             # What it saw is most of a stretch's memory (600 MB for 512 rounds), so it goes to the card a batch at a
             # time. With all of it there the card ran short, and cuDNN fell back to a convolution 4x slower.
@@ -341,6 +401,12 @@ class SplitPPO(RecurrentPPO):
             # How many learning steps ran before the KL stop, and what each cost: tells a slower card from more steps.
             policy, calls = self.policy, [0]
             evaluate = policy.evaluate_actions
+            kick = self.rollout_buffer.kick
+            pull = kick.weight(self.num_timesteps) if kick is not None else 0.0
+            dists, pulls = [], []
+            if pull > 0:
+                to_dist = policy._get_action_dist_from_latent
+                policy._get_action_dist_from_latent = lambda latent: dists.append(to_dist(latent)) or dists[-1]
 
             def counted(*args, **kwargs):
                 calls[0] += 1
@@ -354,6 +420,13 @@ class SplitPPO(RecurrentPPO):
                     logp = torch.log_softmax(head.last_logits, dim=-1)
                     ce = -(head.target(returns) * logp).sum(-1)
                     values = (returns - torch.sqrt(ce + 1e-12)).view_as(values)
+                if pull > 0:
+                    # The library adds ent_coef * -mean(entropy) to the loss. Handing it entropy - pull/ent_coef * CE
+                    # adds exactly pull * mean(CE): the teacher's pull, without copying its training loop.
+                    ce = kick.cross_entropy(self.rollout_buffer.last_teacher, dists.pop())
+                    real = torch.isfinite(self.rollout_buffer.last_teacher[:, 0])
+                    pulls.append(float(ce.detach()[real].mean()))
+                    entropy = entropy - (pull / self.ent_coef) * ce.view_as(entropy)
                 return values, log_prob, entropy
 
             policy.evaluate_actions = counted
@@ -364,6 +437,11 @@ class SplitPPO(RecurrentPPO):
                 super().train()
             finally:
                 del policy.evaluate_actions
+                if pull > 0:
+                    del policy._get_action_dist_from_latent
+            if pulls:
+                self.logger.record("train/kick_weight", pull)
+                self.logger.record("train/kick_ce", float(np.mean(pulls)))  # how far from the teacher, in nats
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
                 self.logger.record("train/free_card_mb", torch.cuda.mem_get_info()[0] // 2**20)
