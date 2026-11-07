@@ -9,7 +9,8 @@
 //! Names in comments are the game's methods this follows.
 
 use crate::mth;
-use crate::world::{kinds, Aabb, World, AIR, FULL};
+use crate::items::{is_sword, placeable, Stack, BLAST_PROOF_GLASS, SLOTS, WOOL};
+use crate::world::{kinds, Aabb, World, AIR, CLEAR, FULL};
 
 pub const WIDTH: f64 = 0.6;
 pub const STAND_HEIGHT: f64 = 1.8;
@@ -53,7 +54,7 @@ pub struct Input {
     pub keys: Keys,
     pub click: bool,
     pub attack: bool,     // left click: hit the player in the crosshair (combat.rs works out whom)
-    pub slot: Option<u8>, // a hotbar key: 0 blocks, 1 sword
+    pub slot: Option<u8>, // a hotbar key: the slot to select (0-8), before the clicks of the same tick
     pub turn_yaw: f64,   // degrees, sent to Entity.turn as yaw / 0.15
     pub turn_pitch: f64, // degrees
 }
@@ -94,7 +95,8 @@ pub struct Player {
     pub rules18: bool, // 1.8 healing (one point every 80 ticks) instead of Peaceful's
     pub heal_timer: i32,
     // Combat (combat.rs).
-    pub slot: u8,             // selected hotbar slot: 0 blocks, 1 sword
+    pub slot: u8,             // the selected hotbar slot, 0-8
+    pub hotbar: [Stack; SLOTS], // what is in each hotbar slot (items.rs)
     pub resist: i32,          // hurtResistantTime
     pub last_damage: f32,     // lastDamage, for hits inside the resistance
     pub attack_damage: f32,   // the attack attribute: 1, plus the sword
@@ -106,7 +108,6 @@ pub struct Player {
     pub fighting: bool, // in a fight its hurt resistance and healing count after the bots' hits (fight_tick calls count_down)
     pub direct_turn: bool, // a bot driven on the server: turned by the step itself, not through the mouse (Fight18.drive)
     pub pending_knock: Option<[f64; 3]>, // a hit's motion, applied before the next tick as the packet is
-    pub held: i32,
     pub server_motion: [f64; 3], // the server's deltaMovement for the player, sent back when it is hurt
     scratch: Vec<Aabb>,
 }
@@ -138,6 +139,7 @@ impl Player {
             rules18: false,
             heal_timer: 0,
             slot: 0,
+            hotbar: blocks_hotbar(held),
             resist: 0,
             last_damage: 0.0,
             attack_damage: 1.0,
@@ -149,7 +151,6 @@ impl Player {
             fighting: false,
             direct_turn: false,
             pending_knock: None,
-            held,
             server_motion: [0.0; 3],
             scratch: Vec::with_capacity(64),
         }
@@ -162,6 +163,38 @@ impl Player {
         self.armor = old.armor;
         self.kb_enchant = old.kb_enchant;
         self.slot = old.slot;
+        self.hotbar = old.hotbar;
+    }
+
+    /// What is in its hand: the selected slot's stack.
+    pub fn hand(&self) -> Stack {
+        self.hotbar[(self.slot as usize).min(SLOTS - 1)]
+    }
+
+    /// Blocks in its hand that a right click would place (0 when it holds something else).
+    pub fn held(&self) -> i32 {
+        let h = self.hand();
+        if placeable(h.item) {
+            h.count.max(0)
+        } else {
+            0
+        }
+    }
+
+    /// Blocks it has to place, in all of its hotbar.
+    pub fn blocks(&self) -> i32 {
+        self.hotbar.iter().filter(|s| placeable(s.item)).map(|s| s.count.max(0)).sum()
+    }
+
+    /// Holding a sword: its hits do the sword's damage (the attack attribute), any other item's do 1.
+    pub fn holds_sword(&self) -> bool {
+        is_sword(self.hand().item)
+    }
+
+    /// Sets the blocks in its hand (the selected slot becomes wool, or empty at 0): for the Python side's state.
+    pub fn set_held(&mut self, n: i32) {
+        let i = (self.slot as usize).min(SLOTS - 1);
+        self.hotbar[i] = if n > 0 { Stack { item: if placeable(self.hotbar[i].item) { self.hotbar[i].item } else { WOOL }, count: n } } else { Stack::default() };
     }
 
     pub fn height(&self) -> f64 {
@@ -248,8 +281,8 @@ impl Player {
     /// BlockItem.place through a right click: the spot next to the side aimed at, or the aimed block itself when it
     /// can be replaced, if that spot is free and the player is not in the way.
     fn place(&mut self, world: &mut World, hit: &Hit) -> Option<([i32; 3], [i32; 3])> {
-        if self.held <= 0 || self.slot != 0 {
-            return None;
+        if self.held() <= 0 {
+            return None; // nothing to place in its hand: a sword, a tool, or an empty slot
         }
         let all = kinds();
         let clicked = world.get(hit.block[0], hit.block[1], hit.block[2]);
@@ -267,8 +300,13 @@ impl Player {
         if cell.intersects(&self.bbox()) {
             return None;
         }
-        world.set(target[0], target[1], target[2], FULL);
-        self.held -= 1;
+        let i = (self.slot as usize).min(SLOTS - 1);
+        // Glass does not push a player out of it (world.rs CLEAR); every other block it can hold is a full cube.
+        world.set(target[0], target[1], target[2], if self.hotbar[i].item == BLAST_PROOF_GLASS { CLEAR } else { FULL });
+        self.hotbar[i].count -= 1;
+        if self.hotbar[i].count <= 0 {
+            self.hotbar[i] = Stack::default(); // the last one: the slot is empty, as in the game
+        }
         Some((target, hit.block))
     }
 
@@ -904,4 +942,39 @@ fn nearest_direction(d: [f64; 3]) -> u8 {
 
 fn opposite(face: u8) -> u8 {
     face ^ 1
+}
+
+/// A hotbar with `n` wool in the first slot (selected) and nothing else: a course's start before the round sets its own.
+pub fn blocks_hotbar(n: i32) -> [Stack; SLOTS] {
+    let mut h = [Stack::default(); SLOTS];
+    if n > 0 {
+        h[0] = Stack { item: WOOL, count: n };
+    }
+    h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::items::WOODEN_SWORD;
+
+    /// The hotbar key comes before the right click of the same tick: with the sword in hand nothing is placed, and
+    /// pressing the blocks' slot with the click places one from that stack (as the game handles a tick's keys).
+    #[test]
+    fn a_hotbar_key_then_a_click_in_one_tick() {
+        let mut w = World::new([-5, 95, -5], [5, 105, 5]);
+        w.fill([-5, 99, -5], [5, 99, 5], FULL);
+        w.set(0, 101, 2, FULL); // a block ahead at eye height to build against
+        let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
+        p.hotbar[0] = Stack { item: WOODEN_SWORD, count: 1 };
+        p.hotbar[4] = Stack { item: WOOL, count: 3 };
+        p.tick(&mut w, &Input::default());
+        assert!(p.pick(&w).is_some(), "aimed at the block");
+        assert_eq!((p.held(), p.blocks()), (0, 3), "the sword in hand: no blocks in it, three in the hotbar");
+        let ev = p.tick(&mut w, &Input { click: true, ..Input::default() });
+        assert!(ev.placed.is_none() && p.blocks() == 3, "a right click with the sword places nothing");
+        let ev = p.tick(&mut w, &Input { click: true, slot: Some(4), ..Input::default() });
+        assert!(ev.placed.is_some(), "slot 5 and the click in the same tick");
+        assert_eq!((p.slot, p.held(), p.hotbar[4].count), (4, 2, 2));
+    }
 }

@@ -50,8 +50,10 @@ POLICY = dict(features_extractor_class=SpatialNet, lstm_hidden_size=256, shared_
 NAMES = {"hop": "Parkour", "path": "Path", "bridge": "Bridge", "treenan": "Treenan", "stairs": "Stairs", "bedwars": "Bedwars", "duel": "Duel"}
 
 
-# A new left click starts at about one in nine.
-NEW_ACTION_BIAS = {2: (1.0, -1.0)}
+# A new left click starts at about one in nine. A new hotbar key (none, slot 1-9) starts at about one press in a
+# thousand ticks, so a model that had no hotbar plays as before: a random change puts something else in hand
+# (spatial.ENTROPY_WEIGHTS keeps exploration from pushing it back up).
+NEW_ACTION_BIAS = {2: (1.0, -1.0), 10: (9.0,) + (0.0,) * 9}
 
 
 def transfer(policy, old_state):

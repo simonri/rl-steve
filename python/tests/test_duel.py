@@ -7,6 +7,7 @@ import _path  # noqa: F401  (python/ on the import path)
 import numpy as np
 
 import combat18
+import items
 import curriculum
 import mcsim
 from sim_env import SimVecEnv
@@ -63,12 +64,22 @@ def main():
     tail = obs[0, mcsim.MOVE_OBS:]
     assert tail[0] == 1.0 and tail[3] > 0.2 and abs(tail[1]) < 0.1, tail[:20]  # 2 blocks ahead at the first distance: 2 / 8
     assert tail[61] == 1.0 and tail[68] == 1.0, "sword in hand, and it is a fight"
-    # There is no hotbar input: the sword stays in hand.
-    assert mcsim.ACTIONS == 9
+    # The hotbar (items.py): the sword selected, and with no key pressed it stays in hand.
+    hb = tail[-items.HOTBAR_F :]
+    sel = int(np.argmax(hb[-items.SLOTS :]))
+    assert items.is_sword(int(np.argmax(hb[sel * (len(items.KINDS) + 1) : sel * (len(items.KINDS) + 1) + len(items.KINDS)]))), "the selected slot holds a sword"
+    assert mcsim.ACTIONS == 10
     for _ in range(10):
         vec.step_async(idle(obs, 0))
         obs, _, _, _ = vec.step_wait()
     assert obs[0, mcsim.MOVE_OBS + 61] == 1.0, "the sword stays in hand"
+    # Pressing the blocks' slot puts them in hand: the sword is no longer held.
+    blocks = next(i for i in range(items.SLOTS) if items.placeable(int(np.argmax(hb[i * (len(items.KINDS) + 1) : i * (len(items.KINDS) + 1) + len(items.KINDS)]))))
+    a = idle(obs, 0)
+    a[0, 9] = blocks + 1
+    vec.step_async(a)
+    obs, _, _, _ = vec.step_wait()
+    assert obs[0, mcsim.MOVE_OBS + 61] == 0.0 and obs[0, mcsim.MOVE_OBS + 60] == 1.0, "blocks in hand"
     # Aim is a potential (shaping.rs): standing still a whole round, the aim points add up to about −Φ(start) plus the
     # discount's drift, far below what 600 ticks of a per-tick bonus paid. Bound: 0.1·π·(1 + 600·0.005), scaled by 0.1.
     vec = SimVecEnv(16, levels, seed=3)

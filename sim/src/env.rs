@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use crate::clutch::{self, Cube, Push};
 use crate::combat::{self, Swing};
 use crate::duel::{self, Bot, View, ACTIONS, EXTRA, HIST_F};
+use crate::items::{self, Stack, SLOTS};
 use crate::player::{Hit, Input, Keys, Player, FACE_STEP};
 use crate::shaping;
 use crate::world::World;
@@ -158,6 +159,39 @@ pub struct Course {
     pub rules18: bool,
     /// A fight instead of a way to a goal.
     pub duel: Option<Duel>,
+    /// What the model starts with in its hotbar, and the slot selected (items.rs). The round draws where things lie,
+    /// so the model has to look at its hotbar to find them (AutoEnv._hotbar).
+    pub hotbar: [Stack; SLOTS],
+    pub slot: u8,
+}
+
+/// The sword for an attack attribute (combat18.SWORDS: 1 plus 4 to 7).
+pub fn sword_for(damage: f32) -> crate::items::Item {
+    match damage.round() as i32 {
+        ..=5 => items::WOODEN_SWORD,
+        6 => items::STONE_SWORD,
+        7 => items::IRON_SWORD,
+        _ => items::DIAMOND_SWORD,
+    }
+}
+
+/// An opponent's hotbar: the model's layout, with its own sword in place of the model's; and the slot of the sword,
+/// which it starts holding (a scripted bot only ever fights with it).
+pub fn rival_hotbar(model: &[Stack; SLOTS], damage: f32) -> ([Stack; SLOTS], u8) {
+    let mut h = *model;
+    let mut slot = None;
+    for (i, s) in h.iter_mut().enumerate() {
+        if items::is_sword(s.item) {
+            s.item = sword_for(damage);
+            slot = slot.or(Some(i as u8));
+        }
+    }
+    let slot = slot.unwrap_or_else(|| {
+        let i = h.iter().position(|s| s.count <= 0).unwrap_or(SLOTS - 1);
+        h[i] = Stack { item: sword_for(damage), count: 1 };
+        i as u8
+    });
+    (h, slot)
 }
 
 /// A fight: the model's gear and its opponents, each a scripted bot.
@@ -313,14 +347,15 @@ fn rotate_i(mut x: i32, mut z: i32, k: i32) -> (i32, i32) {
 impl Env {
     pub fn new(course: Course, tick_count: i64) -> Env {
         let mut world = course.world.clone();
-        let mut player = Player::new(course.home, course.home_yaw, course.home_pitch, course.blocks);
+        let mut player = Player::new(course.home, course.home_yaw, course.home_pitch, 0);
+        player.hotbar = course.hotbar;
+        player.slot = course.slot;
         settle(&mut player);
         player.rules18 = course.rules18;
         if let Some(d) = &course.duel {
             player.attack_damage = d.damage;
             player.armor = d.armor;
             player.kb_enchant = d.kb;
-            player.slot = 1; // a fight starts with the sword in hand
         }
         if course.settle {
             player.tick(&mut world, &Input::default());
@@ -376,7 +411,8 @@ impl Env {
         };
         if let Some(d) = env.course.duel.clone() {
             for r in &d.opponents {
-                env.opponents.push(Opponent::new(r, env.course.rules18, env.course.blocks));
+                let (hotbar, slot) = rival_hotbar(&env.course.hotbar, r.damage);
+                env.opponents.push(Opponent::new(r, env.course.rules18, hotbar, slot));
             }
         }
         env.track_target();
@@ -521,14 +557,23 @@ impl Env {
         self.history2[HISTORY - 1] = [attack as i32 as f32];
         self.history.rotate_left(1);
         self.history[HISTORY - 1] = [mv as f32 / 2.0, strafe as f32 / 2.0, sneak as i32 as f32, use_ as i32 as f32 / 2.0, jump as i32 as f32, sprint as i32 as f32, yaw as f32 / 10.0, pitch as f32 / 10.0];
-        let held = self.player.held;
+        // The hotbar key comes before the clicks of the same tick (the game handles key presses in that order).
+        let slot = if a[9] > 0 { Some((a[9] - 1) as u8) } else { None };
+        let blocks = self.player.blocks();
+        let in_hand = match slot {
+            Some(s) => {
+                let st = self.player.hotbar[s as usize];
+                if items::placeable(st.item) { st.count } else { 0 }
+            }
+            None => self.player.held(),
+        };
         let health = self.player.health;
         let before = self.game_keys();
         self.press([mv == 1, mv == 2, strafe == 1, strafe == 2, sneak, jump, sprint]);
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
         self.sneak_ticks += self.keys[K_SNEAK] as i32;
         let clicked = use_ && self.since_sneak <= SNEAK_CLICK_TICKS;
-        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot: None };
+        let input = Input { keys: self.game_keys(), click: clicked, turn_yaw: TURN_STEPS[yaw], turn_pitch: TURN_STEPS[pitch], attack, slot };
         self.maybe_push(before, &input);
         if self.course.duel.is_some() {
             return self.fight_step(&input);
@@ -551,7 +596,7 @@ impl Env {
         }
         self.hit = self.player.pick(&self.world);
         let mut reward = self.points(P_TIME, -TICK_COST);
-        if use_ && held == 0 {
+        if use_ && in_hand == 0 {
             reward += self.points(P_EMPTY_CLICK, -EMPTY_CLICK_COST);
         }
         // Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
@@ -600,7 +645,7 @@ impl Env {
         } else {
             self.since_best += 1;
         }
-        for _ in 0..(held - self.player.held).max(0) {
+        for _ in 0..(blocks - self.player.blocks()).max(0) {
             self.used += 1;
             let cost = if self.used <= self.course.par { BLOCK_COST } else { WASTE_COST };
             reward += self.points(P_BLOCKS, -cost);
@@ -750,8 +795,7 @@ impl Env {
                 }
             }
         }
-        let held = self.player.held;
-        let old = std::mem::replace(&mut self.player, Player::new(h, self.course.home_yaw, self.course.home_pitch, held));
+        let old = std::mem::replace(&mut self.player, Player::new(h, self.course.home_yaw, self.course.home_pitch, 0));
         self.player.keep_gear(&old); // the inventory and the rules stay; the mod's respawn only moves the player
         settle(&mut self.player);
         self.history = [[0.0; 8]; HISTORY];
@@ -776,7 +820,7 @@ impl Env {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         let cube = Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z));
-        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: before, sprinting: p.sprinting };
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held(), keys: before, sprinting: p.sprinting };
         let goal = [self.course.goal[0] as f64 + 0.5, self.course.goal[1] as f64 + 0.5];
         if let Some(v) = clutch::decide(&cube, &state, input, goal, self.fall_line(), &pushes[self.next_push]) {
             clutch::apply(&mut self.player, v);
@@ -808,7 +852,6 @@ impl Env {
     pub fn observe(&self, out: &mut [f32]) {
         let p = &self.player;
         let me = duel::Me {
-            slot: p.slot,
             resist: p.resist,
             damage: p.attack_damage,
             armor: p.armor,
@@ -842,7 +885,6 @@ impl Env {
         let o = &self.opponents[j];
         let p = &o.player;
         let me = duel::Me {
-            slot: p.slot,
             resist: p.resist,
             damage: p.attack_damage,
             armor: p.armor,
@@ -942,7 +984,7 @@ impl Env {
             };
             head[26 + side] = 1.0;
         }
-        head[32] = (p.held as f64 / 20.0).min(2.0);
+        head[32] = (p.blocks() as f64 / 20.0).min(2.0); // blocks it has (the hotbar part shows where)
         head[33] = can_place(&self.world, p, &e.hit) as i32 as f64;
         for i in 0..HEAD {
             out[i] = (head[i] as f32).clamp(-5.0, 5.0);
@@ -1038,7 +1080,8 @@ struct Eyes<'a> {
 fn can_place(world: &World, p: &Player, hit: &Option<Hit>) -> bool {
     {
         let Some(h) = hit else { return false };
-        if p.held <= 0 {
+        if p.held() <= 0 {
+            // Nothing to place in its hand: with a sword or a tool, a right click would place nothing.
             return false;
         }
         let s = FACE_STEP[h.face as usize];
@@ -1083,7 +1126,7 @@ impl Opponent {
             turn_yaw: TURN_STEPS[a[6] as usize],
             turn_pitch: TURN_STEPS[a[7] as usize],
             attack: a[8] != 0,
-            slot: None, // a bot keeps the sword it starts with
+            slot: if a[9] > 0 { Some((a[9] - 1) as u8) } else { None }, // a bot never presses one
         }
     }
 }
@@ -1104,7 +1147,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
         o.swing = None;
         o.landed = None;
         o.played = given.is_some();
-        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else if let Some(a) = given { a } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
+        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0, 0] } else if let Some(a) = given { a } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
     let mut landed = None;
@@ -1217,17 +1260,20 @@ impl Opponent {
     }
 
     /// An opponent standing where a round puts it, as after the mod's reset.
-    /// `blocks`: as many as the model has. A scripted bot never places one (duel::action never right-clicks), but a
-    /// model playing it (self-play) has learned to save itself with them: without, a copy of the model fell off three
-    /// times as often from the opponent's side as from its own, and lost 73 % of the fights against itself.
-    pub fn new(r: &Rival, rules18: bool, blocks: i32) -> Opponent {
-        let mut p = Player::new(r.pos, r.yaw, 0.0, blocks);
+    /// `hotbar`: what the model has, with its own sword (rival_hotbar), held from the start. A scripted bot never
+    /// places a block or changes slot; a model playing it (self-play) sees the hotbar as the model does its own. With no
+    /// blocks shown, a copy of the model played worse from the opponent's side: it fell off three times as often and
+    /// lost 73 % of the fights against itself (it saw something it had never trained with, not a lack of blocks: with
+    /// the sword in hand neither side could place one).
+    pub fn new(r: &Rival, rules18: bool, hotbar: [Stack; SLOTS], slot: u8) -> Opponent {
+        let mut p = Player::new(r.pos, r.yaw, 0.0, 0);
+        p.hotbar = hotbar;
+        p.slot = slot;
         settle(&mut p);
         p.rules18 = rules18;
         p.attack_damage = r.damage;
         p.armor = r.armor;
         p.kb_enchant = r.kb;
-        p.slot = 1;
         p.direct_turn = true; // Fight18.drive adds the turn step itself
         Opponent {
             player: p,
@@ -1262,7 +1308,8 @@ mod tests {
         let mut p = Player::new([0.5, 100.0, 0.5], 0.0, 0.0, 0);
         settle(&mut p);
         p.rules18 = true;
-        let o = Opponent::new(&Rival { bot, pos: [0.5, 100.0, 0.5 + ahead], yaw: 180.0, damage: 1.0, armor: 0, kb: 0 }, true, 0);
+        let (hotbar, slot) = rival_hotbar(&[Stack::default(); SLOTS], 1.0);
+        let o = Opponent::new(&Rival { bot, pos: [0.5, 100.0, 0.5 + ahead], yaw: 180.0, damage: 1.0, armor: 0, kb: 0 }, true, hotbar, slot);
         (w, p, vec![o])
     }
 
@@ -1292,6 +1339,8 @@ mod tests {
             home_yaw: 0.0,
             home_pitch: 0.0,
             blocks: 0, // as the opponent: the same gear on both sides
+            hotbar: rival_hotbar(&[Stack::default(); SLOTS], 5.0).0,
+            slot: 0,
             world: w,
             settle: false,
             pushes: vec![],
@@ -1321,7 +1370,7 @@ mod tests {
         env.observe(&mut mine);
         env.observe_opponent(0, &mut theirs);
         assert_same(&mine, &theirs, "at the start");
-        let step = [1, 1, 0, 0, 0, 1, 5, 5, 0]; // forward, left, sprint: no turn (the model turns through the mouse)
+        let step = [1, 1, 0, 0, 0, 1, 5, 5, 0, 0]; // forward, left, sprint: no turn (the model turns through the mouse)
         for _ in 0..6 {
             env.opponents[0].next = Some(step);
             env.step(step);
@@ -1420,7 +1469,7 @@ mod tests {
     /// the model does (its client's packet), so self-play is fair to both sides.
     #[test]
     fn a_model_played_opponent_hits_a_tick_late() {
-        let swing = [0, 0, 0, 0, 0, 0, 5, 5, 1];
+        let swing = [0, 0, 0, 0, 0, 0, 5, 5, 1, 0];
         let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.0);
         let (mut since_hit, mut since_hurt) = (99, 99);
         o[0].next = Some(swing);

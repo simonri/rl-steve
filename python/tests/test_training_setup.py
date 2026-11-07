@@ -41,7 +41,9 @@ nvec = [int(n) for n in model.policy.action_space.nvec]
 start = np.cumsum([0] + nvec)
 attack = bias[start[8] : start[9]]
 assert attack[0] > attack[1], attack
-assert len(nvec) == mcsim.ACTIONS == 9, nvec  # no hotbar input: every round starts with the right thing in hand
+assert len(nvec) == mcsim.ACTIONS == 10 and nvec[9] == 10, nvec  # the hotbar key: none or one of nine slots
+hotbar = torch.softmax(bias[start[9] : start[10]], 0)
+assert 1 - hotbar[0] < 0.002, hotbar  # a new hotbar key is pressed about once in a thousand ticks
 for index, value in ta.MOVE_BIAS:
     assert bias[index] == value
 

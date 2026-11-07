@@ -19,6 +19,7 @@ import numpy as np
 import bedwars_map
 import combat18
 import curriculum
+import items
 import mcsim
 from jump_physics import hits_pole, jump_possible
 from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, LANDING_BONUS, MAX_DEATHS,
@@ -88,6 +89,7 @@ class AutoEnv(SkillEnv):
     tested = None
     mastered = ()  # course kinds that need less practice
     jump_wait, was_on_ground = 0, True
+    pending_hotbar = 0  # the hotbar key of the tick being played (step), 0 for none
     bonus_weight = 1.0  # env.rs Env.bonus_weight: how much a fight's event bonuses count (shaping.rs), set by training
     exam_family = None  # plays only this kind: with every dial at its limit for a test, or as in training for watching
     exam_all = True
@@ -98,8 +100,9 @@ class AutoEnv(SkillEnv):
         self.levels = levels or curriculum.Curriculum().levels
         super().__init__(port, stage=0, render=render)
         # A click is always one click, never a held button: click or not, once per decision.
-        # Then a left click (hit). Every round starts with the right thing in hand: there is no hotbar input.
-        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2])
+        # Then a left click (hit), and a hotbar key: 0 none, 1-9 that slot, before the clicks of the same tick (model v4).
+        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2, 1 + items.SLOTS])
+        self.pending_hotbar = 0
 
     def set_stage(self, stage):
         pass
@@ -226,13 +229,49 @@ class AutoEnv(SkillEnv):
         if self.family == "duel":
             spec = self._duel_spec()
             spec["map_radius"] = MAP_RADIUS
-            return spec
+            return self._with_hotbar(spec)
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()
         if self.push_spare and spec.get("blocks", 0) > 0:
             spec["blocks"] = self.blocks_given = min(64, spec["blocks"] + self.push_spare)
         spec["block_radius"] = RADIUS
         spec["map_radius"] = MAP_RADIUS
+        return self._with_hotbar(spec)
+
+    def _with_hotbar(self, spec):
+        """The round's hotbar, as in Bed Wars: its blocks (one kind from the shop) and a sword, each in a random slot,
+        so the model has to look at its hotbar to find them (items.layout). A course to build on starts with the blocks
+        in hand, a fight with the sword: in the "gap" arena it has to change to the blocks itself, and back."""
+        r = self.np_random
+        damage = self.duel["damage"] if self.family == "duel" else combat18.ATTACK_BASE + combat18.SWORDS["wood"]
+        sword = items.SWORD_FOR_DAMAGE[int(round(damage))]
+        kind = items.BUILD_BLOCKS[int(r.integers(len(items.BUILD_BLOCKS)))]
+        hold = "sword" if self.family == "duel" else "blocks"
+        self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)
+        spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
+        spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give
+        spec["slot"] = self.hotbar_slot
         return spec
+
+    @staticmethod
+    def _hotbar(o):
+        """(kind, count) per hotbar slot, from what the game reports (registry names) or the simulator (kinds). A
+        recording from before the hotbar had only its blocks, in the first slot."""
+        h = o.get("hotbar")
+        if h is None:
+            h = [(items.INDEX["wool"], int(o.get("held_count", 0)))]
+        out = [(items.kind_of(k) if isinstance(k, str) else int(k), int(c)) for k, c in h][: items.SLOTS]
+        return out + [(0, 0)] * (items.SLOTS - len(out))
+
+    @classmethod
+    def _blocks(cls, o):
+        """Blocks it has to place, in all of its hotbar (Player.blocks)."""
+        return sum(c for k, c in cls._hotbar(o) if items.placeable(k) and c > 0)
+
+    @classmethod
+    def _in_hand(cls, o, slot=None):
+        """Blocks in the slot selected (or `slot`), 0 when it holds something else (Player.held)."""
+        k, c = cls._hotbar(o)[int(o.get("slot", 0)) if slot is None else slot]
+        return max(0, c) if items.placeable(k) else 0
 
     def _hop_spec(self):
         """Single blocks in a row. Each is possible by the jump math from a block with just a short run-up."""
@@ -660,7 +699,7 @@ class AutoEnv(SkillEnv):
             float(o["on_ground"]), float(o.get("sprinting", False)), o.get("health", 20.0) / 20,
             float(o.get("collision", False)), math.log1p(o.get("fall_distance", 0.0)) / 3, o.get("hurt_time", 0) / 10,
             float(hit), *rel, *face, *self._side(h, k),
-            min(o["held_count"] / 20, 2.0), float(self._can_place(o)),
+            min(self._blocks(o) / 20, 2.0), float(self._can_place(o)),
         ]
         known = [0.0] * KNOWN  # filled in by _with_timer
         return np.clip(np.concatenate([np.asarray(head, np.float32), np.asarray(known, np.float32), self._view(o, k), self._map_layers(o, k)]), -5.0, 5.0)
@@ -670,7 +709,8 @@ class AutoEnv(SkillEnv):
         """Would a click put a block down right now? It has a block, aims at a block in reach, the spot next to that side
         is empty, and the player is not standing in it. Our own shift rule is not part of this: the model knows its keys."""
         h = o.get("hit") or {}
-        if h.get("type") != "block" or o.get("held_count", 0) <= 0 or h.get("face") not in FACES_3D:
+        # A block in its hand: with a sword or a tool a click places nothing.
+        if h.get("type") != "block" or AutoEnv._in_hand(o) <= 0 or h.get("face") not in FACES_3D:
             return False
         step = FACES_3D[h["face"]]
         target = [int(h["block"][i]) + step[i] for i in range(3)]
@@ -724,7 +764,7 @@ class AutoEnv(SkillEnv):
         """The reset builds courses from plain blocks. Slabs go in afterwards, and one tick lets the game show them.
         Every round sets the player's gear and 1.8 rules; a fight also brings its opponents in."""
         d = self.duel if self.family == "duel" else None
-        reply = self.c.call(op="gear", damage=d["damage"] if d else 1.0, armor=d["armor"] if d else 0, kb=d["kb"] if d else 0, slot=1 if d else 0, rules18=RULES18)
+        reply = self.c.call(op="gear", damage=d["damage"] if d else 1.0, armor=d["armor"] if d else 0, kb=d["kb"] if d else 0, slot=self.hotbar_slot, rules18=RULES18)
         if "pos" in reply:  # the simulator answers with the state; the game with "ok", and shows the gear next tick
             self.obs = reply
         if d:
@@ -786,7 +826,7 @@ class AutoEnv(SkillEnv):
         order = ("forward", "back", "left", "right", "jump", "sneak", "sprint")
         fall_line = self._fall_line()
         try:  # the game reports feet as decimals; whatever else differs, a push is never worth stopping the round for
-            v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(o["held_count"]),
+            v = mcsim.push_for(o["solid"], [math.floor(f) for f in o["feet"]], list(o["pos"]), list(o["vel"]), float(o["yaw"]), float(o["pitch"]), int(self._in_hand(o)),
                                [bool(before[k]) for k in order], [bool(keys[k]) for k in order], bool(clicked), turn_yaw, turn_pitch, [self.goal_x + 0.5, self.goal_z + 0.5],
                                fall_line, plan[self.next_push], sprinting=bool(o.get("sprinting", False)))
         except (TypeError, ValueError) as e:
@@ -818,6 +858,7 @@ class AutoEnv(SkillEnv):
         a = [int(v) for v in action]
         move, strafe, sneak, use, jump, sprint, yaw, pitch = a[:8]
         attack = a[8] if len(a) > 8 else 0
+        self.pending_hotbar = a[9] if len(a) > 9 else 0  # _send presses it, before the clicks
         self.history2.append((float(attack),))
         self.history.append(np.asarray([move / 2, strafe / 2, sneak, use / 2, jump, sprint, yaw / (self.turn_choices - 1), pitch / (self.turn_choices - 1)], np.float32))
         reward, term, trunc, info = self._tick(move, strafe, sneak, use > 0, jump, sprint, yaw, pitch, attack=bool(attack))
@@ -846,15 +887,19 @@ class AutoEnv(SkillEnv):
         me = (int(o.get("slot", 0)), int(o.get("resist", 0)), float(o.get("attack_damage", 1.0)), int(o.get("armor", 0)),
               bool(o.get("server_sprinting", False)), int(o.get("since_hit", 99)), int(o.get("since_hurt", 99)), self.family == "duel")
         if len(o.get("solid", "")) != (2 * RADIUS + 1) ** 3:  # a recording or game without the full cube: nothing to see
-            return np.zeros(mcsim.EXTRA, np.float32)
+            out = np.zeros(mcsim.EXTRA, np.float32)
+            out[-items.HOTBAR_F :] = items.features(self._hotbar(o), int(o.get("slot", 0)))  # the hotbar it does see
+            return out
         feet = [math.floor(v) for v in o["feet"]]
         tail = mcsim.combat_features(list(o["pos"]), float(o["yaw"]), float(o["pitch"]), bool(o.get("crouch_pose", o.get("sneaking", False))), me, enemies, k,
-                                     o["solid"], feet, [list(h) for h in getattr(self, "history2", [])])
+                                     o["solid"], feet, [list(h) for h in getattr(self, "history2", [])], self._hotbar(o))
         return np.clip(np.asarray(tail, np.float32), -5.0, 5.0)
 
     def _send(self, keys, clicked, turn_yaw, turn_pitch, attack):
         """One tick of inputs to the game; returns what it shows after it."""
         extra = dict(attack=True) if attack else {}
+        if self.pending_hotbar:
+            extra["hotbar"] = self.pending_hotbar - 1
         if self.family == "duel" and not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
             extra["opponents"] = self._bot_actions()
         self.obs = o = self.c.step(use=clicked, yaw=turn_yaw, pitch=turn_pitch, **keys, **extra)
@@ -959,7 +1004,7 @@ class AutoEnv(SkillEnv):
                 players.append(dict(pos=pos, vel=[0.0, 0.0, 0.0], yaw=yaw, pitch=0.0, health=20.0, armor=armor, damage=damage, hurt_time=0, on_ground=True, bot=bot, since_hit=99))
         for i, p in enumerate(players):
             if i < len(self.out) and self.out[i]:
-                actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0])
+                actions.append([0, 0, 0, 0, 0, 0, 5, 5, 0, 0])
                 continue
             actions.append(list(mcsim.bot_action(int(p.get("bot", self.duel["opponents"][i][0])), view(p, p["health"]), me, list(self.duel["centre"]), self.t, int(p.get("since_hit", 99)),
                                                  self._arena_floor())))
@@ -971,7 +1016,9 @@ class AutoEnv(SkillEnv):
         return self._move_time_limit()
 
     def _tick(self, move, strafe, sneak, use, jump, sprint, yaw, pitch, attack=False):
-        held, health = self.obs["held_count"], self.obs["health"]
+        # Blocks in hand once the hotbar key of this tick is pressed (env.rs step), and in all the hotbar.
+        held = self._in_hand(self.obs, self.pending_hotbar - 1 if self.pending_hotbar else None)
+        blocks, health = self._blocks(self.obs), self.obs["health"]
         before = dict(self.keys)
         keys = self._press(dict(forward=move == 1, back=move == 2, left=strafe == 1, right=strafe == 2, sneak=bool(sneak), jump=bool(jump), sprint=bool(sprint)))
         self.since_sneak = 0 if keys["sneak"] else self.since_sneak + 1
@@ -1022,10 +1069,10 @@ class AutoEnv(SkillEnv):
             self.best, self.since_best = now, 0
         else:
             self.since_best += 1
-        for _ in range(max(0, held - o["held_count"])):
+        for _ in range(max(0, blocks - self._blocks(o))):
             self.used += 1
             reward += self._points("blocks", -(BLOCK_COST if self.used <= self.par else WASTE_COST))
-        if held > o["held_count"] and o.get("clicks"):
+        if blocks > self._blocks(o) and o.get("clicks"):
             c = o["clicks"][-1]
             reward += self._closer(c[0], c[1], c[2])
             self._mark_dirty(c)

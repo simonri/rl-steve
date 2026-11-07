@@ -465,7 +465,7 @@ for name in a._fields:
         assert x.shape == y.shape and torch.allclose(torch.nan_to_num(x.float()), y.float()), name
 assert torch.isnan(a.observations[:, 0]).sum() == (a.mask == 0).sum()
 # The eyes skip marked padding and give it nothing, and see the played ticks as they would alone.
-policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11, 2]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
+policy = MemoryPolicy(space, gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, 11, 11, 2, 10]), lambda _: 1e-3, features_extractor_class=SpatialNet, lstm_hidden_size=32)
 played = torch.rand(3, AutoEnv.N_OBS)
 padded = torch.cat([played, torch.full((2, AutoEnv.N_OBS), float("nan"))])
 with torch.no_grad():

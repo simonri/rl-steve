@@ -99,6 +99,26 @@ class SpatialNet(BaseFeaturesExtractor):
 from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy  # noqa: E402
 
 
+from stable_baselines3.common.distributions import MultiCategoricalDistribution  # noqa: E402
+
+# How much each action's randomness counts in the entropy bonus, by action (move, strafe, sneak, use, jump, sprint, yaw,
+# pitch, attack, hotbar). The hotbar key counts a tenth: with the full bonus, exploration pushed random slot changes to
+# about 1 % of ticks, and every change puts something else in hand; in fights it held the sword only 23 % of the time,
+# and on courses to build it held the sword so often that bridging fell from 0.85 to 0.1 (commits a7d4eec, 900f394). A
+# change that helps is still learned from the reward; it is just not pushed toward at random. Our own choice, not from a
+# paper (docs/training-design.md#foremal).
+ENTROPY_WEIGHTS = (1.0,) * 9 + (0.1,)
+
+
+class WeightedMultiCategorical(MultiCategoricalDistribution):
+    """MultiCategoricalDistribution whose entropy weighs each action by ENTROPY_WEIGHTS."""
+
+    def entropy(self):
+        e = torch.stack([d.entropy() for d in self.distribution], dim=1)
+        w = torch.tensor(ENTROPY_WEIGHTS[: e.shape[1]] + (1.0,) * max(0, e.shape[1] - len(ENTROPY_WEIGHTS)), dtype=e.dtype, device=e.device)
+        return (e * w).sum(dim=1)
+
+
 class MemoryPolicy(RecurrentActorCriticPolicy):
     """Carries a memory from tick to tick, so it can hold on to a plan and to what just happened.
 
@@ -108,6 +128,11 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
 
     Ticks that only pad a stretch out are marked with NaN as their first value. The eyes skip them and they get
     nothing to see, which keeps the costly part of learning to the ticks that were really played."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if type(self.action_dist) is MultiCategoricalDistribution:
+            self.action_dist.__class__ = WeightedMultiCategorical  # same state, the entropy weighed per action
 
     def extract_features(self, obs, features_extractor=None):
         real = ~torch.isnan(obs[:, 0])

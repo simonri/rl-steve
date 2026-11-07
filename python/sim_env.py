@@ -12,6 +12,7 @@ from gymnasium.utils import seeding
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 import curriculum
+import items
 import mcsim
 from auto_env import MAP_RADIUS, RADIUS, RULES18, TURN_STEPS, AutoEnv
 from skill_env import FIRST_CLEAR, NO_BLOCKS, Y
@@ -34,7 +35,7 @@ class CourseMaker(AutoEnv):
         self.dirty = list(FIRST_CLEAR)
         self.camera_every = 0.0
         self.observation_space = gym.spaces.Box(-5.0, 5.0, (AutoEnv.N_OBS,), np.float32)
-        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2])
+        self.action_space = gym.spaces.MultiDiscrete([3, 3, 2, 2, 2, 2, len(TURN_STEPS), len(TURN_STEPS), 2, 1 + items.SLOTS])
         self._np_random, _ = seeding.np_random(seed)
 
     def draw(self, seed=None):
@@ -76,6 +77,7 @@ class CourseMaker(AutoEnv):
             settle=bool(self.shape_cells),  # the game takes one tick to show blocks put in after the reset
             pushes=[(int(a), int(b), int(c), float(d), float(e)) for a, b, c, d, e in self.pushes],
             rules18=RULES18,
+            hotbar=[(int(k), int(c)) for k, c in spec["hotbar"]], slot=int(spec["slot"]),  # AutoEnv._with_hotbar
             duel=dict(damage=float(self.duel["damage"]), armor=int(self.duel["armor"]), kb=int(self.duel["kb"]), centre=[float(v) for v in self.duel["centre"]],
                       opponents=[(int(b), [float(v) for v in p], float(y), float(d), int(a), int(k)) for b, p, y, d, a, k in self.duel["opponents"]]) if self.family == "duel" else None,
         ), dict(family=self.family, tested=self.tested, at=[self.levels[self.family][d] for d in curriculum.FAMILIES[self.family]])
@@ -222,6 +224,9 @@ class FakeClient:
             self.single = mcsim.Single(boxes, cells, lo, hi)
         self.keys = [False] * 7
         self.single.spawn(list(pos), float(spec["yaw"]), float(spec["pitch"]), int(spec.get("blocks", 0)))
+        if not spec.get("keep_arena"):  # a new round's hotbar, as the mod gives it; a respawn keeps what it has
+            hotbar = spec.get("hotbar") or [(1, int(spec.get("blocks", 0)))]
+            self.single.set_hotbar([(int(k), int(c)) for k, c in hotbar], int(spec.get("slot", 0)))
         return self._obs(self.single.state())
 
     def step(self, ticks=1, **a):

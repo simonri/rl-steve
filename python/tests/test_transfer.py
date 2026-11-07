@@ -44,7 +44,8 @@ def main():
         assert torch.allclose(a.logits, b.logits, atol=1e-5), (a.logits - b.logits).abs().max()
     assert torch.allclose(v_old, v_new, atol=1e-5), (v_old - v_new).abs().max()
     attack = d_new.distribution[moves].probs[:, 1]
-    assert len(d_new.distribution) == moves + 1, "the left click is the only new action"
+    assert len(d_new.distribution) == moves + 2, "the left click and the hotbar key are the new actions"
+    assert float(d_new.distribution[moves + 1].probs[:, 0].min()) > 0.998, "a new hotbar key is rarely pressed"
     assert torch.allclose(attack, attack[0]) and 0.05 < float(attack[0]) < 0.2, attack
     print(f"moves and values unchanged; new: attack {float(attack[0]):.2f}")
     print("transfer ok")

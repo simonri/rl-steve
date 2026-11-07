@@ -63,16 +63,22 @@ impl Single {
     fn can_save(&self, vel: [f64; 3], before: [bool; 7], keys: [bool; 7], click: bool, turn_yaw: f64, turn_pitch: f64, fall_line: f64) -> bool {
         let p = &self.player;
         let feet = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
-        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held, keys: to_keys(before), sprinting: p.sprinting };
+        let state = clutch::State { pos: p.pos, vel: p.dm, yaw: p.yaw, pitch: p.pitch, held: p.held(), keys: to_keys(before), sprinting: p.sprinting };
         clutch::can_save(&self.world, feet, &state, vel, &Input { keys: to_keys(keys), click, turn_yaw, turn_pitch, ..Input::default() }, fall_line)
     }
 
-    /// The player's gear and hand: attack attribute (1 plus the sword), armor points, Knockback level, slot (0 blocks,
-    /// 1 sword), and whether healing follows 1.8.
+    /// The player's gear and hand: attack attribute (1 plus the sword), armor points, Knockback level, the selected
+    /// hotbar slot (0-8), and whether healing follows 1.8.
     #[pyo3(signature = (damage, armor, kb, slot, rules18))]
     fn set_gear(&mut self, damage: f32, armor: i32, kb: i32, slot: u8, rules18: bool) {
         let p = &mut self.player;
         (p.attack_damage, p.armor, p.kb_enchant, p.slot, p.rules18) = (damage, armor, kb, slot, rules18);
+    }
+
+    /// The hotbar: (item, count) per slot (items.rs), and the selected slot, as the round's reset gives them.
+    fn set_hotbar(&mut self, slots: Vec<(u8, i32)>, slot: u8) {
+        self.player.hotbar = to_hotbar(slots);
+        self.player.slot = slot;
     }
 
     /// An opponent played by a scripted bot (duel.Bot by index), as the round's reset puts it.
@@ -80,7 +86,8 @@ impl Single {
     #[allow(clippy::too_many_arguments)]
     fn add_opponent(&mut self, bot: i32, pos: [f64; 3], yaw: f32, damage: f32, armor: i32, kb: i32, rules18: bool, centre: [f64; 3], fall_line: f64) {
         self.fall_line = fall_line;
-        self.opponents.push(Opponent::new(&Rival { bot: Bot::from_index(bot), pos, yaw, damage, armor, kb }, rules18, 0)); // the game's bots have none
+        let (hotbar, slot) = crate::env::rival_hotbar(&self.player.hotbar, damage); // the model's layout, with its own sword
+        self.opponents.push(Opponent::new(&Rival { bot: Bot::from_index(bot), pos, yaw, damage, armor, kb }, rules18, hotbar, slot));
         self.centre = centre;
         self.t = 0;
         self.since_hit = 99;
@@ -103,7 +110,7 @@ impl Single {
         p.yaw = yaw;
         p.pitch = pitch;
         p.on_ground = on_ground;
-        p.held = held;
+        p.set_held(held);
         p.health = health;
         p.fall_distance = fall_distance;
         p.server_fall = fall_distance;
@@ -164,7 +171,9 @@ impl Single {
         d.set_item("sprinting", p.sprinting)?;
         d.set_item("collision", p.horizontal_collision)?;
         d.set_item("fall_distance", p.fall_distance)?;
-        d.set_item("held_count", p.held)?;
+        d.set_item("held_count", p.held())?;
+        d.set_item("hotbar", p.hotbar.iter().map(|h| (h.item, h.count)).collect::<Vec<_>>())?;
+        d.set_item("slot", p.slot)?;
         d.set_item("health", p.shown_health())?; // what its client shows (a hit's damage from the next tick)
         d.set_item("hurt_time", p.hurt_time)?;
         d.set_item("crouch_pose", p.crouch_pose)?;
@@ -332,6 +341,11 @@ impl Batch {
             home_yaw: get(spec, "yaw")?,
             home_pitch: get(spec, "pitch")?,
             blocks: get(spec, "blocks")?,
+            hotbar: match spec.get_item("hotbar")? {
+                Some(h) if !h.is_none() => to_hotbar(h.extract::<Vec<(u8, i32)>>()?),
+                _ => crate::player::blocks_hotbar(get(spec, "blocks")?), // the blocks in the first slot, selected
+            },
+            slot: spec.get_item("slot")?.map(|v| v.extract::<u8>()).transpose()?.unwrap_or(0),
             world,
             settle: spec.get_item("settle")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
             rules18: spec.get_item("rules18")?.map(|v| v.extract::<bool>()).transpose()?.unwrap_or(false),
@@ -500,7 +514,9 @@ impl Batch {
         d.set_item("yaw", p.yaw)?;
         d.set_item("pitch", p.pitch)?;
         d.set_item("on_ground", p.on_ground)?;
-        d.set_item("held_count", p.held)?;
+        d.set_item("held_count", p.held())?;
+        d.set_item("hotbar", p.hotbar.iter().map(|h| (h.item, h.count)).collect::<Vec<_>>())?;
+        d.set_item("slot", p.slot)?;
         d.set_item("health", p.shown_health())?;
         d.set_item("t", env.t)?;
         Ok(d)
@@ -560,16 +576,18 @@ fn to_view(v: &ViewTuple) -> View {
 }
 
 /// duel.features for the real game (and AutoEnv): the values after the movement model's, from what the game reports.
-/// me: (slot, resist, damage, armor, server_sprinting, since_hit, since_hurt, duel). history: the last HISTORY left
-/// clicks, oldest first, each as a one-value list.
+/// me: (selected slot 0-8, resist, damage, armor, server_sprinting, since_hit, since_hurt, duel). history: the last
+/// HISTORY left clicks, oldest first, each as a one-value list. hotbar: (item, count) per slot, as the game shows it.
 #[pyfunction]
-#[pyo3(signature = (pos, yaw, pitch, crouching, me, enemies, k, solid, feet, history))]
+#[pyo3(signature = (pos, yaw, pitch, crouching, me, enemies, k, solid, feet, history, hotbar))]
 #[allow(clippy::too_many_arguments)]
 fn combat_features(pos: [f64; 3], yaw: f32, pitch: f32, crouching: bool, me: (u8, i32, f32, i32, bool, i32, i32, bool), enemies: Vec<ViewTuple>, k: i32,
-                   solid: &str, feet: [i32; 3], history: Vec<[f32; HIST_F]>) -> Vec<f32> {
+                   solid: &str, feet: [i32; 3], history: Vec<[f32; HIST_F]>, hotbar: Vec<(u8, i32)>) -> Vec<f32> {
     let mut p = Player::new(pos, yaw, pitch, 0);
     p.crouch_pose = crouching;
-    let m = duel::Me { slot: me.0, resist: me.1, damage: me.2, armor: me.3, server_sprinting: me.4, since_hit: me.5, since_hurt: me.6, duel: me.7 };
+    p.hotbar = to_hotbar(hotbar);
+    p.slot = me.0;
+    let m = duel::Me { resist: me.1, damage: me.2, armor: me.3, server_sprinting: me.4, since_hit: me.5, since_hurt: me.6, duel: me.7 };
     let views: Vec<View> = enemies.iter().map(to_view).collect();
     let mut h = [[0.0; HIST_F]; HISTORY];
     for (i, v) in history.iter().rev().take(HISTORY).enumerate() {
@@ -615,4 +633,13 @@ fn bot_action(bot: i32, me: ViewTuple, target: ViewTuple, centre: [f64; 3], t: i
     // The arena's blocks as boxes (x0, y0, z0, x1, y1, z1): the game's world for the bot's step ahead.
     let ground = |x: i32, y: i32, z: i32| floor.iter().any(|b| b[0] <= x && x <= b[3] && b[1] <= y && y <= b[4] && b[2] <= z && z <= b[5]);
     duel::action(Bot::from_index(bot), &to_view(&me), &to_view(&target), centre, t, since_hit, &ground).to_vec()
+}
+
+/// A hotbar from Python: (item, count) per slot, items.rs's numbering.
+fn to_hotbar(slots: Vec<(u8, i32)>) -> [crate::items::Stack; crate::items::SLOTS] {
+    let mut h = [crate::items::Stack::default(); crate::items::SLOTS];
+    for (i, (item, count)) in slots.into_iter().take(crate::items::SLOTS).enumerate() {
+        h[i] = crate::items::Stack { item, count };
+    }
+    h
 }

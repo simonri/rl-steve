@@ -36,7 +36,7 @@ def run(played_by, ticks=60):
         vec.opponents = opp
     obs = vec.reset()
     start = where_the_opponent_is(obs)
-    idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0]), (vec.num_envs, 1))
+    idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0, 0]), (vec.num_envs, 1))
     for _ in range(ticks):
         vec.step_async(idle)
         obs, _, dones, _ = vec.step_wait()
@@ -117,7 +117,7 @@ def pool_and_mix(policy):
         opp.choose = lambda meta: "latest"
         vec.opponents = opp
         obs = vec.reset()
-        idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0]), (vec.num_envs, 1))
+        idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0, 0]), (vec.num_envs, 1))
         seen = []
         for _ in range(150):
             vec.step_async(idle)

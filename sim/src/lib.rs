@@ -4,6 +4,7 @@ pub mod clutch;
 pub mod combat;
 pub mod duel;
 pub mod env;
+pub mod items;
 pub mod mth;
 pub mod player;
 pub mod shaping;

@@ -4,11 +4,13 @@
 //! two always agree. Like clutch.rs, what depends on blocks reads only the cube 5 around the feet the model sees.
 //!
 //! The model's input grows by [`EXTRA`] values after the 4681 of the movement model: the three nearest opponents, its
-//! own fighting state, four values for the command a strategist will give, and its last left clicks.
+//! own fighting state, four values for the command a strategist will give, its last left clicks, and its hotbar
+//! (items.rs: what is in each of the nine slots and which one is selected).
 
 use crate::clutch::Cube;
 use crate::combat::{self, Aim, ENTITY_REACH};
 use crate::env::{rotate, HISTORY, TURN_STEPS};
+use crate::items::{self, placeable, HOTBAR_F, SLOTS};
 use crate::player::{Player, STAND_EYES};
 
 pub const ENEMIES: usize = 3;
@@ -16,10 +18,12 @@ pub const ENEMY_F: usize = 20;
 pub const SELF_F: usize = 9;
 pub const CMD_F: usize = 4;
 pub const HIST_F: usize = 1; // the left click, per remembered tick
-pub const EXTRA: usize = ENEMIES * ENEMY_F + SELF_F + CMD_F + HIST_F * HISTORY;
-pub const ACTIONS: usize = 9; // the movement model's 8, then the left click (0, 1). Every round starts with the right thing in hand.
-/// How many choices each action has (AutoEnv.action_space): move, strafe, sneak, use, jump, sprint, yaw, pitch, attack.
-pub const CHOICES: [i64; ACTIONS] = [3, 3, 2, 2, 2, 2, 11, 11, 2];
+pub const EXTRA: usize = ENEMIES * ENEMY_F + SELF_F + CMD_F + HIST_F * HISTORY + HOTBAR_F;
+/// The movement model's 8, the left click (0, 1), and a hotbar key: 0 none, 1-9 select that slot (model v4).
+pub const ACTIONS: usize = 10;
+/// How many choices each action has (AutoEnv.action_space): move, strafe, sneak, use, jump, sprint, yaw, pitch, attack,
+/// hotbar.
+pub const CHOICES: [i64; ACTIONS] = [3, 3, 2, 2, 2, 2, 11, 11, 2, 1 + SLOTS as i64];
 
 /// A player as the game shows it to someone else.
 #[derive(Clone, Copy, Debug, Default)]
@@ -46,7 +50,7 @@ impl View {
             pitch: p.pitch,
             health: p.shown_health(), // an opponent's is the server's (its unseen is always 0)
             armor: p.armor,
-            damage: if p.slot == 1 { p.attack_damage } else { 1.0 },
+            damage: if p.holds_sword() { p.attack_damage } else { 1.0 },
             hurt_time: p.hurt_time,
             on_ground: p.on_ground,
             sprinting: p.sprinting,
@@ -62,7 +66,6 @@ impl View {
 /// The model's own fighting state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Me {
-    pub slot: u8,
     pub resist: i32,
     pub damage: f32,
     pub armor: i32,
@@ -126,8 +129,11 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
         o[19] = cube.as_ref().is_some_and(|c| clear(c, my_eye, e.eye())) as i32 as f32;
     }
     let s = &mut out[ENEMIES * ENEMY_F..ENEMIES * ENEMY_F + SELF_F];
-    s[0] = (me.slot == 0) as i32 as f32;
-    s[1] = (me.slot == 1) as i32 as f32;
+    // A block or nothing in its hand; a sword in its hand. (Before the hotbar input these were "slot 0" and "slot 1",
+    // which held the blocks, or nothing, and the sword: the same values in every round as then.)
+    let hand = me_player.hand();
+    s[0] = (placeable(hand.item) || hand.item == items::EMPTY || hand.count <= 0) as i32 as f32;
+    s[1] = me_player.holds_sword() as i32 as f32;
     s[2] = me.resist as f32 / 20.0;
     s[3] = me.damage / 8.0;
     s[4] = me.armor as f32 / 20.0;
@@ -140,6 +146,7 @@ pub fn features(me_player: &Player, me: &Me, enemies: &[View], k: i32, cube: &dy
     for (t, v) in history.iter().enumerate() {
         h[t * HIST_F..(t + 1) * HIST_F].copy_from_slice(v);
     }
+    items::features(&me_player.hotbar, me_player.slot, &mut out[EXTRA - HOTBAR_F..]);
 }
 
 pub fn dist2(a: &[f64; 3], b: &[f64; 3]) -> f64 {
@@ -213,7 +220,7 @@ fn step_toward(left: f64) -> i64 {
 /// the tick, `since_hit` ticks since one of its hits counted, `ground` whether a block is at a spot (the floor it
 /// must not walk off).
 pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, since_hit: i32, ground: &dyn Fn(i32, i32, i32) -> bool) -> [i64; ACTIONS] {
-    let mut a = [0, 0, 0, 0, 0, 0, 5, 5, 0]; // nothing pressed, no turn (the sword is in hand from the start)
+    let mut a = [0, 0, 0, 0, 0, 0, 5, 5, 0, 0]; // nothing pressed, no turn (the sword is in hand from the start)
     if bot == Bot::Dummy || target.health <= 0.0 {
         return a;
     }

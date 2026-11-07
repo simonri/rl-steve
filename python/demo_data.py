@@ -120,7 +120,7 @@ def replay(path):
         placed = max(0, o["held_count"] - then.get("held_count", 0))
         env.used += placed
         action = [move, strafe, int(then["sneak"]), min(placed, 1), int(then["jump"]), int(then["sprint"]),
-                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"]), 0]  # no left click
+                  nearest(TURN_STEPS, turn(then["yaw"], here["yaw"])), nearest(TURN_STEPS, then["pitch"] - here["pitch"]), 0, 0]  # no left click, no hotbar key
         observations.append(seen)
         actions.append(action)
         history.append(np.asarray([move / 2, strafe / 2, action[2], action[3] / 2, action[4], action[5], action[6] / (len(TURN_STEPS) - 1), action[7] / (len(TURN_STEPS) - 1)], np.float32))
