@@ -44,10 +44,10 @@ def main():
         assert torch.allclose(a.logits, b.logits, atol=1e-5), (a.logits - b.logits).abs().max()
     assert torch.allclose(v_old, v_new, atol=1e-5), (v_old - v_new).abs().max()
     attack = d_new.distribution[moves].probs[:, 1]
-    sword = d_new.distribution[moves + 1].probs[:, 2]
+    sword = 1 - d_new.distribution[moves + 1].probs[:, 0]  # any change of what is in hand
     assert torch.allclose(attack, attack[0]) and 0.05 < float(attack[0]) < 0.2, attack
-    assert float(sword[0]) < 0.02, sword  # the blocks stay in hand on block courses
-    print(f"moves and values unchanged; new: attack {float(attack[0]):.2f}, take the sword {float(sword[0]):.3f}")
+    assert float(sword[0]) < 0.002, sword  # what the round started with stays in hand
+    print(f"moves and values unchanged; new: attack {float(attack[0]):.2f}, change the slot {float(sword[0]):.4f}")
     print("transfer ok")
 
 
