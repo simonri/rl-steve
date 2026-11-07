@@ -315,6 +315,8 @@ class Progress(BaseCallback):
         self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
         self.rated = None  # its last result: Elo and score per reference
         self.bonus_weight = 1.0  # how much a fight's event bonuses count (bonus_weight_from, shaping.rs); only falls
+        self.pool = None  # pool.Pool: older versions to fight (train_sim sets it, with the vec's opponents)
+        self.self_play = {}  # opponent ("latest" or a version) -> recent points, for status
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
         self.results, self.falls, self.stalls = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.damage, self.speeds, self.shift, self.parts = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
@@ -367,6 +369,7 @@ class Progress(BaseCallback):
             for rule, value in round_parts.items():
                 parts[rule] = parts.get(rule, 0.0) + value
         return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(), rating=self.rated, bonus_weight=self.bonus_weight,
+                    self_play={k: dict(score=self.mean(v), rounds=len(v)) for k, v in self.self_play.items()}, pool=len(self.pool.versions) if self.pool else 0,
                     success=self.mean(self.results), fell=self.mean(self.falls), stalled=self.mean(self.stalls), damage=self.mean(self.damage), speed=self.mean(self.speeds),
                     shift=self.mean(self.shift), bridge_speed=self.mean(self.bridge_speeds), bridge_record=self.bridge_record, parts={k: round(v / max(len(self.parts), 1), 3) for k, v in parts.items()}, seconds=time.time() - self.t0)
 
@@ -395,6 +398,10 @@ class Progress(BaseCallback):
         tmp = self.out / "latest.tmp"
         tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam, bonus_weight=self.bonus_weight)))
         os.replace(tmp, self.out / "latest.json")
+        if self.pool is not None:
+            self.pool.save()  # the versions' scores
+        if self.pool is not None and self.pool.due(self.num_timesteps):
+            print(f"pool: added {self.pool.add(self.model, self.num_timesteps)}, {len(self.pool.versions)} versions", flush=True)
 
     def show(self, title="TRAINING"):
         if time.time() - self.last_text < 1.0:
@@ -427,6 +434,16 @@ class Progress(BaseCallback):
                 continue
             self.rounds += 1
             family = info["family"]
+            if info.get("opponent") is not None:
+                # Self-play: its result goes to the pool (how hard each version is now), not to the curriculum or the
+                # family's rates, which measure the scripted opponents (docs/training-design.md#self-play).
+                points = 1.0 if info["success"] else 0.0 if info["deaths"] > 0 else 0.5
+                kind = "latest" if info["opponent"] == "latest" else "pool"
+                self.self_play.setdefault(kind, deque(maxlen=WINDOW)).append(points)
+                if self.pool is not None and kind == "pool":
+                    self.pool.record(info["opponent"], points)
+                self.parts.append(info["parts"])
+                continue
             self.clean[family].append(bool(info["clean"]))
             self.results.append(bool(info["clean"]))
             self.falls.append(bool(info["fell"]))
@@ -501,6 +518,9 @@ class Progress(BaseCallback):
         if self.num_timesteps - self.last_exam < EXAM_EVERY:
             return
         self.last_exam = self.num_timesteps
+        playing = self.vec.opponents if hasattr(self.vec, "opponents") else None
+        if playing is not None:
+            self.vec.opponents = None  # exams are against the scripted opponents only: they measure the curriculum
         for family in FAMILIES:
             if not is_open(self.cur.levels, family):
                 continue
@@ -522,6 +542,8 @@ class Progress(BaseCallback):
             self.exams_random[family] = round(wins[0] / max(games[0], 1), 3)
             print(f"exam with randomness at {self.num_timesteps}: {family} {wins[0]}/{games[0]}", flush=True)
         self.vec.env_method("set_exam", None)
+        if playing is not None:
+            self.vec.opponents = playing
         if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
             self.rated = self.rating.rate(self.model, self.num_timesteps)
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)

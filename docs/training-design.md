@@ -97,6 +97,11 @@ jämnt urval så att ingen glöms.
   self-play was inadequate" och höll skriptade motståndare med hela träningen.
 - Våra siffror (extrapolation): 75–80 % senaste, resten pool via (1−x)² med 10 % jämnt golv, upp till 10 %
   skriptade botar; en ny version i poolen var 2–10 miljoner beslut.
+- Så som det är byggt (`python/pool.py`): en ny version var 5 miljoner beslut, högst 30 (den äldsta går, utom
+  den första). Av självspelsrundorna 80 % mot senaste, resten pool via (1−x)² med 10 % jämnt golv; x är modellens
+  poäng mot versionen, där nyare resultat väger mer (×0,98 per runda). Skriptade botar: hälften av träningsduellerna
+  så länge duellkursen inte är klar, sedan 10 %. Undantaget från "upp till 10 %" är medvetet: kursen höjs bara av
+  botrundor, och självspelsrundor räknas aldrig in i den eller i provens resultat. Proven spelas bara mot botar.
 
 <a id="svagare"></a>
 ### 8. Svagare motståndare = äldre versioner, inte slumpdrag

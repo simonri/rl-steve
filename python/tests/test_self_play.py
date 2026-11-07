@@ -50,7 +50,66 @@ def main():
     # a new round starts its memory again
     vec._new(0)
     assert vec.opponents.start[0]
+    pool_and_mix(policy)
     print("self-play ok")
+
+
+def pool_and_mix(policy):
+    """The pool: PFSP favours the versions the model loses to, keeps a floor for the rest, remembers across restarts;
+    the mix: bots, the latest model and the pool in the documented shares, and rounds say who played."""
+    import tempfile
+    from pathlib import Path
+
+    import pool as P
+
+    w = P.pfsp_weights([0.0, 0.5, 1.0])
+    assert w[0] > w[1] > w[2] and abs(w.sum() - 1) < 1e-9 and w[2] >= P.UNIFORM_FLOOR / 3 - 1e-12, w
+
+    class Saver:  # model.save as SB3 does it: the name plus .zip
+        def __init__(self, policy):
+            self.policy = policy
+
+        def save(self, path):
+            src = Path(path).with_suffix(".zip")
+            ta.SplitPPO(MemoryPolicy, SimVecEnv(1, curriculum.Curriculum().levels, seed=0), n_steps=8, batch_size=8, n_epochs=1,
+                        policy_kwargs=ta.POLICY, device="cpu", seed=0).save(src)
+
+    with tempfile.TemporaryDirectory() as d:
+        pool = P.Pool(d)
+        assert pool.due(0) and pool.pick() is None
+        name = pool.add(Saver(policy), 10_000_000)
+        assert not pool.due(12_000_000) and pool.due(15_000_000)
+        for _ in range(20):
+            pool.record(name, 1.0)
+        assert pool.score(pool.versions[0]) > 0.9
+        pool.save()
+        again = P.Pool(d)
+        assert again.versions == pool.versions and again.last == 10_000_000
+
+        levels = curriculum.Curriculum().levels
+        levels["duel"].update(bot=0, distance=1, arena=0)
+        vec = SimVecEnv(4, levels, seed=4)
+        opp = Opponents(vec.num_envs)
+        mix = P.SelfPlay(opp, pool, policy, lambda: False, seed=1)
+        picks = [mix({"family": "duel"}) for _ in range(4000)]
+        bots = picks.count(BOT) / len(picks)
+        latest = picks.count("latest") / len(picks)
+        assert abs(bots - P.BOT_SHARE_LEARNING) < 0.03 and abs(latest - (1 - bots) * P.LATEST_SHARE) < 0.03, (bots, latest)
+        assert picks.count(name) > 0 and name in opp.policies
+        mix.duel_finished = lambda: True
+        assert abs([mix({"family": "duel"}) for _ in range(4000)].count(BOT) / 4000 - P.BOT_SHARE_DONE) < 0.02
+        # Rounds played by a model say so in their info, so training keeps them out of the curriculum.
+        vec.env_method("set_exam", "duel", True)
+        opp.choose = lambda meta: "latest"
+        vec.opponents = opp
+        obs = vec.reset()
+        idle = np.tile(np.array([0, 0, 0, 0, 0, 0, 5, 5, 0]), (vec.num_envs, 1))
+        seen = []
+        for _ in range(700):
+            vec.step_async(idle)
+            obs, _, dones, infos = vec.step_wait()
+            seen += [infos[i].get("opponent") for i in np.flatnonzero(dones)]
+        assert seen and all(s == "latest" for s in seen), seen
 
 
 if __name__ == "__main__":

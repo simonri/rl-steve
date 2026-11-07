@@ -17,6 +17,8 @@ from torch.distributions import Distribution
 
 import train_auto as ta
 from curriculum import Curriculum
+from opponents import Opponents
+from pool import Pool, SelfPlay
 from rating import Rating
 from sim_env import SimVecEnv
 from spatial import MemoryPolicy
@@ -90,6 +92,10 @@ def main():
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
         progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
+    # Self-play (docs/training-design.md#self-play): some duels against the latest model or an older version of it.
+    progress.pool = Pool(out, seed=a.seed)
+    vec.opponents = Opponents(vec.num_envs)
+    vec.opponents.choose = SelfPlay(vec.opponents, progress.pool, model.policy, lambda: ta.finished(curriculum.levels, "duel"), seed=a.seed)
 
     def stop(*_):
         # A stop (start.sh, a redeploy) ends learning where it is, and the run is saved below. A second one (uv passes
