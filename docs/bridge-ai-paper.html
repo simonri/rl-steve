@@ -70,12 +70,13 @@ dl.terms dd { margin: 0; }
 a:focus-visible { outline: 2px solid var(--grass); outline-offset: 2px; }
 </style>
 
+
 <main>
 <header class="title">
-  <p class="eyebrow">Teknisk beskrivning · körning auto4</p>
+  <p class="eyebrow">Teknisk beskrivning · körning auto7 · modell v4</p>
   <h1>Minecraft RL Agent</h1>
-  <p class="lede">Hur vår AI lär sig spela riktiga Minecraft: parkour, vägar, broar och Treenan-kartan. Skrivet för någon som kan programmera men är ny på AI, från grunden.</p>
-  <p class="meta">6 november 2026 · Minecraft 26.3 · Fabric-mod + Python · PPO med Stable-Baselines3</p>
+  <p class="lede">Hur Claudia, vår AI, lär sig spela riktiga Minecraft med Hypixels 1.8-strid: parkour, broar, Bedwars-kartor och dueller. Hela systemet steg för steg, för någon som kan programmera men är ny på AI.</p>
+  <p class="meta">7 november 2026 · Minecraft 26.3 · Fabric-mod, simulator i Rust, Python · PPO med minne (LSTM)</p>
 </header>
 
 <nav aria-label="Innehåll">
@@ -83,133 +84,130 @@ a:focus-visible { outline: 2px solid var(--grass); outline-offset: 2px; }
   <li><a href="#sammanfattning"><span>1</span>Sammanfattning</a></li>
   <li><a href="#grunder"><span>2</span>Grunderna i förstärkningsinlärning</a></li>
   <li><a href="#system"><span>3</span>Systemet, del för del</a></li>
-  <li><a href="#ser"><span>4</span>Vad modellen ser</a></li>
-  <li><a href="#gor"><span>5</span>Vad modellen kan göra</a></li>
-  <li><a href="#natet"><span>6</span>Det neurala nätet</a></li>
-  <li><a href="#poang"><span>7</span>Poängen</a></li>
-  <li><a href="#banor"><span>8</span>Banor och automatisk svårighet</a></li>
-  <li><a href="#ppo"><span>9</span>Hur inlärningen går till: PPO</a></li>
-  <li><a href="#kopiering"><span>10</span>Kopiering först: människa och lärare</a></li>
-  <li><a href="#mata"><span>11</span>Prov, mätning och fart</a></li>
-  <li><a href="#lardomar"><span>12</span>Det vi har lärt oss</a></li>
-  <li><a href="#ordlista"><span>13</span>Ordlista</a></li>
+  <li><a href="#tick"><span>4</span>Ett tick, steg för steg</a></li>
+  <li><a href="#ser"><span>5</span>Vad modellen ser</a></li>
+  <li><a href="#gor"><span>6</span>Vad modellen kan göra</a></li>
+  <li><a href="#natet"><span>7</span>Det neurala nätet</a></li>
+  <li><a href="#poang"><span>8</span>Poängen på banorna</a></li>
+  <li><a href="#strid"><span>9</span>Strid: regler, motståndare, poäng</a></li>
+  <li><a href="#banor"><span>10</span>Banor och automatisk svårighet</a></li>
+  <li><a href="#selfplay"><span>11</span>Self-play: mot sig själv</a></li>
+  <li><a href="#mata"><span>12</span>Prov, Elo och mätning</a></li>
+  <li><a href="#ppo"><span>13</span>Inlärningen: PPO med minne</a></li>
+  <li><a href="#drift"><span>14</span>Drift: träning, viewer, kontroller</a></li>
+  <li><a href="#lardomar"><span>15</span>Det vi har lärt oss</a></li>
+  <li><a href="#ordlista"><span>16</span>Ordlista</a></li>
 </ol>
 </nav>
 
 <h2 id="sammanfattning"><span class="n">1</span>Sammanfattning</h2>
-<p>Målet är en AI som spelar Minecraft som en duktig människa: springer, hoppar parkour, bygger broar över tomrum med shift-tapp, och till slut spelar Bedwars mot riktiga spelare. Den spelar i det <strong>riktiga spelet</strong>, inte i en egen kopia av fysiken, och den ser inte skärmen. I stället får den siffror direkt från spelet: var den står, hur fort den rör sig, vilka block som finns runt den.</p>
-<p>Den lär sig själv genom att spela miljontals korta rundor och få poäng för bra beteende. Innan dess får den titta på inspelningar, både av en människa och av en skriptad lärare, så att den inte börjar från noll.</p>
-<p>Det här dokumentet förklarar varje del: vad modellen ser, vad den kan trycka, hur den belönas, hur banorna blir svårare av sig själva, och hur själva inlärningen fungerar.</p>
-<div class="key"><b>Läget just nu (körning auto4):</b> cirka 3,4 miljoner beslut, nivå 45 av 85. Parkour 14 av 28, väg 12 av 16, bro 19 av 30. Treenan-kartan är låst tills bron klarar gap 16. Senaste prov utan slump: parkour 24/32, väg 17/32, bro 22/32.</div>
+<p>Målet är en AI som spelar Bedwars som en duktig människa: springer, hoppar parkour, bygger broar över tomrum med shift, väljer rätt sak i hotbaren och slåss med 1.8-regler, som på Hypixel. Den ser inte skärmen. Den får siffror direkt från spelet: var den står, hur den rör sig, vilka block som finns runt den, var motståndarna är och vad som ligger i hotbaren. Den trycker samma knappar som en människa, med samma begränsningar.</p>
+<p>Modellen lär sig själv genom att spela hundratals miljoner korta rundor och få poäng för det som leder till målet. Nästan all träning sker i en <strong>simulator i Rust</strong> som räknar exakt som spelet och är många gånger snabbare. Samma modell spelar sedan i det riktiga spelet utan ändringar.</p>
+<div class="key"><b>Läget just nu (auto7):</b> 217,5 miljoner beslut, nivå 197 av 202. Senaste prov (vid 216,7 M): parkour 12/32, väg 25, bro 28, Treenan 30, trappor 28, duell 26 (mot två motståndare), Bedwars 25. Elo 1817 mot frysta referenser (startpunkten satt till 1000). Träningen är pausad medan modell v4, med en riktig hotbar, provkörs.</div>
 
 <h2 id="grunder"><span class="n">2</span>Grunderna i förstärkningsinlärning</h2>
-<p>Förstärkningsinlärning (reinforcement learning, RL) är ett sätt att få ett program att lära sig ett beteende genom försök och misstag, ungefär som att träna en hund med godis. Det finns fem begrepp att ha koll på.</p>
-
+<p>Förstärkningsinlärning (reinforcement learning, RL) är att låta ett program lära sig ett beteende genom försök och misstag, ungefär som att träna en hund med godis. Fem begrepp räcker för att följa resten.</p>
 <h3>Agent, miljö, tillstånd, handling, belöning</h3>
 <ul>
-  <li><strong>Miljön</strong> är världen: här Minecraft och en bana.</li>
-  <li><strong>Agenten</strong> är den som spelar: vår modell.</li>
-  <li><strong>Tillståndet</strong> (observationen) är vad agenten vet om världen just nu: en lista med 4 681 tal.</li>
-  <li><strong>Handlingen</strong> är vad agenten gör: vilka knappar den trycker och hur den vrider blicken.</li>
-  <li><strong>Belöningen</strong> är ett tal som säger hur bra det gick, till exempel +1 för ett block närmare målet och −4 för att falla.</li>
+  <li><strong>Miljön</strong> är världen: Minecraft och en runda (en bana eller en duell).</li>
+  <li><strong>Agenten</strong> är den som spelar: modellen, Claudia.</li>
+  <li><strong>Tillståndet</strong> (observationen) är vad agenten vet just nu: 5 128 tal.</li>
+  <li><strong>Handlingen</strong> är vad agenten gör: tio val per tick, till exempel W, shift, hur mycket blicken vrids och vilken plats i hotbaren.</li>
+  <li><strong>Belöningen</strong> är ett tal som säger hur bra det gick, till exempel +1 per block närmare målet eller +10 för en vunnen duell.</li>
 </ul>
-<p>Det här upprepas i en loop, 20 gånger per sekund speltid:</p>
 <figure>
 <pre class="mermaid">
 flowchart LR
-  E["Minecraft<br/>(miljön)"] -- "tillstånd: 4 681 tal" --> A["Modellen<br/>(agenten)"]
-  A -- "handling: knappar och vridning" --> E
-  E -- "belöning: poäng" --> L["Inlärningen"]
-  L -- "justerar modellen" --> A
+  E["Minecraft eller simulatorn<br/>(miljön)"] -- "tillstånd: 5 128 tal" --> A["Modellen<br/>(agenten)"]
+  A -- "handling: 10 val" --> E
+  E -- "belöning" --> L["Inlärningen (PPO)"]
+  L -- "justerar vikterna" --> A
 </pre>
-<figcaption>Ett varv i loopen är ett tick: spelet går 1/20 sekund framåt.</figcaption>
+<figcaption>Ett varv är ett tick: spelet går 1/20 sekund framåt.</figcaption>
 </figure>
-
-<h3>Policy: en funktion från tillstånd till handling</h3>
-<p>Modellen är en <strong>policy</strong>: en funktion som tar tillståndet och ger sannolikheter för varje möjlig handling. "I det här läget: tryck hopp med 80 % sannolikhet." Under träning slumpar man efter sannolikheterna, så att den ibland provar nytt. I prov och i spel mot människor väljer den det mest sannolika.</p>
-<p>Funktionen är ett <strong>neuralt nät</strong>: en stor formel med cirka 590 000 justerbara tal, så kallade vikter. Från början är vikterna slumpade och modellen spelar dumt. Inlärning är att ändra vikterna lite i taget så att bra handlingar blir mer sannolika.</p>
-
-<h3>Värde: hur bra är läget?</h3>
-<p>Belöningen kommer ofta sent. Ett hopp lönar sig först när den landar en sekund senare. Därför har modellen ett andra huvud, ett <strong>värde</strong>: en gissning på hur mycket poäng den kommer att få från det här läget och framåt. Med det kan den jämföra: "det här hoppet gick bättre än jag trodde", och då göra hoppet mer sannolikt, även om belöningen kom flera tick efteråt.</p>
-
-<h3>Lutning ner i en kulle</h3>
-<p>Hur ändras vikterna? Man räknar ut åt vilket håll varje vikt ska flyttas för att bra handlingar ska bli lite mer sannolika och dåliga lite mindre, och flyttar dem ett litet steg. Det heter <em>gradientnedstigning</em>. Upprepat miljontals gånger blir modellen gradvis bättre. Steget får inte vara för stort, för då kan den glömma det den kunde.</p>
+<h3>Policy, värde och minne</h3>
+<p>Modellen är en <strong>policy</strong>: ett neuralt nät som ger sannolikheter för varje möjlig handling. Under träning slumpas valen efter sannolikheterna, så att den provar nytt. Den har också ett <strong>värde</strong>: en gissning på hur mycket poäng som återstår från läget. Med det kan den jämföra utfallet mot förväntan och flytta sannolikheterna åt rätt håll, även när poängen kommer flera sekunder senare.</p>
+<p>Sedan auto5 har modellen ett <strong>minne</strong> (en LSTM). Det bär med sig 256 tal från tick till tick, så att den kan hålla fast vid en plan och komma ihåg vad som just hände, till exempel att motståndaren nyss slog.</p>
+<h3>Hur vikterna ändras</h3>
+<p>Nätet har cirka två miljoner vikter. Efter varje omgång spel räknas ut åt vilket håll varje vikt ska flyttas så att bättre handlingar blir lite mer sannolika, och vikterna flyttas ett litet steg (gradientnedstigning). Steget hålls litet, annars glömmer modellen det den redan kunde.</p>
 
 <h2 id="system"><span class="n">3</span>Systemet, del för del</h2>
 <figure>
 <pre class="mermaid">
 flowchart TB
-  subgraph Java["Minecraft 26.3, en per spelinstans"]
-    M["Fabric-mod<br/>stegar spelet ett tick i taget"] --- C["Klient + inbyggd server<br/>ingen grafik ritas"]
+  subgraph Sim["Simulatorn (Rust, mcsim)"]
+    S1["512 rundor åt gången<br/>på 6 kärnor"] --- S2["samma fysik, strid,<br/>poäng och indata som spelet"]
   end
   subgraph Py["Python"]
-    G["auto_env.py<br/>banor, inputs, poäng"]
-    T["train_auto.py<br/>PPO: spelar på processorn,<br/>lär sig på grafikkortet"]
-    K["curriculum.py<br/>automatisk svårighet"]
+    T["train_sim.py: PPO,<br/>prov, rating, self-play"]
+    K["curriculum.py: svårighet"]
+    G["auto_env.py: banor,<br/>indata och poäng i spelet"]
+    P["pool.py / opponents.py:<br/>äldre versioner som motståndare"]
   end
-  M <-- "JSON över localhost" --> G
-  G <--> T
-  K --> G
-  T --> D["status.json, loggar"] --> W["Dashboard + scoreboard i spelet"]
-  H["Inspelningsserver<br/>du spelar, allt spelas in"] --> R["Inspelningar"]
-  L["Lärare (planner.py)<br/>skriptad, planerar med fysik"] --> R
-  R -- "kopieras först" --> T
+  subgraph Game["Minecraft 26.3 (Java)"]
+    M["Fabric-mod i lockstep:<br/>ett tick i taget, 1.8-strid"]
+  end
+  T <--> Sim
+  K --> T
+  P --> T
+  G <-- "JSON över localhost" --> M
+  T -- "modellen" --> V["viewer.sh: live_auto.py<br/>spelar dueller på bot0"]
+  V --> G
+  L["Lunar (localhost:25701)"] -. "tittar" .-> M
+  X["test_sim_env.py: samma<br/>rundor i båda, varje tal lika"] -.- Sim
+  X -.- G
 </pre>
-<figcaption>Fyra spelinstanser tränar samtidigt. En femte visar modellen live, en sjätte är inspelningsservern.</figcaption>
+<figcaption>Träningen sker i simulatorn. Det riktiga spelet används för att visa modellen och för att kontrollera att simulatorn räknar rätt.</figcaption>
 </figure>
-
 <h3>Modet: Minecraft i lockstep</h3>
-<p>Normalt kör Minecraft i realtid. Det går inte för träning: Python behöver bestämma nästa handling innan spelet går vidare, och vi vill köra så fort datorn hinner. Därför har vi en egen <strong>Fabric-mod</strong>. Varje tick:</p>
+<p>Normalt kör Minecraft i realtid. Vår Fabric-mod låter Python styra varje tick: Python skickar knappar och vridning, modet trycker de riktiga tangentbindningarna, klienten och den inbyggda servern kör exakt ett tick var, och modet skickar tillbaka tillståndet som JSON. Modet sköter också 1.8-striden (skada, skyddstid, knuff), botarna, hotbaren som varje runda ger, och rapporterar vad som hände: slag som räknades, kritiska slag och om spelaren slogs ut.</p>
+<h3>Simulatorn</h3>
+<p>Att köra Minecraft gav ungefär 500 beslut per sekund. Simulatorn är en omskrivning i Rust av de delar av spelet modellen behöver: rörelse och kollision (från 26.3-koden), blockplacering, stridsreglerna, botarna och knuffarna. Den kör 512 rundor sida vid sida på sex kärnor, medan modellen väljer åt alla på en gång på grafikkortet. Det ger 2 500–3 500 beslut per sekund, cirka 10 miljoner i timmen.</p>
+<div class="note"><b>Samma regel på båda ställen.</b> Varje regel finns två gånger: i <code>sim/src/env.rs</code> och i <code>python/auto_env.py</code>, som spelar det riktiga spelet. Testet <code>test_sim_env.py</code> kör samma rundor med samma tryck i båda och kräver att varje indatatal, varje poäng och varje slut stämmer. Kontrollerna i <code>checks/</code> jämför simulatorn mot det riktiga spelet på en testklient (bot1).</div>
+
+<h2 id="tick"><span class="n">4</span>Ett tick, steg för steg</h2>
+<p>Ordningen inom ett tick spelar roll: en träff som kommer ett tick för sent ändrar vem som vinner. Simulatorn följer samma ordning som spelet.</p>
 <ol>
-  <li>Python skickar ett kommando: vilka knappar som är nere, hur mycket blicken ska vridas, om den ska klicka.</li>
-  <li>Modet trycker de riktiga tangentbindningarna i klienten, som en människa skulle.</li>
-  <li>Klienten kör exakt ett tick, sedan kör den inbyggda servern exakt ett tick.</li>
-  <li>Modet läser tillståndet från klienten och skickar tillbaka det som JSON.</li>
+  <li><strong>Modellen väljer.</strong> Den ser tillståndet efter förra ticket och väljer tio saker. Motståndare som spelas av en modell (self-play) väljer samtidigt från sitt eget håll.</li>
+  <li><strong>Knappgränser.</strong> En knapp måste vara nere eller uppe i minst 2 tick. Ett högerklick räknas bara med shift nere nu eller för högst 2 tick sedan.</li>
+  <li><strong>Hotbar-tangenten.</strong> Om den trycker en plats (1–9) byts handen innan klicken i samma tick, som spelet hanterar ett ticks tangenter.</li>
+  <li><strong>Förra tickets slag når servern.</strong> En klients slag kommer fram ett tick efter klicket. Träffas en motståndare flyger den iväg innan den hinner röra sig.</li>
+  <li><strong>Vridning och vänsterklick.</strong> Blicken vrids, och ett vänsterklick räknas ut mot det siktet pekar på just då.</li>
+  <li><strong>Alla rör sig.</strong> Högerklicket placerar ett block från handen, sedan rörelse och kollision för alla spelare.</li>
+  <li><strong>Botarnas slag landar.</strong> En bot slår direkt på servern. Skadan syns i spelarens egen klient först nästa tick.</li>
+  <li><strong>Räknare.</strong> Skyddstid och läkning räknas ner, rundans tid går, och poängen för ticket räknas.</li>
 </ol>
-<p>Grafiken ritas inte under träning, det behövs inga pixlar. Andra klienter, till exempel Lunar, kan ansluta och titta. Då flyttas kameran automatiskt så att hela banan syns.</p>
 
-<h3>Tre sorters spelinstanser</h3>
-<ul>
-  <li><strong>Träning (4 st):</strong> kör så fort de hinner. Det är här modellen lär sig.</li>
-  <li><strong>Live (1 st):</strong> spelar senaste modellen i normal fart, bara när någon tittar.</li>
-  <li><strong>Inspelning (1 st):</strong> en människa ansluter och spelar slumpade banor. Varje tick sparas.</li>
-</ul>
-
-<h2 id="ser"><span class="n">4</span>Vad modellen ser</h2>
-<p>Modellen får 4 681 tal per tick. Allt är <strong>generellt</strong>: det är information en spelare har även i vanligt Minecraft och i Bedwars. Den får inte veta vägen eller banans regler.</p>
-
+<h2 id="ser"><span class="n">5</span>Vad modellen ser</h2>
+<p>Allt i indata beskriver spelet som det är. Det är vår viktigaste regel: <strong>indata ljuger aldrig</strong>. Om vi vill att modellen ska göra något, till exempel sikta mot bröstet, ligger det i poängen, aldrig i hur världen beskrivs. Modellen får inte heller veta banans regler eller vägen. Målet är ett kommando ("gå dit", "slåss med den"), som en strateg senare kommer att ge i Bedwars.</p>
 <h3>Två referensramar</h3>
-<p>Ett vanligt problem: om blocken visas relativt blicken, ändras hela bilden lite varje gång modellen vrider på huvudet, och blockens kanter blir suddiga. Vi mätte det: en vridning på 10° ändrade 48 av 1 331 blockvärden. Därför används två ramar:</p>
-<ul>
-  <li><strong>Rutnätsramen</strong> för block, plats i blocket och sikte. Den är låst till blockrutnätet och vriden i 90°-steg så att "framåt" är målets huvudriktning. Den står still under hela rundan. Att vrida huvudet ändrar inget i blocksynen, och en bana mot söder ser exakt ut som samma bana mot öster.</li>
-  <li><strong>Blickramen</strong> för mål och fart, eftersom tangenterna fungerar så: W går dit man tittar.</li>
-</ul>
-
+<p>Block, karta och sikte visas i en <strong>rutnätsram</strong> som står still under hela rundan, vriden i 90°-steg så att framåt är målets huvudriktning. Att vrida huvudet ändrar då inget i blocksynen. Mål och fart visas i <strong>blickramen</strong>, eftersom W går dit man tittar.</p>
 <div class="tablewrap">
 <table>
 <thead><tr><th>Grupp</th><th>Innehåll</th><th>Antal</th></tr></thead>
 <tbody>
-<tr><td>Mål</td><td>Riktning framåt och åt sidan, avstånd och höjdskillnad (de två sista i logaritmisk skala så att de fungerar långt bort)</td><td class="num">4</td></tr>
+<tr><td>Mål</td><td>Riktning framåt och åt sidan, avstånd och höjdskillnad (logaritmiskt). I en duell är målet närmaste motståndare som står över golvet.</td><td class="num">4</td></tr>
 <tr><td>Plats i blocket</td><td>Avstånd från blockets mitt i två riktningar, höjd i blocket</td><td class="num">3</td></tr>
 <tr><td>Fart</td><td>Framåt, åt sidan, uppåt</td><td class="num">3</td></tr>
-<tr><td>Blick</td><td>Lutning, vridning mot rutnätet (sinus och cosinus, så att 359° och 1° ligger nära)</td><td class="num">3</td></tr>
-<tr><td>Kropp</td><td>På marken, sprintar på riktigt, hälsa, krockar med vägg, fallsträcka, skadetimer</td><td class="num">6</td></tr>
-<tr><td>Sikte</td><td>Siktar på block, blockets läge (3), var på blocket (3), vilken av blockets 6 sidor</td><td class="num">13</td></tr>
-<tr><td>Block i handen</td><td>Antal, och om ett klick just nu skulle sätta ett block</td><td class="num">2</td></tr>
-<tr><td>Knappar som är nere</td><td>Shift, sprint, hopp, W, S, A, D, väntan innan nästa hopp, tid kvar av rundan</td><td class="num">9</td></tr>
-<tr><td>Blocksyn</td><td>Fast eller inte, 5 block åt alla håll runt fötterna: 11 × 11 × 11</td><td class="num">1 331</td></tr>
-<tr><td>Karta</td><td>33 × 33 kolumner runt spelaren i tre lager: höjd på översta blocket, finns ett block, har den stått här</td><td class="num">3 267</td></tr>
-<tr><td>Historik</td><td>Vad den valde de 5 senaste tickarna</td><td class="num">40</td></tr>
+<tr><td>Blick</td><td>Lutning, vridning mot rutnätet (sinus och cosinus)</td><td class="num">3</td></tr>
+<tr><td>Kropp</td><td>På marken, sprintar, hälsa som klienten visar den, krock med vägg, fallsträcka, skadetimer</td><td class="num">6</td></tr>
+<tr><td>Sikte</td><td>Siktar på block, blockets läge, var på blocket, vilken sida</td><td class="num">13</td></tr>
+<tr><td>Block</td><td>Block i hela hotbaren, och om ett högerklick just nu skulle placera ett (bara med block i handen)</td><td class="num">2</td></tr>
+<tr><td>Knappar</td><td>Shift, sprint, hopp, W, S, A, D nere; väntan innan nästa hopp; tid kvar av rundan</td><td class="num">9</td></tr>
+<tr><td>Blocksyn</td><td>Fast eller inte, 11 × 11 × 11 runt fötterna</td><td class="num">1 331</td></tr>
+<tr><td>Karta</td><td>33 × 33 kolumner i tre lager: översta blockets höjd, finns ett block, har den stått här</td><td class="num">3 267</td></tr>
+<tr><td>Historik</td><td>De åtta rörelsevalen de 5 senaste tickarna</td><td class="num">40</td></tr>
+<tr><td>Motståndare</td><td>De tre närmaste, 20 värden var: läge och fart i rutnätsramen, avstånd, vart den tittar (mot modellen eller inte), hälsa, rustning, skada, skadetimer, på marken, sprintar, om ett vänsterklick nu skulle träffa den, inom räckvidd, fri sikt</td><td class="num">60</td></tr>
+<tr><td>Egen strid</td><td>Block eller tom hand, svärd i handen, skyddstid, egen skada, rustning, serverns sprint, tick sedan eget slag räknades, tick sedan den blev slagen, är det en duell</td><td class="num">9</td></tr>
+<tr><td>Kommando</td><td>Plats för en strategs kommando, ännu 0</td><td class="num">4</td></tr>
+<tr><td>Vänsterklick</td><td>De 5 senaste</td><td class="num">5</td></tr>
+<tr><td>Hotbar</td><td>Nio platser: vilken sorts föremål (en av 39 i Bedwars-butikens lista) och antal; vilken plats som är vald</td><td class="num">369</td></tr>
 </tbody>
 </table>
 </div>
+<div class="note"><b>Exempel på en indata som ljög.</b> Värdet "ett vänsterklick nu skulle träffa" ändrades en gång till "siktar ordentligt mot bröstet", för att få modellen att sluta slå med blicken uppåt inifrån motståndarens kropp. Det var en önskan, inte spelets regel, och togs tillbaka. Önskan ligger nu i poängen, som en potential för siktet (avsnitt 9).</div>
 
-<div class="note"><b>Varför "har den stått här"?</b> Modellen har inget minne mellan tickar utöver historiken. På en slingrande väg ser båda riktningarna likadana ut. Kartlagret med besökta rutor är ett enkelt minne: den ser vilket håll den kom ifrån. Det kostar nästan inget och kan inte glömmas bort.</div>
-
-<p>Värden som borttagits under arbetet, för att de inte finns i riktigt spel: nästa 3 block på banan, vägens riktning, "flyttar blocket målet närmare", banans typ, och "måste stanna på blocket". Vi har också tagit bort den konstgjorda reaktionsfördröjningen och de slumpade "sena knapparna". Modellen ser spelet som det är och dess knappar landar exakt.</p>
-
-<h2 id="gor"><span class="n">5</span>Vad modellen kan göra</h2>
-<p>Varje tick väljer modellen åtta saker samtidigt:</p>
+<h2 id="gor"><span class="n">6</span>Vad modellen kan göra</h2>
 <div class="tablewrap">
 <table>
 <thead><tr><th>Val</th><th>Alternativ</th></tr></thead>
@@ -217,179 +215,241 @@ flowchart TB
 <tr><td>Gå</td><td>Ingenting, W eller S</td></tr>
 <tr><td>Sidled</td><td>Ingenting, A eller D</td></tr>
 <tr><td>Shift</td><td>Uppe eller nere</td></tr>
-<tr><td>Klick</td><td>Klicka eller inte. Ett klick är alltid ett enda klick, aldrig en nedhållen knapp</td></tr>
+<tr><td>Högerklick</td><td>Klicka eller inte. Ett klick är alltid ett enda klick</td></tr>
 <tr><td>Hopp</td><td>Uppe eller nere</td></tr>
 <tr><td>Sprint</td><td>Uppe eller nere</td></tr>
 <tr><td>Vridning i sidled</td><td>0, ±0,5, ±2, ±5, ±15 eller ±60 grader per tick</td></tr>
-<tr><td>Lutning</td><td>Samma steg, uppåt eller nedåt</td></tr>
+<tr><td>Lutning</td><td>Samma steg uppåt eller nedåt</td></tr>
+<tr><td>Vänsterklick</td><td>Slå eller inte</td></tr>
+<tr><td>Hotbar</td><td>Ingen tangent, eller plats 1–9</td></tr>
 </tbody>
 </table>
 </div>
-<p>Stegen för vridning är täta nära noll, som en hand med mus. Vi jämförde mot inspelningar av en människa: de gamla stegen (±1, ±10, ±60) tappade 43 % av vridningen vid avrundning, de nya cirka 30 %.</p>
-<h3>Mänskliga begränsningar som finns kvar</h3>
+<h3>Mänskliga begränsningar</h3>
 <ul>
-  <li>En knapp är nere eller uppe i minst 2 tick (0,1 s). Den kan inte fladdra.</li>
-  <li>Ett klick räknas bara med shift nere nu eller för högst 2 tick sedan. Det utesluter moonbridge, att bygga utan shift-tapp.</li>
-  <li>Högst ett klick per tick, alltså 20 per sekund.</li>
-  <li>Högst 60° vridning per tick.</li>
+  <li>En knapp är nere eller uppe i minst 2 tick. Den kan inte fladdra.</li>
+  <li>Ett högerklick räknas bara med shift nere nu eller för högst 2 tick sedan. Det utesluter moonbridge.</li>
+  <li>Högst ett klick av varje sort per tick och högst 60° vridning per tick.</li>
+  <li>Klicken går genom klienten: modellens slag når servern ett tick senare, som för en människa.</li>
 </ul>
+<h3>Hotbaren</h3>
+<p>Föremålen är exakt de som finns i Hypixel Bed Wars butik: ull, härdad lera, glas, end stone, stege, plankor, obsidian, svärd i fyra nivåer, knockback-pinne, hackor, yxor, sax, båge, pilar, drycker och verktyg som TNT och fireball. Listan har en fast numrering som bara växer i slutet, eftersom numret ingår i indata. Det simulatorn ännu inte kan (stege, hackor, TNT) delas inte ut. Varje runda lägger blocken och svärdet på slumpade platser, så modellen måste läsa av hotbaren. Ett högerklick placerar bara med block i handen, och ett slag gör svärdets skada bara med svärdet i handen.</p>
 
-<h2 id="natet"><span class="n">6</span>Det neurala nätet</h2>
-<p>Att mata in 4 681 tal som en lång lista fungerar dåligt: listan vet inte att två block ligger bredvid varandra. Därför har nätet olika delar för olika sorters information.</p>
+<h2 id="natet"><span class="n">7</span>Det neurala nätet</h2>
 <figure>
 <pre class="mermaid">
 flowchart LR
-  B["Blocksyn<br/>11×11×11"] --> C3["3D-faltning<br/>2 lager"] --> F1["128"]
-  K["Karta<br/>3×33×33"] --> C2["2D-faltning<br/>3 lager"] --> F2["128"]
-  S["Kropp, sikte, knappar,<br/>historik (83 tal)"] --> L1["Linjärt lager"] --> F3["128"]
-  F1 --> X["384 tal"]
-  F2 --> X
-  F3 --> X
-  X --> P["Policy<br/>256 → 256 → handlingar"]
-  X --> V["Värde<br/>256 → 256 → 1 tal"]
+  B["Blocksyn 11³"] --> C3["3D-faltning, 3 lager"] --> F1["128"]
+  K["Karta 3×33²"] --> C2["2D-faltning, 4 lager"] --> F2["128"]
+  S["Övrigt: 530 tal<br/>(kropp, knappar, historik,<br/>strid, hotbar)"] --> L1["Linjärt lager"] --> F3["128"]
+  F1 --> J["Ihopslagning 384 → 256<br/>+ 2 residualblock"]
+  F2 --> J
+  F3 --> J
+  J --> M["Minne: LSTM 256"] --> P["Policy: 256 → 10 val"]
+  J --> V["Värde: 256 → 1 tal"]
 </pre>
-<figcaption>Totalt 590 853 vikter. 252 640 av dem ligger i delarna som läser block, karta och kropp.</figcaption>
+<figcaption>Cirka 1,96 miljoner vikter: 1,22 miljoner i delarna som läser indata, 0,53 miljoner i minnet.</figcaption>
 </figure>
-<p><strong>Faltning</strong> (convolution) betyder att samma lilla filter, här 3×3 eller 3×3×3 rutor, glids över hela bilden. Ett filter kan till exempel lära sig att känna igen "kant med tomrum bakom". Eftersom samma filter används överallt känner nätet igen en kant var den än är, och det behövs mycket färre vikter än om varje ruta hade egna.</p>
-<p>Efter delarna slås resultaten ihop till 384 tal, som går till två huvuden: <strong>policyn</strong>, som ger sannolikheter för de åtta valen, och <strong>värdet</strong>, som gissar framtida poäng.</p>
+<p><strong>Faltning</strong> betyder att samma lilla filter glids över hela blocksynen eller kartan, så att nätet känner igen en kant eller ett gap var det än är. De tre delarna slås ihop, går genom två residualblock och sedan till minnet, som bär 256 tal mellan tickarna. Policyn ger sannolikheter för de tio valen och värdet en gissning på återstående poäng.</p>
+<div class="note"><b>Nät som växer.</b> När indata eller val har lagts till (strid i v2, hotbar i v4) flyttas den gamla modellen över med <code>transfer()</code>: nya indata får vikten 0 och nya val en startlutning, så att modellen svarar exakt som innan på första steget. Hotbar-valet startar på ungefär ett tryck per tusen tick. Även äldre motståndare i self-play-poolen laddas på det sättet.</div>
 
-<h2 id="poang"><span class="n">7</span>Poängen</h2>
-<p>Poängreglerna är det enda sättet att säga åt modellen vad vi vill. Den gör vad som ger mest poäng, inte vad vi menade, så reglerna måste vara svåra att fuska med. Alla regler gäller på alla banor. Talen nedan multipliceras med 0,1 innan modellen ser dem, för att hålla summorna i ett bekvämt intervall.</p>
+<h2 id="poang"><span class="n">8</span>Poängen på banorna</h2>
+<p>Poängen är det enda sättet att säga vad vi vill. Modellen gör det som ger mest poäng, inte det vi menade, så reglerna måste vara svåra att fuska med. Talen multipliceras med 0,1 innan inlärningen ser dem.</p>
 <div class="tablewrap">
 <table>
 <thead><tr><th>Regel</th><th>Poäng</th><th>Varför</th></tr></thead>
 <tbody>
-<tr><td>Framsteg</td><td class="num plus">+1 per block närmare</td><td>Räknas bara när den står på något, så ett hopp ut i tomrummet ger inget</td></tr>
-<tr><td>Landa på nästa block (parkour)</td><td class="num plus">+1 per block</td><td>Bara i ordning: hoppar den över ett block ger resten inget</td></tr>
-<tr><td>Block placerat närmare målet</td><td class="num plus">+1</td><td>Bara när det blir det närmaste hittills, så det går inte att farma</td></tr>
-<tr><td>Mål</td><td class="num plus">+10 (5 efter en död)</td><td>Det egentliga målet</td></tr>
+<tr><td>Framsteg</td><td class="num plus">+1 per block närmare</td><td>Räknas bara när den står på något</td></tr>
+<tr><td>Landa på ett block (parkour)</td><td class="num plus">+1 per block</td><td>Vilket block som helst längre fram räknas, och de som hoppats över räknas med. Vägen är modellens att hitta</td></tr>
+<tr><td>Block närmare målet</td><td class="num plus">+1 per block närmare</td><td>Bara när det blir det närmaste hittills</td></tr>
+<tr><td>Mål</td><td class="num plus">+10 (hälften efter en död)</td><td>Det egentliga målet</td></tr>
 <tr><td>Fart vid mål</td><td class="num plus">upp till +3</td><td>I proportion till tid kvar</td></tr>
-<tr><td>Tid</td><td class="num minus">−0,002 per tick</td><td>Att stå still kostar lite</td></tr>
-<tr><td>Död</td><td class="num minus">−4</td><td>Två döda avslutar rundan. Första gången startar den om från början med bron kvar</td></tr>
-<tr><td>Fastnat (2 s utan att komma närmare)</td><td class="num minus">−4, rundan slutar</td><td>Lika dyrt som att dö, annars lönar det sig att ge upp</td></tr>
-<tr><td>Stod kvar på start</td><td class="num minus">−2 extra</td><td>När den fastnar eller tiden tar slut utan att ha lämnat start</td></tr>
+<tr><td>Räddad efter knuff</td><td class="num plus">+2</td><td>Tillbaka på ett block efter en knuff, utan att falla</td></tr>
+<tr><td>Sparade block</td><td class="num plus">+0,3 per block</td><td>Under det beräknade behovet, vid målet</td></tr>
+<tr><td>Hittade blocken</td><td class="num plus">+0,5, en gång</td><td>När en runda börjar med något annat i handen: första gången det finns block i handen</td></tr>
+<tr><td>Tid</td><td class="num minus">−0,006 per tick</td><td>Att stå still kostar lite</td></tr>
+<tr><td>Död</td><td class="num minus">−4</td><td>Två döda avslutar rundan</td></tr>
+<tr><td>Fastnat</td><td class="num minus">−4, rundan slutar</td><td>Lika dyrt som att dö, annars lönar det sig att ge upp</td></tr>
+<tr><td>Stod kvar på start</td><td class="num minus">−2 extra</td><td>Om rundan slutar utan att den lämnat start</td></tr>
 <tr><td>Fallskada</td><td class="num minus">−0,5 per hälsopoäng</td><td>Som i spelet</td></tr>
 <tr><td>Block</td><td class="num minus">−0,02 per block, −0,3 utöver behovet</td><td>Slösa inte</td></tr>
-<tr><td>Shift utan block i handen</td><td class="num minus">−0,05 per tick</td><td>Shift saktar ner och behövs bara för bro</td></tr>
-<tr><td>Klick utan block</td><td class="num minus">−0,05</td><td>Gör ingenting</td></tr>
-<tr><td>Titta upp i tomma luften</td><td class="num minus">upp till −0,05 per tick</td><td>Mer ju mer rakt upp. Gratis att titta upp mot ett block</td></tr>
+<tr><td>Högerklick utan block i handen</td><td class="num minus">−0,05</td><td>Gör ingenting</td></tr>
+<tr><td>Titta upp i luften</td><td class="num minus">upp till −0,05 per tick</td><td>Gratis att titta upp mot ett block</td></tr>
 </tbody>
 </table>
 </div>
-<div class="note"><b>Exempel på hur regler kan slå fel:</b> när "fastnat" kostade 1 och döden 4 lärde sig modellen att stå och klicka försiktigt vid kanten tills tiden gick ut, eftersom det var billigare än att riskera ett fall. Det upptäcktes genom att räkna hur rundorna slutade.</div>
+<div class="note"><b>Exempel på hur regler slår fel:</b> när fastnat kostade 1 och döden 4 lärde sig modellen att stå vid kanten tills tiden gick ut. När parkour bara räknade block i exakt ordning, men indata bara visade banans slut, kunde modellen inte veta vilken väg som gällde. Nu räknas vilket block som helst längre fram.</div>
 
-<h2 id="banor"><span class="n">8</span>Banor och automatisk svårighet</h2>
-<p>Alla banor kommer från en enda generator med fyra sorter:</p>
+<h2 id="strid"><span class="n">9</span>Strid: regler, motståndare, poäng</h2>
+<h3>1.8-regler, som på Hypixel</h3>
 <ul>
-  <li><strong>Parkour:</strong> enstaka block att hoppa mellan. Reglage: avstånd framåt och åt sidan (upp till 4 och 2, sicksack med stolpar så att man inte kan fuska), antal hopp, höjdskillnader, startvinkel, start från plattform eller enstaka block, tid.</li>
-  <li><strong>Väg:</strong> en smal väg. Reglage: längd, hål, slingor (även bakåt), trappor och fall, startvinkel, tid.</li>
-  <li><strong>Bro:</strong> bygg över tomrum. Reglage: gap (5 till 20 block, kortare går att hoppa och lär inget), riktning (rakt, diagonalt, alla vinklar), höjdskillnad, antal block, hinder (stödplattform, pelare, vägg, slalom), start vid kant eller mitt, startvinkel, tid.</li>
-  <li><strong>Treenan:</strong> den riktiga Bedwars-kartan, från sängen till en ö 10–30 block bort. Öppnas när bron klarar gap 16 åt alla håll.</li>
+  <li>Ingen nedkylning mellan slag: varje klick är ett fullt slag. Räckvidd 3 block.</li>
+  <li>Efter en träff har den slagna en skyddstid på 10 tick, då bara ett starkare slag räknas, och bara skillnaden.</li>
+  <li>Skada: svärd 5 (trä), 6 (sten), 7 (järn), 8 (diamant), allt annat 1. Fallande slag (crit) gör 1,5 gånger. Rustning drar av 4 % per rustningspoäng.</li>
+  <li>Knuff 0,4 bort från den som slår, plus en extra knuff framåt för ett sprintande slag, som sedan bryter sprinten. Den som slår med knuff saktar själv in till 0,6.</li>
+  <li>Spelare knuffar inte varandra genom att gå in i varandra (Hypixels lag har collisionRule never).</li>
+  <li>Den som faller under kanten är ute. Under y −128 tar tomrummet 4 hälsa per tick.</li>
 </ul>
-<p>Varje hopp kontrolleras med en egen fysikmodell innan banan byggs (stämmer med spelet på 0,01 block för raka hopp), så modellen får aldrig en omöjlig bana.</p>
+<h3>Motståndarna</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Bot</th><th>Beteende</th></tr></thead>
+<tbody>
+<tr><td>Dummy</td><td>Står still</td></tr>
+<tr><td>Slow walker</td><td>Går fram och slår en gång i sekunden</td></tr>
+<tr><td>Medium walker</td><td>Slår var 16:e tick</td></tr>
+<tr><td>Walker</td><td>Slår fem gånger i sekunden</td></tr>
+<tr><td>Strafer</td><td>Cirklar i sprint och slår tio gånger i sekunden</td></tr>
+<tr><td>Combo</td><td>Släpper sprint efter varje slag för full knuff (w-tap) och hoppar för crits</td></tr>
+<tr><td>Pusher</td><td>Som combo, och håller sig på den sida som skjuter modellen mot tomrummet</td></tr>
+</tbody>
+</table>
+</div>
+<p>Arenorna är en bred platta, en ö med tomrum runt, en bro mellan två öar och "gap": två öar med bara tomrum emellan, där modellen måste byta till block, bygga över och sedan byta tillbaka till svärdet.</p>
+<h3>Poängen i en duell</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Regel</th><th>Poäng</th></tr></thead>
+<tbody>
+<tr><td>Vinst (alla motståndare ute, själv vid liv och stående)</td><td class="num plus">+10</td></tr>
+<tr><td>Förlust</td><td class="num minus">−10</td></tr>
+<tr><td>Utdelad skada, mot motståndare som ännu är med</td><td class="num plus">+0,3 per hälsopoäng</td></tr>
+<tr><td>Tagen skada</td><td class="num minus">−0,3 per hälsopoäng</td></tr>
+<tr><td>Långt slag (bortom 2 block)</td><td class="num plus">+0,4 per block</td></tr>
+<tr><td>Kritiskt slag</td><td class="num plus">+0,3</td></tr>
+<tr><td>Vänsterklick som inte är på en motståndare</td><td class="num minus">−0,01</td></tr>
+<tr><td>Sikte (potential)</td><td class="num">γ·Φ(nu) − Φ(förra), Φ = −0,1 × vinkeln till bröstet</td></tr>
+<tr><td>Hittade blocken, där bara en bro når fram</td><td class="num plus">+0,5, en gång</td></tr>
+</tbody>
+</table>
+</div>
+<p>Fyra principer bakom tabellen, med källor i <code>docs/training-design.md</code>:</p>
+<ul>
+  <li><strong>Sikte som potential.</strong> En fast poäng per tick med siktet rätt gick att samla genom att stå och sikta. En potential betalas som skillnaden mellan två lägen, så över en runda blir summan bara slutläget minus startläget. Den kan inte farmas och ändrar inte vilket spel som är bäst, bara hur snabbt det hittas (Ng, Harada och Russell 1999).</li>
+  <li><strong>Nollsumma.</strong> Långa slag, crits, missade slag och siktet räknas för båda sidor, och modellen får sin egen poäng minus motståndarnas snitt. Då kan två versioner av modellen inte samarbeta om att samla bonusar (OpenAI Five, GT Sophy).</li>
+  <li><strong>Bara svärdet i full.</strong> Ett slag med block, verktyg eller tom hand ger en tiondel för skadan och bonusarna. Skadan man tar räknas likadant efter vad den som slog höll i, så nollsumman håller.</li>
+  <li><strong>Nedtrappning.</strong> Långa slag, crits och missade slag är stöttning för att hitta teknikerna. Deras vikt går från 1 till 0 när modellen tar 0,5 till 0,9 mot frysta kopior av sig själv, i snitt över tre ratingar. Vikten får bara sjunka. I auto7 är den 0, så där räknas bara skada och vinst.</li>
+</ul>
 
+<h2 id="banor"><span class="n">10</span>Banor och automatisk svårighet</h2>
+<p>Sju sorters rundor, alla från generatorer som kontrollerar att varje hopp och varje bygge är möjligt innan rundan spelas. Golven byggs av Bedwars-block (ull, lera, end stone, plankor, obsidian). Kartornas terräng, slabs och trappor finns kvar, som på riktiga Hypixel-kartor.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Sort</th><th>Vad</th><th>Nivåer</th></tr></thead>
+<tbody>
+<tr><td>Parkour</td><td>Enstaka block att hoppa mellan: avstånd, antal, höjd, tid, längsta möjliga hopp, blandade hopp, svängar, längre banor, slabs</td><td class="num">32</td></tr>
+<tr><td>Väg</td><td>Smal väg: längd, hål, slingor, trappor och fall, tid, breda hål, längre, halvblock</td><td class="num">26</td></tr>
+<tr><td>Bro</td><td>Bygg över tomrum: gap 5–20, riktning, höjd, blockbudget, hinder, tid, fart, knuffar, enstaka block som mål</td><td class="num">37</td></tr>
+<tr><td>Treenan</td><td>Den riktiga Bedwars-kartan: gap 10–40, höjd, start, knuffar</td><td class="num">27</td></tr>
+<tr><td>Trappor</td><td>Bygg uppåt eller nedåt: höjd 3–24, brant, riktningar, knuffar</td><td class="num">27</td></tr>
+<tr><td>Bedwars</td><td>Nya Bedwars-kartor varje runda: öar, gap, höjd, hinder, mål (diamant, fiende, mitten), knuffar</td><td class="num">33</td></tr>
+<tr><td>Duell</td><td>Motståndare, arena, avstånd, startvinkel, utrustning, knockback, en eller två motståndare</td><td class="num">20</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Knuffar</strong> är slag som kastar modellen av bron. En knuff ges bara om simulatorn har räknat ut att den går att rädda med ett block, med de block modellen faktiskt har i handen.</p>
 <h3>Reglage som höjer sig själva</h3>
-<p>I stället för en lista med steg som måste klaras i ordning har varje banasort reglage, och varje reglage har nivåer. Ett schemaläggningssystem (<code>curriculum.py</code>) väljer rundor och flyttar reglagen:</p>
 <ul>
-  <li>30 % av rundorna har alla reglage på sin gräns, 50 % testar ett reglage på gränsen och resten slumpas under gränserna. När en sort är nära toppen ökar andelen "allt på gränsen" till 60 %.</li>
-  <li>Ett reglage <strong>höjs</strong> när 70 % av de senaste 30 rundorna med det på gränsen gått utan död, och rundor med allt på gränsen klarar minst 30 %.</li>
-  <li>Ett reglage <strong>sänks</strong> om det faller till 25 % eller lägre. Ett reglage som just sänkts måste klara sin nivå två gånger i rad innan det får höjas igen, så att det inte pendlar.</li>
-  <li>De svåraste reglagen (längsta hoppen, blandade hopp, banor som svänger, dubbel längd, tidsjakt på bron) öppnas först när resten av sorten är på max.</li>
+  <li>Varje sort har reglage, och varje reglage nivåer från lätt till svårt. Ett reglage <strong>höjs</strong> när 70 % av de senaste 30 rundorna med det på sin gräns klarats utan död, och <strong>sänks</strong> efter två fönster i rad på 25 % eller lägre.</li>
+  <li>30 % av rundorna har alla reglage på gränsen, 50 % prövar ett reglage och resten slumpas under gränserna. Nära toppen ökar "allt på gränsen" till 60 %.</li>
+  <li>De svåraste reglagen öppnas först när resten av sorten är på topp.</li>
+  <li><strong>Övning på nästa nivå:</strong> 20 % av rundorna i duell (motståndaren) och parkour (längre banor, svängar) spelas en nivå över nuvarande, utan att räknas. En ny motståndare tar längre tid att lära sig än 30 rundor.</li>
+  <li><strong>Slumpad hand:</strong> 30 % av övningsrundorna som ger block börjar med något annat i handen. Aldrig i prov eller i rundor som flyttar ett reglage.</li>
+  <li>Sorter som redan klaras spelas mindre, de som fallerar mer.</li>
 </ul>
-<p>Fördelen är att modellen alltid tränar på något den klarar ungefär hälften av gångerna. För lätt lär den inget av, för svårt får den aldrig poäng för.</p>
 
-<h2 id="ppo"><span class="n">9</span>Hur inlärningen går till: PPO</h2>
-<p>Algoritmen heter <strong>PPO</strong> (Proximal Policy Optimization). Den är standard för spel och robotar, eftersom den är stabil och enkel. En omgång ser ut så här:</p>
-<ol>
-  <li><strong>Spela:</strong> fyra spelinstanser spelar 1 024 tick var, totalt 4 096 beslut. Allt sparas: tillstånd, handling, belöning, sannolikheten för handlingen, värdet.</li>
-  <li><strong>Räkna ut "bättre eller sämre än väntat":</strong> för varje beslut jämförs vad som faktiskt hände efteråt med vad värdet gissade. Det kallas <em>advantage</em>. Framtida poäng räknas ner med 0,5 % per tick (γ = 0,995), så modellen bryr sig om ungefär de närmaste 10 sekunderna.</li>
-  <li><strong>Lära:</strong> 8 genomgångar över de 4 096 besluten, i grupper om 512. Handlingar som var bättre än väntat blir mer sannolika, sämre blir mindre sannolika, och värdet justeras mot det som faktiskt hände.</li>
-  <li><strong>Upprepa.</strong></li>
-</ol>
-<p>Det "proximala" i namnet är en spärr: sannolikheten för en handling får bara ändras med högst cirka 20 % per omgång. Det hindrar att en tur-runda förstör det modellen redan kunde.</p>
-<h3>Två saker som lugnar sig med tiden</h3>
+<h2 id="selfplay"><span class="n">11</span>Self-play: mot sig själv</h2>
+<p>Skriptade botar slutar lära ut något när modellen slår dem. Därför spelar en del av duellerna mot modellen själv.</p>
+<figure>
+<pre class="mermaid">
+flowchart LR
+  D["En träningsduell"] --> B{"Duellkursen klar?"}
+  B -- "nej: 50 %, ja: 10 %" --> BOT["Skriptad bot"]
+  B -- "resten" --> S{"Self-play"}
+  S -- "80 %" --> L["Senaste modellen"]
+  S -- "20 %" --> P["Äldre version ur poolen,<br/>vald efter hur svår den är"]
+</pre>
+<figcaption>Poolen får en ny version var 5:e miljon beslut och behåller högst 30.</figcaption>
+</figure>
 <ul>
-  <li><strong>Inlärningstakt:</strong> hur stora steg vikterna flyttas, från 0,0003 till 0,00003.</li>
-  <li><strong>Utforskning:</strong> en bonus för att hålla sannolikheterna spridda, så att den fortsätter prova nytt, från 0,01 till 0,002.</li>
+  <li><strong>Varför en pool.</strong> Spelar man bara mot senaste versionen kan stilen gå i cirklar: varje version slår den förra och glömmer hur man slår äldre (OpenAI Five spelade 80 % mot senaste, 20 % mot äldre).</li>
+  <li><strong>Svåra versioner oftare.</strong> En äldre version väljs med vikten (1 − x)², där x är modellens poäng mot den, plus 10 % jämnt urval så att ingen glöms (AlphaStars PFSP). Bara 1-mot-1-rundor räknas in i x.</li>
+  <li><strong>Svagare motståndare är äldre versioner</strong>, inte den senaste med slumpdrag. En äldre version spelar en riktig stil.</li>
+  <li><strong>Rättvist för båda sidor.</strong> Motståndaren ser världen från sitt håll exakt som modellen ser sin, har samma hotbar och slår, liksom modellen, ett tick sent. När kopian saknade block i indata och slog direkt vann modellen 73 % mot sig själv. Efter rättningen: 151 mot 149.</li>
+  <li>Självspelsrundor räknas aldrig in i kursen eller proven. De mäter botarna.</li>
 </ul>
-<p>Båda sänks gradvis från 500 000 beslut och under 5 miljoner beslut. Först prövar den brett, sedan finslipar den.</p>
-<h3>Processor och grafikkort</h3>
-<p>Att välja en handling är litet arbete och går fortast på processorn (2 ms för fyra spel). Inlärningen räknar på 512 tillstånd åt gången och går 3,7 gånger fortare på grafikkortet, ett GTX 1660 Ti. Därför finns två kopior av modellen: grafikkortets lär sig, och processorns kopia uppdateras efter varje inlärning och spelar.</p>
 
-<h2 id="kopiering"><span class="n">10</span>Kopiering först: människa och lärare</h2>
-<p>En modell som börjar helt slumpmässigt måste av en slump trycka shift, klicka och sikta rätt samtidigt innan den någonsin får poäng för att bygga. Det kan ta lång tid. Därför börjar en ny modell med att <strong>kopiera</strong> inspelade rundor, så kallad <em>behavior cloning</em>: för varje tick i inspelningarna tränas den att göra samma val som förebilden.</p>
-
-<h3>Inspelningar från en människa</h3>
-<p>På inspelningsservern får spelaren slumpade banor av alla fyra sorter, med ett redstone-block som mål. Bara rundor som klaras <strong>utan att dö</strong> sparas. Väntan i början och stopp längre än en halv sekund klipps bort. Varje tick sparas med rådata: position, blick, knappar, block runt spelaren, karta, sikte, hälsa och mer. Modellens tillstånd räknas fram ur rådatan, så inspelningarna går att använda även när inputs ändras.</p>
-<p>För bro finns hjälpare i spelarens klient: shift vid kanten när man tittar nedåt och backar, och klick medan högerknappen hålls. De gör det lättare att spela in många broar.</p>
-
-<h3>En skriptad lärare</h3>
-<p>Läraren (<code>planner.py</code>) känner till banan och planerar varje hopp med spelets rörelsefysik: friktion, luftmotstånd, tyngdkraft och sprintknuff. Varje tick räknar den ut var den skulle landa om den hoppade nu, och om det hamnar på nästa block hoppar den. I luften håller den W, släpper eller bromsar beroende på vad som ger landning närmast mitten. Eftersom den räknar om varje tick rättar den sina egna misstag.</p>
-<div class="tablewrap">
-<table>
-<thead><tr><th>Bana</th><th>Lärarens resultat utan död</th></tr></thead>
-<tbody>
-<tr><td>Väg, 14 block, slingor, trappor, fall och hål</td><td class="num">15/15</td></tr>
-<tr><td>Korta hopp och sicksack</td><td class="num">15/15</td></tr>
-<tr><td>Hopp 3 framåt och 1 åt sidan, med höjdskillnad</td><td class="num">6/15</td></tr>
-<tr><td>Hopp 4 framåt och 2 åt sidan</td><td class="num">0–9/15</td></tr>
-</tbody>
-</table>
-</div>
-<p>Läraren spelade 2 300 slumpade rundor, och de 1 253 som klarades utan död sparades. Den nuvarande modellen kopierade dem tillsammans med cirka 340 mänskliga rundor.</p>
-
-<h3>Att inte kopiera för noga</h3>
-<p>10 % av inspelningarna hålls undan. Modellen tränas på resten, och den version som är bäst på de undanhållna sparas. Kopierar den för länge blir den bättre på exakt de rundor den sett men sämre på nya. Det märktes som att felet på undanhållna rundor började öka efter cirka 1 500 steg.</p>
-<div class="note"><b>Varför inte bara kopiera?</b> En kopia gör små fel, hamnar då i lägen förebilden aldrig var i, och vet inte vad den ska göra där. Felen växer. Därför tar PPO över efter kopieringen. Ett tidigt test där en färdig modell drogs mot mänskliga inspelningar gjorde parkour sämre, från 59 % till 4 %, eftersom två stilar krockade. Att kopiera först, innan modellen har en egen stil, fungerade bättre.</div>
-
-<h2 id="mata"><span class="n">11</span>Prov, mätning och fart</h2>
+<h2 id="mata"><span class="n">12</span>Prov, Elo och mätning</h2>
 <h3>Prov</h3>
-<p>Var 200 000:e beslut tas ett prov: 32 rundor per banasort, alla reglage på sin gräns, och modellen väljer alltid det mest sannolika valet, utan slump. Det är det bästa måttet på vad modellen verkligen kan. Träningens egen andel utan död är alltid lägre, eftersom den innehåller slump.</p>
-<h3>Felanalys</h3>
-<p>För att förstå varför den misslyckas körs samma banor i en separat spelinstans under olika villkor, till exempel med kartan bortslagen. Blir det sämre utan kartan använder modellen den. Varje misslyckande sorteras: gick av kanten, för kort hopp, hopp åt sidan, fastnade, slut på block.</p>
-<h3>Var tiden går</h3>
-<div class="tablewrap">
-<table>
-<thead><tr><th>Del</th><th>Tid</th></tr></thead>
-<tbody>
-<tr><td>Minecraft: klient och server, ett tick</td><td class="num">cirka 1,4 ms</td></tr>
-<tr><td>Kartan (läser 1 089 kolumner)</td><td class="num">cirka 1,0 ms per tick</td></tr>
-<tr><td>Modellen väljer åt fyra spel</td><td class="num">cirka 2,3 ms</td></tr>
-<tr><td>Spela en omgång (4 096 beslut)</td><td class="num">cirka 6 s</td></tr>
-<tr><td>Lära av en omgång, på grafikkortet</td><td class="num">cirka 2 s</td></tr>
-</tbody>
-</table>
-</div>
-<p>Det blir cirka 450–530 beslut per sekund, eller cirka 1,6–1,9 miljoner i timmen. Grafiken är redan avstängd. Nästa möjliga steg för fart är att läsa kartan mer sällan och låta spel och modell arbeta samtidigt.</p>
-
-<h2 id="lardomar"><span class="n">12</span>Det vi har lärt oss</h2>
+<p>Var 2:a miljon beslut: 32 rundor per sort med alla reglage på gränsen, utan slump. Duellen provas också med slump. Proven spelas bara mot botar.</p>
+<h3>Elo mot frysta referenser</h3>
+<p>Vinstandelen mot motståndare man tränar mot säger lite, den kan stiga medan modellen går i cirklar. Därför spelar modellen efter varje prov en fast duell (en platta, 4 block isär, träsvärd) mot frysta referenser den aldrig tränar mot:</p>
 <ul>
-  <li><strong>Mät innan du gissar.</strong> Flera gissningar om flaskhalsar var fel: blockdatan var billig, grafiken var redan av, och fler trådar gjorde inlärningen långsammare.</li>
-  <li><strong>Poängen styr allt.</strong> När det var billigare att fastna än att falla, fastnade modellen. När ett gap gick att hoppa över lärde den sig aldrig bygga.</li>
-  <li><strong>Inputs ska vara generella.</strong> Vägvärden och regelflaggor gjorde banorna lättare men skulle inte finnas i Bedwars. Vi tog bort dem och gav i stället bättre syn, en karta och ett enkelt minne.</li>
-  <li><strong>En stillastående ram är bättre än en som vrider sig.</strong> Blocksynen flimrade när den följde blicken.</li>
-  <li><strong>Små kontroller avslöjar stora buggar.</strong> Prov som räknade varje runda dubbelt, fysik som överskattade hopp med nästan ett block, inlärning som aldrig lugnade sig i nya körningar, och skada som drogs två gånger.</li>
+  <li><strong>Ankaret:</strong> en fryst kopia från första ratingen (auto@163M), satt till Elo 1000.</li>
+  <li><strong>Botarna</strong> slow walker till pusher, med ett fast Elo uträknat från ankarets poäng mot dem.</li>
+  <li><strong>Nyare kopior:</strong> när modellen tar 0,75 mot den nyaste kopian läggs en ny fryst kopia till, med modellens Elo just då. Ankaret och de tre nyaste behålls.</li>
 </ul>
-<h3>Kända begränsningar</h3>
+<p>Varje referens spelas 32 rundor, varje runda räknas en gång (oavgjort är en halv). Ett Elo anpassas till alla resultat; 400 poäng är tio mot ett i odds. Ett rent svep räknas som en halv runda kort, så att skalan inte springer iväg.</p>
+<h3>Statuskoll</h3>
+<p>Var 30:e minut kontrolleras att allt rullar och att inget har fastnat: prov, Elo, reglage som inte rört sig, självspelspoäng och fart. Felen i den här texten har ofta hittats så.</p>
+
+<h2 id="ppo"><span class="n">13</span>Inlärningen: PPO med minne</h2>
+<ol>
+  <li><strong>Spela:</strong> 512 rundor spelar 64 tick var, 32 768 beslut. Modellen väljer åt alla på grafikkortet. Allt sparas: tillstånd, val, poäng, sannolikheten för valet och värdet.</li>
+  <li><strong>Bättre eller sämre än väntat:</strong> för varje beslut jämförs det som hände med värdets gissning (advantage, GAE med λ = 0,975). Framtida poäng räknas ner med 0,5 % per tick (γ = 0,995), ungefär de närmaste 10 sekunderna.</li>
+  <li><strong>Lära:</strong> 4 genomgångar i grupper om 1 024 beslut, i bitar av rundor så att minnet följer med. Sannolikheten för ett val får ändras högst cirka 20 % per omgång, och inlärningen stannar om fördelningen flyttat sig mer än en gräns (KL 0,02).</li>
+  <li><strong>Upprepa.</strong> En omgång tar cirka 10 sekunder: 6–7 s spel och 3–5 s inlärning.</li>
+</ol>
+<h3>Det som lugnar sig med tiden</h3>
 <ul>
-  <li>Bara fast eller inte fast block: halvblock, is och stegar går inte att skilja.</li>
-  <li>Inga andra spelare än. För Bedwars behövs spelare, föremål och inventory i det modellen ser, och troligen ett riktigt minne (GRU) för vad motståndaren gör.</li>
-  <li>Läraren klarar inte de längsta hoppen pålitligt och bygger inga broar än.</li>
-  <li>Allt tränar på en dator med 8 trådar och ett mindre grafikkort.</li>
+  <li><strong>Inlärningstakt</strong> från 0,0003 till 0,00003, och <strong>utforskning</strong> (en bonus för spridda sannolikheter) från 0,01 till 0,004, gradvis från 20 till 420 miljoner beslut.</li>
+  <li><strong>Hotbar-tangentens utforskning väger en tiondel.</strong> Med full vikt drev utforskningen slumpbyten till 1 % av tickarna, och i dueller höll modellen svärdet bara 23 % av tiden. Ett användbart byte lärs ändå, av poängen.</li>
+</ul>
+<div class="note"><b>Kopiering först, förr.</b> De första körningarna började med att kopiera inspelningar av en människa och av en skriptad lärare (behavior cloning), så att modellen inte började från noll. Sedan auto5 fortsätter varje körning från den förra modellen i stället, och det som saknas läggs till med <code>transfer()</code>.</div>
+
+<h2 id="drift"><span class="n">14</span>Drift: träning, viewer, kontroller</h2>
+<ul>
+  <li><strong>Träningskopia.</strong> Träningen kör från en egen kopia av koden (<code>~/dev/minecraft-ai-train</code>), så att ändringar under arbete inte påverkar den. En deploy stoppar träningen (den sparar sig själv), kopierar in ny kod med rsync och startar om. En deploy väntar om ett prov eller en rating pågår.</li>
+  <li><strong>Viewer.</strong> En Minecraft-klient (bot0) spelar dueller med senaste modellen i normal fart. Den går att titta på från Lunar på <code>localhost:25701</code>. Spelaren heter Claudia, motståndarna Enemy 1, Enemy 2.</li>
+  <li><strong>Testklient.</strong> bot1 på port 25602 används för att jämföra simulatorn med det riktiga spelet, till exempel striden och hotbaren.</li>
+  <li><strong>Tester.</strong> 14 testsviter i Python och 22 i Rust, cirka 2,5 minuter. Paritetstestet kör både vanliga rundor och rundor med knuffar och hotbar-tryck.</li>
+  <li><strong>Publika servrar används aldrig.</strong></li>
 </ul>
 
-<h2 id="ordlista"><span class="n">13</span>Ordlista</h2>
+<h2 id="lardomar"><span class="n">15</span>Det vi har lärt oss</h2>
+<ul>
+  <li><strong>Indata ljuger aldrig.</strong> Önskemål hör hemma i poängen. Ett värde som beskrev en önskan i stället för spelet togs tillbaka.</li>
+  <li><strong>Låt modellen hitta vägen själv.</strong> Att visa nästa block som mål hade räknat ut vägen åt den. Det rätta var att poängen inte krävde en viss väg.</li>
+  <li><strong>Mät symmetrin.</strong> Modellen vann 73 % mot sig själv. Orsaken var två skillnader mellan sidorna: kopian saknade block i indata och slog ett tick tidigare.</li>
+  <li><strong>Brus ratchetar.</strong> Ett värde som bara får sjunka, satt från 32 rundor, följer det lägsta i en brusig serie. Snittet av tre ratingar löste det.</li>
+  <li><strong>Mät det du räknar med.</strong> Prov som räknade snabba rundor dubbelt, skada från tomrummet som räknades som utdelad, och en knuffkontroll som trodde att blocken alltid låg i plats 1. Alla hittades med små kontroller.</li>
+  <li><strong>Bibliotek har dolda sidoeffekter.</strong> Att ladda en sparad modell på grafikkortet slog om hela processen till långsamma faltningar och gjorde inlärningen 3,5 gånger långsammare.</li>
+  <li><strong>Stöttning ska kunna trappas ned.</strong> En bonus som hjälper modellen hitta en teknik ska försvinna när den kan den, annars blir bonusen målet.</li>
+</ul>
+<h3>Kända begränsningar och nästa steg</h3>
+<ul>
+  <li>Modellen har ännu inte lärt sig byta till block av sig själv. Det är vad v4 provkörs för.</li>
+  <li>Parkour fastnar på långa banor med svängar: hoppen som pekar bort från banans slut lyckas mer sällan.</li>
+  <li>Simulatorn saknar ännu stegar, blockbrytning med verktyg, TNT, fireball och vatten.</li>
+  <li>Ingen strateg finns än. Kommandot i indata är 0 tills en sådan ger delmål i hela Bedwars-matcher.</li>
+</ul>
+
+<h2 id="ordlista"><span class="n">16</span>Ordlista</h2>
 <dl class="terms">
   <dt>Tick</dt><dd>Ett steg i Minecraft, 1/20 sekund.</dd>
   <dt>Policy</dt><dd>Funktionen som väljer handling utifrån tillståndet. Här ett neuralt nät.</dd>
-  <dt>Värde</dt><dd>Nätets gissning på hur mycket poäng som återstår från ett läge.</dd>
+  <dt>Värde</dt><dd>Nätets gissning på hur mycket poäng som återstår.</dd>
   <dt>Advantage</dt><dd>Hur mycket bättre eller sämre en handling gick än värdet gissade.</dd>
-  <dt>PPO</dt><dd>Inlärningsalgoritmen. Spela en omgång, gör bättre handlingar mer sannolika, men aldrig för mycket per omgång.</dd>
-  <dt>Behavior cloning</dt><dd>Att träna modellen att göra samma sak som i inspelningar.</dd>
-  <dt>Faltning</dt><dd>Ett litet filter som glids över ett rutnät och känner igen mönster var de än är.</dd>
-  <dt>Lockstep</dt><dd>Spelet väntar på Python före varje tick, så att träningen styr takten.</dd>
-  <dt>Reglage</dt><dd>En egenskap hos en bana (till exempel gap eller antal hopp) med nivåer från lätt till svår.</dd>
-  <dt>Prov</dt><dd>32 rundor utan slump med alla reglage på gränsen. Det bästa måttet på färdighet.</dd>
-  <dt>Moonbridge</dt><dd>Att bygga bro utan shift genom exakt timing. Förbjudet här genom klickregeln.</dd>
+  <dt>PPO</dt><dd>Inlärningsalgoritmen: gör bättre handlingar mer sannolika, men aldrig för mycket per omgång.</dd>
+  <dt>LSTM</dt><dd>Ett minne i nätet som bär tal från tick till tick.</dd>
+  <dt>Paritet</dt><dd>Att simulatorn och spelet ger exakt samma tal för samma runda.</dd>
+  <dt>Potential</dt><dd>En poäng som betalas som skillnaden mellan två lägen. Den kan inte farmas.</dd>
+  <dt>Nollsumma</dt><dd>Det den ena sidan vinner förlorar den andra: modellens poäng minus motståndarnas.</dd>
+  <dt>Self-play</dt><dd>Att träna mot kopior av sig själv.</dd>
+  <dt>PFSP</dt><dd>Att välja äldre versioner efter hur svåra de är för modellen nu.</dd>
+  <dt>Elo</dt><dd>En skala för styrka. 400 poängs skillnad betyder tio mot ett i odds.</dd>
+  <dt>Reglage</dt><dd>En egenskap hos en runda med nivåer från lätt till svår.</dd>
+  <dt>Lockstep</dt><dd>Spelet väntar på Python före varje tick.</dd>
+  <dt>Moonbridge</dt><dd>Att bygga bro utan shift. Förbjudet här genom klickregeln.</dd>
 </dl>
 </main>
