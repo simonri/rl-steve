@@ -76,4 +76,19 @@ with tempfile.TemporaryDirectory() as tmp:
     ta.freeze_all_but_value(m.policy, False)
     assert all(p.requires_grad for p in m.policy.parameters())
     assert "lstm_critic.weight_ih_l0" not in ta.saved_keys(str(path) + ".zip")
+    # The value as bins (HL-Gauss): the moves stay; the target is a distribution centred on the return; learning runs
+    # with the cross-entropy in place of the squared error, and the model saves and loads with its head.
+    m = make(hl_gauss=True)
+    ta.load_weights(m, str(path) + ".zip")
+    logits, value = answers(m)
+    assert torch.allclose(logits, logits0, atol=1e-5) and value.shape == value0.shape
+    head = m.policy.value_net
+    t = head.target(torch.tensor([0.0, 1.0, -9.0]))
+    centers = (head.edges[:-1] + head.edges[1:]) / 2
+    assert torch.allclose(t.sum(-1), torch.ones(3)) and abs(float((t[1] * centers).sum()) - 1.0) < 0.02 and float((t[2] * centers).sum()) < -3.8
+    m.learn(16)
+    assert np.isfinite(m.logger.name_to_value.get("train/value_loss", 0.0))
+    m.save(Path(tmp) / "hl")
+    again = ta.SplitPPO.load(Path(tmp) / "hl.zip", device="cpu")
+    assert again.policy.hl_gauss and type(again.policy.value_net).__name__ == "HLGaussValue"
 print("network options ok")

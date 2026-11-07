@@ -175,6 +175,35 @@ class WeightedMultiCategorical(MultiCategoricalDistribution):
         return (e * w).sum(dim=1)
 
 
+class HLGaussValue(nn.Module):
+    """The value as a distribution over BINS bins of the (scaled) return instead of one number, trained by
+    cross-entropy against the return smeared by a Gaussian (HL-Gauss: Farebrother et al. 2024, "Stop Regressing",
+    arXiv 2403.03950, ICML): robust to noisy and moving targets, which ours are (seven kinds of round, self-play). Its
+    forward gives the expected value, so rollouts and GAE are unchanged; the logits stay for the loss (SplitPPO)."""
+
+    LOW, HIGH, BINS = -4.0, 4.0, 101  # scaled returns: a win is +1, a whole course rarely over 3
+    SIGMA = 0.75  # in bin widths, the paper's choice
+
+    def __init__(self, width):
+        super().__init__()
+        self.linear = nn.Linear(width, self.BINS)
+        self.register_buffer("edges", torch.linspace(self.LOW, self.HIGH, self.BINS + 1))
+        self.last_logits = None
+
+    def forward(self, x):
+        self.last_logits = self.linear(x)
+        centers = (self.edges[:-1] + self.edges[1:]) / 2
+        return (torch.softmax(self.last_logits, dim=-1) * centers).sum(-1, keepdim=True)
+
+    def target(self, returns):
+        """The return as probabilities over the bins: a Gaussian around it, integrated over each bin."""
+        sigma = self.SIGMA * (self.HIGH - self.LOW) / self.BINS
+        r = returns.clamp(self.LOW, self.HIGH).unsqueeze(-1)
+        cdf = torch.special.erf((self.edges - r) / (sigma * 2 ** 0.5))
+        p = cdf[..., 1:] - cdf[..., :-1]
+        return p / p.sum(-1, keepdim=True).clamp_min(1e-12)
+
+
 class MemoryPolicy(RecurrentActorCriticPolicy):
     """Carries a memory from tick to tick, so it can hold on to a plan and to what just happened.
 
@@ -185,8 +214,13 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
     Ticks that only pad a stretch out are marked with NaN as their first value. The eyes skip them and they get
     nothing to see, which keeps the costly part of learning to the ticks that were really played."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, hl_gauss=False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.hl_gauss = hl_gauss
+        if hl_gauss:
+            self.value_net = HLGaussValue(self.mlp_extractor.latent_dim_vf)
+            lr = args[2] if len(args) > 2 else kwargs["lr_schedule"]
+            self.optimizer = self.optimizer_class(self.parameters(), lr=lr(1), **self.optimizer_kwargs)
         if type(self.action_dist) is MultiCategoricalDistribution:
             self.action_dist.__class__ = WeightedMultiCategorical  # same state, the entropy weighed per action
         # The library initializes every layer again after building (orthogonal); the entity layer has to start at zero.
@@ -203,6 +237,12 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
         out = seen.new_zeros((len(obs), seen.shape[1]))
         out[real] = seen
         return out
+
+    @staticmethod
+    def _get_constructor_parameters(self):
+        data = super()._get_constructor_parameters()
+        data["hl_gauss"] = self.hl_gauss  # so a saved model is rebuilt with its value head
+        return data
 
     @staticmethod
     def _process_sequence(features, lstm_states, episode_starts, lstm):

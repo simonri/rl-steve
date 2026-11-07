@@ -45,6 +45,8 @@ def main():
     p.add_argument("--critic-memory", action="store_true", help="the value gets its own memory (LSTM)")
     p.add_argument("--normalize-inputs", action="store_true", help="the body part's inputs standardized, measured once")
     p.add_argument("--entities", action="store_true", help="opponents and hotbar slots through their own shared networks")
+    p.add_argument("--hl-gauss", action="store_true", help="the value as a distribution over bins (HL-Gauss)")
+    p.add_argument("--exploit", help="train only to beat this frozen model in duels, then measure how often it does (exploit.json)")
     p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
     os.environ.setdefault("RAYON_NUM_THREADS", str(a.sim_threads))
@@ -68,11 +70,13 @@ def main():
         a.resume = None
     vec = SimVecEnv(a.envs, curriculum.levels, seed=a.seed)
     net_file = out / "net.json"
-    net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities)
+    net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities,
+                                                                           hl_gauss=a.hl_gauss)
+    net.setdefault("hl_gauss", False)
     net_file.write_text(json.dumps(net))
     print(f"network: {net}", flush=True)
     kwargs = dict(n_steps=a.steps_per_env, batch_size=a.batch, n_epochs=a.epochs, gamma=ta.GAMMA, gae_lambda=ta.GAE_LAMBDA, learning_rate=ta.LEARNING_RATE,
-                  ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"]), seed=a.seed)
+                  ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"], hl_gauss=net["hl_gauss"]), seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     ta.fast_convolutions()
     resumed_steps = 0
@@ -90,6 +94,9 @@ def main():
                 model.policy.lstm_critic.load_state_dict(model.policy.lstm_actor.state_dict())
                 warmup = steps + 1_000_000
                 print(f"critic memory: a copy of the policy's; only the value learns until {warmup}", flush=True)
+            if net["hl_gauss"] and not any(k.startswith("value_net.linear") for k in ta.saved_keys(a.resume)):
+                warmup = steps + 1_000_000  # the new value head learns alone first
+                print(f"HL-Gauss value: a new head; only the value learns until {warmup}", flush=True)
             if net["normalize_inputs"] and bool((model.policy.features_extractor.body_std == 1).all()):
                 mean, std = ta.measure_inputs(model, vec)
                 model.policy.features_extractor.fold_normalization(mean.to(model.device), std.to(model.device))
@@ -119,10 +126,24 @@ def main():
         progress.last_rated = saved_state.get("last_rated")
         progress.bonus_weight = saved_state.get("bonus_weight", 1.0)  # it only falls, across restarts too
         progress.snapshot_scores = saved_state.get("snapshot_scores", [])
-    # Self-play (docs/training-design.md#self-play): some duels against the latest model or an older version of it.
-    progress.pool = Pool(out, seed=a.seed)
-    vec.opponents = Opponents(vec.num_envs)
-    vec.opponents.choose = SelfPlay(vec.opponents, progress.pool, model.policy, lambda: ta.finished(curriculum.levels, "duel"), seed=a.seed)
+    if a.exploit:
+        # An exploiter (docs/training-design.md#mata, FightLadder arXiv 2406.02081): a copy trained only to beat the
+        # frozen model, in the rating's kinds of fight. How often it then wins says how exploitable that model is,
+        # which a score against fixed references cannot: they never adapt to it.
+        from rating import FIGHTS
+
+        levels = dict(curriculum.levels)
+        levels["duel"] = dict(levels["duel"], bot=0, arena=2, distance=2, yaw=1, gear=2, kb=1, count=0)  # draws up to these
+        vec.env_method("set_levels", levels)
+        vec.env_method("set_exam", "duel", False)  # only duels, drawn below those limits; no dial moves
+        vec.opponents = Opponents(vec.num_envs)
+        vec.opponents.policies["target"] = ta.load_policy(a.exploit, model.device)
+        vec.opponents.choose = lambda meta: "target"
+    else:
+        # Self-play (docs/training-design.md#self-play): some duels against the latest model or an older version of it.
+        progress.pool = Pool(out, seed=a.seed)
+        vec.opponents = Opponents(vec.num_envs)
+        vec.opponents.choose = SelfPlay(vec.opponents, progress.pool, model.policy, lambda: ta.finished(curriculum.levels, "duel"), seed=a.seed)
 
     def stop(*_):
         # A stop (start.sh, a redeploy) ends learning where it is, and the run is saved below. A second one (uv passes
@@ -136,6 +157,31 @@ def main():
     except KeyboardInterrupt:
         progress.save_latest()  # nothing since the last save is lost
         print(f"stopped at {model.num_timesteps} decisions: saved", flush=True)
+    if a.exploit:
+        exploit_score(model, a.exploit, out)
+
+
+def exploit_score(model, target, out, rounds=64):
+    """How often the exploiter beats the frozen target, per kind of fight (wins + half the draws), with intervals."""
+    from benchmark import first_rounds, wilson
+    from rating import FIGHTS
+
+    model.save(out / "latest")
+    result = {}
+    for fight, dials in FIGHTS.items():
+        levels = Curriculum().levels
+        levels["duel"].update(dials, bot=0)
+        vec = SimVecEnv(rounds, levels, seed=515151)
+        vec.env_method("set_exam", "duel", True)
+        opp = Opponents(rounds)
+        opp.policies["target"] = ta.load_policy(target, model.device)
+        opp.choose = lambda meta: "target"
+        infos = first_rounds(vec, model.policy, model.device, deterministic=False, opponents=opp)
+        points = sum(1.0 if i["success"] else 0.0 if i["deaths"] > 0 else 0.5 for i in infos)
+        lo, hi = wilson(points, rounds)
+        result[fight] = dict(score=round(points / rounds, 3), low=round(lo, 3), high=round(hi, 3))
+    (out / "exploit.json").write_text(json.dumps(dict(target=str(target), steps=model.num_timesteps, result=result), indent=1))
+    print("exploiter against its target: " + ", ".join(f"{f} {r['score']:.2f} [{r['low']:.2f}-{r['high']:.2f}]" for f, r in result.items()), flush=True)
 
 
 if __name__ == "__main__":

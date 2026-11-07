@@ -71,6 +71,8 @@ def transfer(policy, old_state):
         if t.shape == old.shape:
             new[name] = old.clone()
             continue
+        if name.startswith("value_net") and getattr(policy, "hl_gauss", False):
+            continue  # a value head of bins replaces a single number: it starts afresh (and warms up alone)
         if name.startswith("action_net") and t.shape[0] > old.shape[0] and sum(sizes_of(old.shape[0], policy)) != old.shape[0]:
             # Only actions added at the end keep their meaning; anything else would quietly move old choices around.
             raise ValueError(f"{name}: the older {old.shape[0]} choices are not the first actions of {list(policy.action_space.nvec)}")
@@ -105,13 +107,14 @@ MOVE_BIAS = ((10, 1.5), (11, -1.5), (12, 1.5), (13, -1.5), (14 + NO_TURN, 1.5), 
 MOVE_ACTIONS = 8  # the movement model's inputs; the fighting ones come after them
 
 
-def policy_kwargs(critic_memory=False, entities=False, normalize_inputs=False):
+def policy_kwargs(critic_memory=False, entities=False, normalize_inputs=False, hl_gauss=False):
     """POLICY with the network options a run was made with (train_sim keeps them in the run's net.json):
     critic_memory gives the value its own memory (an LSTM, as the policy has); entities gives opponents and hotbar slots
     their own small shared networks (spatial.SpatialNet); normalize_inputs needs no change here (SpatialNet always has
     its standardization, the identity until measured)."""
     kw = dict(POLICY)
     kw["enable_critic_lstm"] = bool(critic_memory)
+    kw["hl_gauss"] = bool(hl_gauss)  # the value as bins (spatial.HLGaussValue)
     if entities:
         kw["features_extractor_kwargs"] = dict(kw.get("features_extractor_kwargs", {}), entities=True)
     return kw
@@ -282,6 +285,7 @@ class ShortStretches(RecurrentRolloutBuffer):
 
         firsts = picked[torch.as_tensor(first, device=self.device)]
         states = [self._card(name)[firsts].swapaxes(0, 1).contiguous() for name in ("hidden_states_pi", "cell_states_pi", "hidden_states_vf", "cell_states_vf")]
+        self.last_returns = column("returns")  # for an HL-Gauss value's loss (SplitPPO.train)
         return RecurrentRolloutBufferSamples(
             # What it saw is most of a stretch's memory (600 MB for 512 rounds), so it goes to the card a batch at a
             # time. With all of it there the card ran short, and cuDNN fell back to a convolution 4x slower.
@@ -339,7 +343,17 @@ class SplitPPO(RecurrentPPO):
 
             def counted(*args, **kwargs):
                 calls[0] += 1
-                return evaluate(*args, **kwargs)
+                values, log_prob, entropy = evaluate(*args, **kwargs)
+                if getattr(policy, "hl_gauss", False):
+                    # The library's value loss is mean((returns - values)^2). Handing it returns - sqrt(CE) makes
+                    # that exactly the cross-entropy of the value's bins against the HL-Gauss target, gradient and
+                    # all, without copying its training loop (spatial.HLGaussValue).
+                    head = policy.value_net
+                    returns = self.rollout_buffer.last_returns
+                    logp = torch.log_softmax(head.last_logits, dim=-1)
+                    ce = -(head.target(returns) * logp).sum(-1)
+                    values = (returns - torch.sqrt(ce + 1e-12)).view_as(values)
+                return values, log_prob, entropy
 
             policy.evaluate_actions = counted
             if self.device.type == "cuda":
