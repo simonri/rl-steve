@@ -108,7 +108,12 @@ class Shots:
         sxz = sum((x - mx) * (z - mz) for x, z in zip(xs, zs))
         long_side = 0.5 * math.atan2(2 * sxz, sxx - szz)
         base = long_side + math.pi / 2
+        # What must be in clear view besides the player: the middle of the course as seen, the top of whatever is
+        # there. The middle of the area itself is often inside the ground of an island; a line to it was then never
+        # clear, every angle failed, and one opening in ten on pasted maps (treenan, bedwars) went straight above.
+        seen = self._surface(centre, local)
         best = None
+        fallback = None  # (distance, shot, elevation): the nearest fitting shot that shows the player, flattest first
         for elev_deg in ELEVATIONS:
             for turn in TURNS:
                 for flip in (0.0, math.pi):
@@ -125,12 +130,28 @@ class Shots:
                         d *= 1.06
                     if not fits or (best and d >= best[0]):
                         continue
-                    if self._clear(at, head, local) and self._clear(at, centre, local):
+                    if not self._clear(at, head, local):
+                        continue
+                    if fallback is None or (fallback[2] == elev_deg and d < fallback[0]):
+                        fallback = (d, shot, elev_deg)
+                    if self._clear(at, seen, local):
                         best = (d + abs(turn) * 0.02, shot)  # the nearest shot that holds it all fills the screen most
-            if best:  # the first angle (30 to 40 down) that has a clear shot wins
+            if best:  # the first angle (about 25 down) that has a clear shot wins
                 return best[1]
+        if fallback:  # the middle hidden from every side: still a view from the side that shows the player
+            return fallback[1]
         hi = max(ys)
-        return self._aim((centre[0], hi + MAX_DIST * 0.6, centre[2] + 0.01), centre)  # nothing fits clear: straight above
+        return self._aim((centre[0], hi + MAX_DIST * 0.6, centre[2] + 0.01), centre)  # nothing shows the player at all
+
+    def _surface(self, p, local, up=24):
+        """p lifted out of whatever it is inside, to the first free cell above it: the part of the ground one sees."""
+        x, y, z = p
+        cx, cz = math.floor(x), math.floor(z)
+        for k in range(up + 1):
+            cell = (cx, math.floor(y) + k, cz)
+            if cell not in self.solid and cell not in local:
+                return (x, math.floor(y) + k + 0.5, z) if k else p
+        return p
 
     @staticmethod
     def _aim(at, look):

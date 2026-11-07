@@ -24,7 +24,7 @@ def main():
     rng = np.random.default_rng(3)
     env = AutoEnv(0)
     cam = Shots()
-    ticks = inside = hidden = far = cuts = framed = skyless = 0
+    ticks = inside = hidden = far = cuts = framed = skyless = above = 0
     for n in range(rounds):
         family = ("treenan", "bedwars", "bridge", "hop")[n % 4]
         levels = curriculum.Curriculum().levels
@@ -48,6 +48,7 @@ def main():
             elif new is not None:
                 cuts += 1
             at = cam.shot
+            above += at[4] > 80  # straight down from above: there is always a better side view
             ticks += 1
             o = env.obs
             for c in o.get("clicks") or []:
@@ -62,6 +63,7 @@ def main():
                 break
     print(f"{rounds} rounds, {ticks} ticks: start and goal in the opening shot {framed}/{rounds}, 18-32 degrees down {skyless}/{rounds}, cuts after it {cuts}, camera inside a block {inside}, view blocked {hidden}, too far {far}")
     assert inside == 0, "the camera sat inside a block"
+    assert above == 0, f"the camera looked straight down for {above} ticks"
     assert framed == rounds, "an opening shot left out the start or the goal"
     assert skyless >= rounds * 0.8, "opening shots not looking about 25 degrees down"
     assert hidden <= ticks * 0.1, "the view to the player was blocked too often"
