@@ -297,6 +297,8 @@ class Progress(BaseCallback):
         self.rounds = 0
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
         self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
+        self.rating = None  # rating.Rating: fights against frozen references after each exam (train_sim sets it)
+        self.rated = None  # its last result: Elo and score per reference
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
         self.results, self.falls, self.stalls = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.damage, self.speeds, self.shift, self.parts = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
@@ -348,7 +350,7 @@ class Progress(BaseCallback):
         for round_parts in self.parts:
             for rule, value in round_parts.items():
                 parts[rule] = parts.get(rule, 0.0) + value
-        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(),
+        return dict(steps=self.num_timesteps, stage=self.cur.total(), stages=self.cur.most(), families=families, levels=self.cur.levels, practice=self.cur.practice(), rating=self.rated,
                     success=self.mean(self.results), fell=self.mean(self.falls), stalled=self.mean(self.stalls), damage=self.mean(self.damage), speed=self.mean(self.speeds),
                     shift=self.mean(self.shift), bridge_speed=self.mean(self.bridge_speeds), bridge_record=self.bridge_record, parts={k: round(v / max(len(self.parts), 1), 3) for k, v in parts.items()}, seconds=time.time() - self.t0)
 
@@ -495,6 +497,9 @@ class Progress(BaseCallback):
             self.exams_random[family] = round(wins[0] / max(games[0], 1), 3)
             print(f"exam with randomness at {self.num_timesteps}: {family} {wins[0]}/{games[0]}", flush=True)
         self.vec.env_method("set_exam", None)
+        if self.rating is not None:  # strength against frozen references (docs/training-design.md#referenser)
+            self.rated = self.rating.rate(self.model, self.num_timesteps)
+            print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']}, " + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
         # The test reset the games, so training has to continue from fresh observations.
         self.model._last_obs = self.vec.reset()
         self.model._last_episode_starts = np.ones(self.vec.num_envs, dtype=bool)

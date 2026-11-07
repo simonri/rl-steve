@@ -17,6 +17,7 @@ from torch.distributions import Distribution
 
 import train_auto as ta
 from curriculum import Curriculum
+from rating import Rating
 from sim_env import SimVecEnv
 from spatial import MemoryPolicy
 
@@ -85,6 +86,7 @@ def main():
         model.num_timesteps = resumed_steps
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
     progress = ta.Progress(vec, out, curriculum, 2)
+    progress.rating = Rating(out)  # Elo against frozen references after each exam (docs/training-design.md#referenser)
     if continuing:
         progress.resume_last_exam = saved_state.get("last_exam")
 
