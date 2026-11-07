@@ -359,6 +359,52 @@ impl Batch {
         Ok(())
     }
 
+    /// Self-play: the next tick's action for the first opponent of each round, played by a model instead of its bot.
+    /// A row starting with -1 leaves that round's opponent to its bot. Taken by the next `step`.
+    fn set_opponent_actions(&mut self, actions: PyReadonlyArray2<i64>) -> PyResult<()> {
+        let acts = actions.as_array();
+        let n = self.envs.len();
+        let bad = |what: String| pyo3::exceptions::PyValueError::new_err(what);
+        if acts.nrows() != n || acts.ncols() != ACTIONS {
+            return Err(bad(format!("opponent actions are {:?}, not ({n}, {ACTIONS})", acts.shape())));
+        }
+        for (env, row) in self.envs.iter_mut().zip(acts.rows()) {
+            let Some(env) = env else { continue };
+            if row[0] < 0 {
+                continue;
+            }
+            if let Some((j, v)) = row.iter().enumerate().find(|&(j, &v)| v < 0 || v >= crate::duel::CHOICES[j]) {
+                return Err(bad(format!("opponent action {v} at {j} is outside 0..{}", crate::duel::CHOICES[j])));
+            }
+            if let Some(o) = env.opponents.first_mut() {
+                o.next = Some(std::array::from_fn(|i| row[i]));
+            }
+        }
+        Ok(())
+    }
+
+    /// Self-play: what the first opponent of every round sees (Env.observe_opponent), into `out` (rounds x N_OBS).
+    /// Returns which rounds have one; the others' rows are left as they are.
+    fn observe_opponents(&self, py: Python<'_>, mut out: PyReadwriteArray2<f32>) -> PyResult<Vec<bool>> {
+        let out = out.as_slice_mut()?;
+        if out.len() != self.envs.len() * N_OBS {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!("a buffer for {} rounds, not {}", out.len() / N_OBS, self.envs.len())));
+        }
+        let envs = &self.envs;
+        Ok(py.detach(|| {
+            envs.par_iter()
+                .zip(out.par_chunks_mut(N_OBS))
+                .map(|(env, o)| match env {
+                    Some(env) if !env.opponents.is_empty() => {
+                        env.observe_opponent(0, o);
+                        true
+                    }
+                    _ => false,
+                })
+                .collect()
+        }))
+    }
+
     /// One decision in every round at once. Writes what each sees after it, its reward and whether it ended.
     fn step(&mut self, py: Python<'_>, actions: PyReadonlyArray2<i64>, mut obs: PyReadwriteArray2<f32>, mut rewards: PyReadwriteArray1<f32>, mut dones: PyReadwriteArray1<bool>) -> PyResult<()> {
         let acts = actions.as_array();

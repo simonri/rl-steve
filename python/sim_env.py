@@ -95,6 +95,7 @@ class SimVecEnv(VecEnv):
         self.returns = np.zeros(n, np.float64)
         self.meta = [None] * n
         self.actions = None
+        self.opponents = None  # opponents.Opponents when fights' opponents may be played by a model (self-play)
 
     def _new(self, i):
         spec, meta = self.makers[i].draw()
@@ -102,6 +103,8 @@ class SimVecEnv(VecEnv):
         self.batch.observe(i, self.obs[i])
         self.meta[i] = meta
         self.returns[i] = 0.0
+        if self.opponents is not None:
+            self.opponents.new_round(i, meta)
 
     def reset(self):
         for i in range(self.num_envs):
@@ -110,6 +113,8 @@ class SimVecEnv(VecEnv):
 
     def step_async(self, actions):
         self.actions = np.ascontiguousarray(actions, np.int64).reshape(self.num_envs, mcsim.ACTIONS)
+        if self.opponents is not None:  # self-play: model-played opponents choose from what they see now
+            self.batch.set_opponent_actions(self.opponents.actions(self.batch))
 
     def step_wait(self):
         self.batch.step(self.actions, self.obs, self.rewards, self.dones)

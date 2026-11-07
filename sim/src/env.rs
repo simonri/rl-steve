@@ -201,6 +201,12 @@ pub struct Opponent {
     key_age: [i32; 7],
     since_sneak: i32,
     since_hit: i32,
+    since_hurt: i32,                   // ticks since the model's hit counted on it (its own fighting state, as the model's)
+    history: [[f32; 8]; HISTORY],      // its last inputs, as the model's history
+    history2: [[f32; HIST_F]; HISTORY],
+    target: Option<[f64; 3]>,          // its goal: the model, where it last stood over the floor (Env.track_target)
+    /// An action given from outside for the next tick (a model plays it: self-play), instead of its bot's.
+    pub next: Option<[i64; ACTIONS]>,
 }
 
 /// What a finished or ongoing round reports, for info.
@@ -386,6 +392,12 @@ impl Env {
         let over_floor = |p: &[f64; 3]| world.present(p[0].floor() as i32, Y, p[2].floor() as i32);
         if let Some(t) = self.opponents.iter().filter(|o| !o.gone() && over_floor(&o.player.pos)).map(|o| o.player.pos).min_by(|a, b| duel::dist2(a, &me).total_cmp(&duel::dist2(b, &me))) {
             self.target = Some(t);
+        }
+        // Each opponent's goal is the model, by the same rule (what it sees when a model plays it).
+        if over_floor(&me) {
+            for o in self.opponents.iter_mut() {
+                o.target = Some(me);
+            }
         }
     }
 
@@ -775,17 +787,83 @@ impl Env {
 
     /// AutoEnv._vec, _with_timer and the history: everything the model gets, into `out`.
     pub fn observe(&self, out: &mut [f32]) {
-        debug_assert_eq!(out.len(), N_OBS);
         let p = &self.player;
+        let me = duel::Me {
+            slot: p.slot,
+            resist: p.resist,
+            damage: p.attack_damage,
+            armor: p.armor,
+            server_sprinting: p.server_sprinting,
+            since_hit: self.since_hit,
+            since_hurt: self.since_hurt,
+            duel: self.course.duel.is_some(),
+        };
+        let eyes = Eyes {
+            p,
+            k: self.k,
+            target: self.target,
+            hit: self.hit,
+            keys: &self.keys,
+            jump_wait: self.jump_wait,
+            visited: &self.visited,
+            history: &self.history,
+            history2: &self.history2,
+            me,
+            // as they are: one out still falls, a dead one has no health
+            others: self.opponents.iter().map(|o| View::of(&o.player)).collect(),
+        };
+        self.observe_with(&eyes, out);
+    }
+
+    /// What opponent `j` sees, by the model's own rules from its side (self-play: a model plays it): its frame turned
+    /// half round (it faces the model as the model faces it), the model as its goal, its own inputs and fighting
+    /// state, the model as the one opponent it sees (a second opponent, its teammate, is not shown). Its health is
+    /// the server's (it has no client to show damage late); in fights no one's jump wait or stood-on cells are kept.
+    pub fn observe_opponent(&self, j: usize, out: &mut [f32]) {
+        let o = &self.opponents[j];
+        let p = &o.player;
+        let me = duel::Me {
+            slot: p.slot,
+            resist: p.resist,
+            damage: p.attack_damage,
+            armor: p.armor,
+            server_sprinting: p.server_sprinting,
+            since_hit: o.since_hit,
+            since_hurt: o.since_hurt,
+            duel: true,
+        };
+        let mut model = View::of(&self.player);
+        model.health = self.player.health; // the server's, as the model sees its opponents' health
+        let no_cells = HashSet::new();
+        let eyes = Eyes {
+            p,
+            k: (self.k + 2).rem_euclid(4),
+            target: o.target,
+            hit: p.pick(&self.world),
+            keys: &o.keys,
+            jump_wait: 0,
+            visited: &no_cells,
+            history: &o.history,
+            history2: &o.history2,
+            me,
+            others: vec![model],
+        };
+        self.observe_with(&eyes, out);
+    }
+
+    /// Everything a player sees, from `e`'s side, into `out` (observe, observe_opponent).
+    fn observe_with(&self, e: &Eyes, out: &mut [f32]) {
+        debug_assert_eq!(out.len(), N_OBS);
+        let p = e.p;
         let c = &self.course;
         let [x, y, z] = p.pos;
         let [vx, vy, vz] = p.dm;
-        let k = self.k;
+        let k = e.k;
         let turn = (p.yaw as f64).to_radians();
         let (fw, rt) = ((-turn.sin(), turn.cos()), (-turn.cos(), -turn.sin()));
         let ego = |dx: f64, dz: f64| (dx * fw.0 + dz * fw.1, dx * rt.0 + dz * rt.1);
         // The goal: the course's, or in a fight the nearest opponent over the floor (track_target).
-        let (gx, gz, goal_up) = match self.target {
+        let (gx, gz, goal_up) = match e.target {
             Some(t) => (t[0] - x, t[2] - z, t[1] - y),
             _ => (c.goal[0] as f64 + 0.5 - x, c.goal[1] as f64 + 0.5 - z, (Y + 1 + c.dy) as f64 - y),
         };
@@ -814,7 +892,7 @@ impl Env {
         head[16] = p.horizontal_collision as i32 as f64;
         head[17] = p.fall_distance.ln_1p() / 3.0;
         head[18] = p.hurt_time as f64 / 10.0;
-        if let Some(h) = &self.hit {
+        if let Some(h) = &e.hit {
             let b = h.block;
             head[19] = 1.0;
             let (hx, hz) = rotate(b[0] as f64 + 0.5 - x, b[2] as f64 + 0.5 - z, k);
@@ -846,12 +924,12 @@ impl Env {
             head[26 + side] = 1.0;
         }
         head[32] = (p.held as f64 / 20.0).min(2.0);
-        head[33] = self.can_place() as i32 as f64;
+        head[33] = can_place(&self.world, p, &e.hit) as i32 as f64;
         for i in 0..HEAD {
             out[i] = (head[i] as f32).clamp(-5.0, 5.0);
         }
         // _with_timer
-        let ks = &self.keys;
+        let ks = e.keys;
         let known = [
             ks[K_SNEAK] as i32 as f32,
             (1.0 - self.t as f64 / c.limit as f64).max(0.0) as f32,
@@ -861,7 +939,7 @@ impl Env {
             ks[K_BACK] as i32 as f32,
             ks[K_LEFT] as i32 as f32,
             ks[K_RIGHT] as i32 as f32,
-            (self.jump_wait as f64 / JUMP_WAIT as f64) as f32,
+            (e.jump_wait as f64 / JUMP_WAIT as f64) as f32,
         ];
         out[HEAD..HEAD + KNOWN].copy_from_slice(&known);
         // _view: every block 5 around the feet, in the round's frame
@@ -905,37 +983,42 @@ impl Env {
                 i += 1;
             }
         }
-        for &(cx_, cz_) in &self.visited {
+        for &(cx_, cz_) in e.visited {
             let (rx, rz) = rotate_i(cx_ - feet[0], cz_ - feet[2], k);
             if rx.abs() <= MAP_RADIUS && rz.abs() <= MAP_RADIUS {
                 beens[((rx + MAP_RADIUS) * MAP_SIDE + rz + MAP_RADIUS) as usize] = 1.0;
             }
         }
         let mut i = HISTORY_START;
-        for h in &self.history {
+        for h in e.history {
             out[i..i + 8].copy_from_slice(h);
             i += 8;
         }
         // duel.features: the opponents, its own fighting state, the command, its last left clicks.
-        let p = &self.player;
-        let me = duel::Me {
-            slot: p.slot,
-            resist: p.resist,
-            damage: p.attack_damage,
-            armor: p.armor,
-            server_sprinting: p.server_sprinting,
-            since_hit: self.since_hit,
-            since_hurt: self.since_hurt,
-            duel: self.course.duel.is_some(),
-        };
-        let views: Vec<View> = self.opponents.iter().map(|o| View::of(&o.player)).collect(); // as they are: one out still falls, a dead one has no health
-        duel::features(p, &me, &views, k, &|| Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z)), &self.history2, &mut out[MOVE_OBS..]);
+        duel::features(p, &e.me, &e.others, k, &|| Cube::from_fn(feet, |x, y, z| self.world.present(x, y, z)), e.history2, &mut out[MOVE_OBS..]);
     }
+}
 
-    /// AutoEnv._can_place: a block in hand, aimed at a side in reach, the spot there empty and not where it stands.
-    fn can_place(&self) -> bool {
-        let p = &self.player;
-        let Some(h) = &self.hit else { return false };
+/// One player's side of what it sees (Env.observe_with): itself, its frame, its goal, what it aims at, its own keys
+/// and inputs, its fighting state and the others as it sees them.
+struct Eyes<'a> {
+    p: &'a Player,
+    k: i32,
+    target: Option<[f64; 3]>,
+    hit: Option<Hit>,
+    keys: &'a [bool; 7],
+    jump_wait: i32,
+    visited: &'a HashSet<(i32, i32)>,
+    history: &'a [[f32; 8]; HISTORY],
+    history2: &'a [[f32; HIST_F]; HISTORY],
+    me: duel::Me,
+    others: Vec<View>,
+}
+
+/// AutoEnv._can_place: a block in hand, aimed at a side in reach, the spot there empty and not where it stands.
+fn can_place(world: &World, p: &Player, hit: &Option<Hit>) -> bool {
+    {
+        let Some(h) = hit else { return false };
         if p.held <= 0 {
             return false;
         }
@@ -944,7 +1027,7 @@ impl Env {
         let [x, y, z] = p.pos;
         let feet = [x.floor() as i32, y.floor() as i32, z.floor() as i32];
         let cell = [t[0] - feet[0], t[1] - feet[1], t[2] - feet[2]];
-        if cell.iter().all(|c| c.abs() <= RADIUS) && self.world.present(t[0], t[1], t[2]) {
+        if cell.iter().all(|c| c.abs() <= RADIUS) && world.present(t[0], t[1], t[2]) {
             return false;
         }
         let height = if p.keys.shift { 1.5 } else { 1.8 };
@@ -967,6 +1050,11 @@ fn settle(p: &mut Player) {
 impl Opponent {
     /// Its action through the same key limits as the model's (Env.press, the shift rule for clicks).
     fn input(&mut self, a: [i64; ACTIONS]) -> Input {
+        self.history2.rotate_left(1);
+        self.history2[HISTORY - 1] = [(a[8] != 0) as i32 as f32];
+        self.history.rotate_left(1);
+        self.history[HISTORY - 1] = [a[0] as f32 / 2.0, a[1] as f32 / 2.0, (a[2] != 0) as i32 as f32, (a[3] != 0) as i32 as f32 / 2.0, (a[4] != 0) as i32 as f32,
+                                     (a[5] != 0) as i32 as f32, a[6] as f32 / 10.0, a[7] as f32 / 10.0];
         let wanted = [a[0] == 1, a[0] == 2, a[1] == 1, a[1] == 2, a[2] != 0, a[4] != 0, a[5] != 0];
         limit_keys(&mut self.keys, &mut self.key_age, wanted);
         self.since_sneak = if self.keys[K_SNEAK] { 0 } else { self.since_sneak + 1 };
@@ -993,7 +1081,8 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let me = View::of(player);
     let mut inputs = Vec::with_capacity(opponents.len());
     for o in opponents.iter_mut() {
-        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
+        let given = o.next.take(); // self-play: a model's action for this opponent
+        let a = if o.out { [0, 0, 0, 0, 0, 0, 5, 5, 0] } else if let Some(a) = given { a } else { duel::action(o.bot, &View::of(&o.player), &me, centre, t, o.since_hit, &|x, y, z| world.present(x, y, z)) };
         inputs.push(o.input(a));
     }
     let mut landed = None;
@@ -1003,6 +1092,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
             let (counted, broke) = combat::hit(&s, &mut opponents[j].player, at);
             if counted {
                 *since_hit = 0;
+                opponents[j].since_hurt = 0;
                 landed = Some(((s.pos[0] - at[0]).hypot(s.pos[2] - at[2]), s.falling));
             }
             if broke {
@@ -1060,6 +1150,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     *since_hurt += 1;
     for o in opponents.iter_mut() {
         o.since_hit += 1;
+        o.since_hurt += 1;
     }
     ev
 }
@@ -1085,7 +1176,20 @@ impl Opponent {
         p.kb_enchant = r.kb;
         p.slot = 1;
         p.direct_turn = true; // Fight18.drive adds the turn step itself
-        Opponent { player: p, bot: r.bot, out: false, keys: [false; 7], key_age: [MIN_KEY_TICKS; 7], since_sneak: SNEAK_CLICK_TICKS + 1, since_hit: 99 }
+        Opponent {
+            player: p,
+            bot: r.bot,
+            out: false,
+            keys: [false; 7],
+            key_age: [MIN_KEY_TICKS; 7],
+            since_sneak: SNEAK_CLICK_TICKS + 1,
+            since_hit: 99,
+            since_hurt: 99,
+            history: [[0.0; 8]; HISTORY],
+            history2: [[0.0; HIST_F]; HISTORY],
+            target: None,
+            next: None,
+        }
     }
 }
 
@@ -1108,6 +1212,66 @@ mod tests {
     fn tick(w: &mut World, p: &mut Player, o: &mut [Opponent], t: i32, queued: &mut Option<(Swing, usize)>) {
         let (mut since_hit, mut since_hurt) = (99, 99);
         fight_tick(w, p, o, &Input::default(), [0.5, 100.0, 0.5], t, &mut since_hit, &mut since_hurt, queued);
+    }
+
+    /// A fight laid out mirror-symmetric: a platform round the middle (z = 2.5), the model at z 0.5 facing +z, its
+    /// opponent at z 4.5 facing it.
+    fn mirror_duel() -> Env {
+        let mut w = World::new([-12, 90, -12], [12, 110, 16]);
+        w.fill([-8, Y, -8], [8, Y, 12], FULL);
+        let feet = (Y + 1) as f64;
+        let course = Course {
+            hop: false,
+            goal: [0, 4],
+            dy: 0,
+            goal_half: 0,
+            fall_margin: 3.0,
+            landing: vec![],
+            par: 0,
+            limit: 600,
+            no_blocks: false,
+            field: None,
+            home: [0.5, feet, 0.5],
+            home_yaw: 0.0,
+            home_pitch: 0.0,
+            blocks: 0, // as the opponent: the same gear on both sides
+            world: w,
+            settle: false,
+            pushes: vec![],
+            rules18: true,
+            duel: Some(Duel {
+                damage: 5.0,
+                armor: 7,
+                kb: 0,
+                centre: [0.5, feet, 2.5],
+                opponents: vec![Rival { bot: Bot::Dummy, pos: [0.5, feet, 4.5], yaw: 180.0, damage: 5.0, armor: 7, kb: 0 }],
+            }),
+        };
+        Env::new(course, 0)
+    }
+
+    fn assert_same(a: &[f32], b: &[f32], what: &str) {
+        let worst = a.iter().zip(b).enumerate().map(|(i, (x, y))| ((x - y).abs(), i)).fold((0.0f32, 0), |m, d| if d.0 > m.0 { d } else { m });
+        assert!(worst.0 < 1e-5, "{what}: input {} differs by {}", worst.1, worst.0);
+    }
+
+    /// An opponent played by a model sees by exactly the model's rules: mirrored, the two see the same numbers (the
+    /// proof that its inputs are as true as the model's). Also after moving the same way.
+    #[test]
+    fn an_opponent_sees_as_the_model_does() {
+        let mut env = mirror_duel();
+        let (mut mine, mut theirs) = (vec![0.0; N_OBS], vec![0.0; N_OBS]);
+        env.observe(&mut mine);
+        env.observe_opponent(0, &mut theirs);
+        assert_same(&mine, &theirs, "at the start");
+        let step = [1, 1, 0, 0, 0, 1, 5, 5, 0]; // forward, left, sprint: no turn (the model turns through the mouse)
+        for _ in 0..6 {
+            env.opponents[0].next = Some(step);
+            env.step(step);
+        }
+        env.observe(&mut mine);
+        env.observe_opponent(0, &mut theirs);
+        assert_same(&mine, &theirs, "after moving the same way");
     }
 
     /// Out of the fight an opponent is still a player: it keeps falling, and below the world the void kills it.
