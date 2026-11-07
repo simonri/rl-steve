@@ -387,20 +387,6 @@ impl Env {
         env
     }
 
-    /// On a course of blocks to land on in order (hop, path), the goal the model sees is the next one, where it stands
-    /// on it: the command is "go here next", as a fight's goal is the opponent. The course's end as the goal pulled it
-    /// off the blocks wherever the course turned: auto7 landed 95-98 % of jumps that pointed within 20 degrees of the
-    /// end, 16-50 % of those more than 90 degrees off, and hop's last two dials stood still for 40M decisions.
-    /// AutoEnv._next_block.
-    fn next_block(&self) -> Option<[f64; 3]> {
-        let n = self.course.landing.len();
-        if n == 0 {
-            return None;
-        }
-        let b = self.course.landing[self.landed.min(n - 1)];
-        Some([b[0] as f64 + 0.5, b[1] as f64, b[2] as f64 + 0.5])
-    }
-
     /// shaping::potential for this round: the model against the opponents still in the fight. 0 outside fights.
     fn fight_potential(&self) -> f64 {
         if self.course.duel.is_none() {
@@ -828,7 +814,7 @@ impl Env {
         let eyes = Eyes {
             p,
             k: self.k,
-            target: self.target.or_else(|| self.next_block()),
+            target: self.target,
             hit: self.hit,
             keys: &self.keys,
             jump_wait: self.jump_wait,

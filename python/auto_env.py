@@ -632,9 +632,7 @@ class AutoEnv(SkillEnv):
         # The frame of this round: the goal does not move, so neither does this.
         k = int(round(math.degrees(math.atan2(-self.goal_x, self.goal_z)) / 90.0))
         target = self._target(o)
-        if target is None:
-            target = self._next_block()
-        if target is not None:  # a fight: the nearest opponent still in it; a course of blocks: the next one
+        if target is not None:  # a fight: the goal is the nearest opponent still in it, wherever it is now
             goal_x, goal_z, goal_up = target[0] - x, target[2] - z, target[1] - y
         else:
             goal_x, goal_z, goal_up = self.goal_x + 0.5 - x, self.goal_z + 0.5 - z, Y + 1 + self.dy - y
@@ -907,16 +905,6 @@ class AutoEnv(SkillEnv):
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,
                 "parts": dict(self.parts)}
         return float(reward) * self.reward_scale, term, False, info
-
-    def _next_block(self):
-        """env.rs next_block: on a course of blocks to land on in order (hop, path), the goal is the next one, where
-        the model stands on it. The course's end as the goal pulled it off the blocks wherever the course turned (auto7
-        landed 95-98 % of jumps within 20 degrees of the end, 16-50 % of those more than 90 degrees off)."""
-        order = self.landing_order
-        if not order:
-            return None
-        b = order[min(self.landed, len(order) - 1)]
-        return (b[0] + 0.5, b[1], b[2] + 0.5)
 
     def _target(self, o):
         """In a fight, the goal the model goes for (env.rs track_target): the nearest opponent still in it that stands
