@@ -63,6 +63,24 @@ def main():
     tail = obs[0, mcsim.MOVE_OBS:]
     assert tail[0] == 1.0 and tail[3] > 0.2 and abs(tail[1]) < 0.1, tail[:20]  # 2 blocks ahead at the first distance: 2 / 8
     assert tail[61] == 1.0 and tail[69] == 1.0, "sword in hand, and it is a fight"
+    # The hotbar does nothing yet: asking for the blocks every tick keeps the sword in hand.
+    for _ in range(10):
+        a = idle(obs, 0)
+        a[:, 9] = 1
+        vec.step_async(a)
+        obs, _, _, _ = vec.step_wait()
+    assert obs[0, mcsim.MOVE_OBS + 61] == 1.0, "the sword stays in hand"
+    # Standing still facing the dummy 2 blocks off, the crosshair is often on it: that is worth a little every tick,
+    # never more than 3 a round.
+    vec = SimVecEnv(16, levels, seed=3)
+    vec.env_method("set_exam", "duel", False)
+    obs = vec.reset()
+    aimed = []
+    for t in range(700):
+        vec.step_async(idle(obs, t))
+        obs, _, dones, infos = vec.step_wait()
+        aimed += [infos[i]["parts"].get("aimed", 0.0) for i in np.flatnonzero(dones)]
+    assert aimed and max(aimed) > 0 and max(aimed) <= 3.0 * 0.1 + 1e-9, aimed  # parts are after the reward scale (0.1)
     print("duel ok")
 
 

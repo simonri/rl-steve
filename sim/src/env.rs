@@ -75,9 +75,9 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 20] = [
+pub const PARTS: [&str; 21] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -98,8 +98,15 @@ const P_DEALT: usize = 16;
 const P_TAKEN: usize = 17;
 const P_WON: usize = 18;
 const P_LOST: usize = 19;
+const P_AIMED: usize = 20;
 const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
 const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
+/// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
+/// before the first hit lands (at most 3 in a 600-tick round, against 10 for winning and about 1 a hit).
+const AIM_POINTS: f64 = 0.005;
+/// Whether the hotbar input does anything. No course kind needs it yet: every round starts with the right thing in
+/// hand, and a change it could make at random (exploration keeps every choice alive) only ever took the sword away.
+pub const HOTBAR: bool = false;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -452,7 +459,7 @@ impl Env {
     /// One decision: AutoEnv.step with one tick. Returns the reward and whether the round is over.
     pub fn step(&mut self, a: [i64; ACTIONS]) -> (f64, bool) {
         let (mv, strafe, sneak, use_, jump, sprint, yaw, pitch) = (a[0], a[1], a[2] != 0, a[3] != 0, a[4] != 0, a[5] != 0, a[6] as usize, a[7] as usize);
-        let (attack, slot) = (a[8] != 0, slot_choice(a[9]));
+        let (attack, slot) = (a[8] != 0, if HOTBAR { slot_choice(a[9]) } else { None });
         self.history2.rotate_left(1);
         self.history2[HISTORY - 1] = [attack as i32 as f32, a[9] as f32 / 2.0];
         self.history.rotate_left(1);
@@ -633,6 +640,10 @@ impl Env {
             if !o.out && (o.player.health <= 0.0 || o.player.pos[1] < line) {
                 o.out = true;
             }
+        }
+        let boxes: Vec<Option<_>> = self.opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
+        if matches!(combat::aim(&self.player, &self.world, &boxes), combat::Aim::Player(_)) {
+            reward += self.points(P_AIMED, AIM_POINTS);
         }
         let won = self.opponents.iter().all(|o| o.out);
         let lost = !won && (self.player.shown_health() <= 0.0 || self.player.pos[1] < line);

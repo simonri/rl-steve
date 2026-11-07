@@ -61,6 +61,8 @@ DUEL_BLOCKS = 16  # in hand for a fight, to clutch or block a way
 DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
+AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
+HOTBAR = False  # env.rs: the hotbar input does nothing until a course kind needs it
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
@@ -840,7 +842,7 @@ class AutoEnv(SkillEnv):
     def _send(self, keys, clicked, turn_yaw, turn_pitch, attack, slot):
         """One tick of inputs to the game; returns what it shows after it."""
         extra = dict(attack=True) if attack else {}
-        if slot:
+        if slot and HOTBAR:
             extra["hotbar"] = slot - 1
         if self.family == "duel" and not hasattr(self.c, "single"):  # the real game: the bots' inputs come from here (the simulator runs them itself)
             extra["opponents"] = self._bot_actions()
@@ -868,6 +870,9 @@ class AutoEnv(SkillEnv):
         for i, p in enumerate(players):
             if not self.out[i] and (p["health"] <= 0 or p["pos"][1] < line):
                 self.out[i] = True
+        tail = self._combat(o)  # feature 17 of the nearest opponent: the crosshair is on it, in reach (env.rs aim)
+        if any(tail[i * mcsim.ENEMY_F + 17] > 0.5 for i in range(3)):
+            reward += self._points("aimed", AIM_POINTS)
         won = all(self.out)
         lost = not won and (died or o["health"] <= 0 or o["pos"][1] < line)
         if won:

@@ -476,6 +476,7 @@ fn mcsim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bot_action, m)?)?;
     m.add("MOVE_OBS", MOVE_OBS)?;
     m.add("EXTRA", EXTRA)?;
+    m.add("ENEMY_F", crate::duel::ENEMY_F)?;
     m.add("ACTIONS", ACTIONS)?;
     Ok(())
 }
