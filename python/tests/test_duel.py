@@ -165,6 +165,26 @@ def main():
     line = [(step[0] * a, step[1] * a) for a in range(12)]
     assert [c in cols for c in line] == [True] * 2 + [False] * 9 + [True], [c in cols for c in line]
     assert spec["blocks"] >= 9
+    # A course to build on starts with something else in hand now and then (RANDOM_HAND), and the first time it has
+    # its blocks in hand that pays once (took blocks); a course that starts with them in hand never pays it.
+    import auto_env
+    lv = curriculum.Curriculum().levels
+    v = SimVecEnv(64, lv, seed=8)
+    v.env_method("set_exam", "bridge", False)
+    obs = v.reset()
+    hb = obs[:, mcsim.MOVE_OBS + mcsim.EXTRA - items.HOTBAR_F :]
+    K = len(items.KINDS) + 1
+    sel = np.argmax(hb[:, items.SLOTS * K :], axis=1)
+    holds = np.array([items.placeable(int(np.argmax(hb[i, s * K : s * K + K - 1]))) for i, s in enumerate(sel)])
+    assert 0.1 < 1 - holds.mean() < 0.5, holds.mean()
+    blocks_slot = [next(s for s in range(items.SLOTS) if items.placeable(int(np.argmax(hb[i, s * K : s * K + K - 1])))) for i in range(64)]
+    a = idle(obs, 0)
+    a[:, 9] = np.array(blocks_slot) + 1
+    for t in range(3):  # pressing the blocks' key three times: it pays once, only where they were not in hand
+        v.step_async(a)
+        v.step_wait()
+    paid = np.array([v.batch.report(i)["parts"].get("took blocks", 0.0) for i in range(64)])
+    assert np.allclose(paid[~holds], auto_env.TOOK_BLOCKS_BONUS * 0.1) and np.all(paid[holds] == 0), (paid, holds)
     print("duel ok")
 
 

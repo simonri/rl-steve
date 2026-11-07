@@ -78,7 +78,10 @@ def layout(rng, blocks, block_kind, sword_kind, hold):
     if blocks > 0:
         slots[b] = (INDEX[block_kind], int(blocks))
     slots[s] = (INDEX[sword_kind], 1)
-    selected = b if hold == "blocks" and blocks > 0 else s if hold == "sword" else b
+    if hold == "random" and blocks > 0:  # any slot but the blocks': the sword or an empty one
+        selected = int(rng.choice([i for i in range(SLOTS) if i != b]))
+    else:
+        selected = b if hold == "blocks" and blocks > 0 else s if hold == "sword" else b
     return slots, int(selected)
 
 

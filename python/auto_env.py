@@ -58,6 +58,8 @@ MOVED_ON = 1.5  # blocks from where it last was to count as going somewhere
 DETOUR_TICKS = 200  # longest it may go around something without getting closer: 10 s
 RULES18 = True  # 1.8 healing and combat, as on Hypixel (combat18.py); the mod sets the same
 DUEL_FALL_MARGIN = 3.0  # below the arena by this much is out of the fight
+RANDOM_HAND = 0.3  # of courses that give blocks: they start with another slot selected (_with_hotbar)
+TOOK_BLOCKS_BONUS = 0.5  # env.rs: the first time in such a round it has blocks in hand
 DUEL_BLOCKS = 16  # in hand for a fight, to clutch or block a way
 DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
@@ -245,7 +247,9 @@ class AutoEnv(SkillEnv):
         damage = self.duel["damage"] if self.family == "duel" else combat18.ATTACK_BASE + combat18.SWORDS["wood"]
         sword = items.SWORD_FOR_DAMAGE[int(round(damage))]
         kind = items.BUILD_BLOCKS[int(r.integers(len(items.BUILD_BLOCKS)))]
-        hold = "sword" if self.family == "duel" else "blocks"
+        # A fight starts with the sword. A course starts with its blocks in hand, except RANDOM_HAND of those that give
+        # blocks: then something else is selected, and finding the blocks pays once (env.rs TOOK_BLOCKS_BONUS).
+        hold = "sword" if self.family == "duel" else "random" if r.random() < RANDOM_HAND else "blocks"
         self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)
         spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
         spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give
@@ -785,6 +789,9 @@ class AutoEnv(SkillEnv):
         self.obs = self.c.step()
 
     def _begin_episode(self):
+        k, c = self.hotbar[self.hotbar_slot] if getattr(self, "hotbar", None) else (0, 0)
+        has_blocks = any(items.placeable(k_) and c_ > 0 for k_, c_ in getattr(self, "hotbar", []))
+        self.took_blocks = self.family == "duel" or not has_blocks or (items.placeable(k) and c > 0)  # env.rs took_blocks
         self.visited = set()
         self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
         self.out = [False] * (len(self.duel["opponents"]) if self.family == "duel" else 0)  # from the plan: in the game they appear a tick later
@@ -1038,6 +1045,9 @@ class AutoEnv(SkillEnv):
         reward = self._points("time", -TICK_COST)
         if use and held == 0:
             reward += self._points("click without blocks", -EMPTY_CLICK_COST)
+        if not self.took_blocks and self._in_hand(o) > 0:  # env.rs TOOK_BLOCKS_BONUS: blocks in hand the first time
+            self.took_blocks = True
+            reward += self._points("took blocks", TOOK_BLOCKS_BONUS)
         # Shift is free everywhere: on parkour it stops at an edge, lines up a jump, or takes a careful step.
         aims_at_block = (o.get("hit") or {}).get("type") == "block"
         if o["pitch"] < 0 and not aims_at_block:  # looking above level at nothing in reach
