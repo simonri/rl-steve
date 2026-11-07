@@ -89,7 +89,10 @@ def main():
         progress.resume_last_exam = saved_state.get("last_exam")
 
     def stop(*_):
-        raise KeyboardInterrupt  # a stop (start.sh, a redeploy) ends learning where it is, and the run is saved below
+        # A stop (start.sh, a redeploy) ends learning where it is, and the run is saved below. A second one (uv passes
+        # the signal on, and a script may signal both) must not cut that save short.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
     try:
