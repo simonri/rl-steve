@@ -75,9 +75,9 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 21] = [
+pub const PARTS: [&str; 22] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "swing out of reach",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -99,11 +99,16 @@ const P_TAKEN: usize = 17;
 const P_WON: usize = 18;
 const P_LOST: usize = 19;
 const P_AIMED: usize = 20;
+const P_SWING: usize = 21;
 const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
 const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 /// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
 /// before the first hit lands (at most 3 in a 600-tick round, against 10 for winning and about 1 a hit).
 const AIM_POINTS: f64 = 0.005;
+/// A left click when the nearest opponent is further than SWING_REACH (feet to feet; the reach is 3 to its body) can
+/// never land: it costs this, so swinging at someone 6 blocks off is worse than not swinging.
+const SWING_COST: f64 = 0.01;
+const SWING_REACH: f64 = 4.0;
 
 /// Walking distance to the goal around obstacles, worked out in Python (SkillEnv._build_field).
 #[derive(Clone)]
@@ -636,6 +641,9 @@ impl Env {
     /// server handles the hits with the places it knew when the clicks came (combat.rs). AutoEnv._fight_tick.
     fn fight_step(&mut self, input: &Input) -> (f64, bool) {
         let centre = self.course.duel.as_ref().map_or([0.0; 3], |d| d.centre);
+        let me = self.player.pos;
+        let nearest = self.opponents.iter().filter(|o| !o.gone()).map(|o| duel::dist2(&o.player.pos, &me)).fold(f64::INFINITY, f64::min);
+        let swung_at_nothing = input.attack && nearest > SWING_REACH * SWING_REACH;
         let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
         let my_health = self.player.shown_health();
         fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
@@ -645,6 +653,9 @@ impl Env {
         self.hit = self.player.pick(&self.world);
         // Points: what was dealt and taken, and the result.
         let mut reward = self.points(P_TIME, -TICK_COST);
+        if swung_at_nothing {
+            reward += self.points(P_SWING, -SWING_COST);
+        }
         let dealt: f32 = self.opponents.iter().zip(&health_before).map(|(o, &h)| (h - o.player.health).max(0.0)).sum();
         let taken = (my_health - self.player.shown_health()).max(0.0);
         reward += self.points(P_DEALT, HEALTH_POINTS * dealt as f64);

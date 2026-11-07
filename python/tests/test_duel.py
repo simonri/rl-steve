@@ -80,6 +80,25 @@ def main():
         obs, _, dones, infos = vec.step_wait()
         aimed += [infos[i]["parts"].get("aimed", 0.0) for i in np.flatnonzero(dones)]
     assert aimed and max(aimed) > 0 and max(aimed) <= 3.0 * 0.1 + 1e-9, aimed  # parts are after the reward scale (0.1)
+    # Swinging at a dummy 11 blocks off costs, every click; at 2 blocks it does not.
+    def swing(obs, t):
+        a = idle(obs, t)
+        a[:, 8] = 1
+        return a
+
+    cost = {}
+    for distance in (3, 0):  # 11 blocks, 2 blocks
+        lv = curriculum.Curriculum().levels
+        lv["duel"].update(bot=0, distance=distance, yaw=0)
+        v = SimVecEnv(4, lv, seed=5)
+        v.env_method("set_exam", "duel", True)  # the dials exactly as set
+        o = v.reset()
+        for t in range(20):
+            v.step_async(swing(o, t))
+            o, _, dones, infos = v.step_wait()
+        cost[distance] = v.batch.report(0)["parts"].get("swing out of reach", 0.0)  # the round so far
+    assert abs(cost[3] + 20 * 0.01 * 0.1) < 1e-9, cost  # every click at 11 blocks (parts are after the 0.1 scale)
+    assert cost[0] > cost[3] / 2, cost  # at 2 blocks only the clicks after the dummy has been knocked away
     # A win is only a win alive and standing: a fighter that runs on after its hit, off the island, never wins while it
     # is in the air or falling, and falling off after the dummy is a loss.
     import skill_env

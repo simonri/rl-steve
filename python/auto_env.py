@@ -62,6 +62,7 @@ DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
 AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
+SWING_COST, SWING_REACH = 0.01, 4.0  # env.rs: a left click with the nearest opponent further than this, feet to feet
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
 SAVED_BLOCK_BONUS = 0.3  # at the goal, per block under the estimated need: as much as a block over it costs (WASTE_COST)
@@ -854,12 +855,19 @@ class AutoEnv(SkillEnv):
     def _fight_tick(self, keys, clicked, turn_yaw, turn_pitch, attack):
         """env.rs fight_step: what was dealt and taken, and the result."""
         before = [p["health"] for p in self.obs.get("players", [])]
+        # A left click with nobody near (env.rs SWING_COST); before the game shows the opponents, where they were put.
+        here, out = self.obs["pos"], self.out
+        shown = self.obs.get("players") or [dict(pos=pos, health=20.0) for _, pos, *_ in self.duel["opponents"]]
+        near = [sum((a - b) ** 2 for a, b in zip(p["pos"], here)) for i, p in enumerate(shown) if not (i < len(out) and out[i]) and p["health"] > 0]
+        swung_at_nothing = attack and min(near, default=math.inf) > SWING_REACH ** 2
         mine = self.obs["health"]
         o = self._send(keys, clicked, turn_yaw, turn_pitch, attack)
         for c in o.get("clicks") or []:  # blocks built in a fight, maybe outside the arena
             self._mark_dirty(c)
             self.placed_cells.append(c[:3])
         reward = self._points("time", -TICK_COST)
+        if swung_at_nothing:
+            reward += self._points("swing out of reach", -SWING_COST)
         players = o.get("players", [])
         dealt = float(np.sum([np.float32(max(0.0, b - p["health"])) for b, p in zip(before, players)], dtype=np.float32))
         died = bool(o.get("died"))  # the game respawns at once: its health is back to full, but the fight is lost
