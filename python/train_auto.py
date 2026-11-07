@@ -37,7 +37,7 @@ GAMMA, GAE_LAMBDA = 0.995, 0.975
 # Learning calms down over this stretch, so what has been learned is not constantly overwritten.
 CALM_FROM, CALM_OVER = 500_000, 5_000_000  # decisions into a run: the old 16M was meant for one run and left new ones wild
 LEARNING_RATE, LEARNING_RATE_END = 3e-4, 3e-5
-ENTROPY, ENTROPY_END = 0.01, 0.002
+ENTROPY, ENTROPY_END = 0.01, 0.004  # the end was 0.002: late in a run new skills (fighting) were hardly explored
 # Learning stops going over a stretch again once the way it plays has moved this far. With the memory, 8 passes moved
 # it about 0.28 each time (clipping 56 % of everything), so far that what it had learned fell apart.
 TARGET_KL = 0.02

@@ -176,6 +176,7 @@ fn clear(cube: &Cube, a: [f64; 3], b: [f64; 3]) -> bool {
 pub enum Bot {
     Dummy,      // stands still
     SlowWalker, // walks up and hits once a second: half the walker's rate (its hits land every 12 ticks, the hurt resistance allowing)
+    MediumWalker, // walks up and hits every 16 ticks: between the two
     Walker,     // walks up and hits five times a second
     Strafer, // circles while sprinting, hits ten times a second
     Combo,   // also lets go of sprint after each hit (a w-tap) for the full extra knockback, and jumps for crits
@@ -187,9 +188,10 @@ impl Bot {
         match i {
             0 => Bot::Dummy,
             1 => Bot::SlowWalker,
-            2 => Bot::Walker,
-            3 => Bot::Strafer,
-            4 => Bot::Combo,
+            2 => Bot::MediumWalker,
+            3 => Bot::Walker,
+            4 => Bot::Strafer,
+            5 => Bot::Combo,
             _ => Bot::Pusher,
         }
     }
@@ -228,6 +230,7 @@ pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, sinc
     let close = flat < 2.8;
     let clicks_every = match bot {
         Bot::SlowWalker => 20,
+        Bot::MediumWalker => 16,
         Bot::Walker => 4,
         _ => 2,
     };
@@ -235,7 +238,7 @@ pub fn action(bot: Bot, me: &View, target: &View, centre: [f64; 3], t: i32, sinc
         a[8] = 1;
     }
     match bot {
-        Bot::Walker | Bot::SlowWalker => {
+        Bot::Walker | Bot::SlowWalker | Bot::MediumWalker => {
             a[0] = if flat > 2.2 { 1 } else { 0 };
         }
         Bot::Strafer => {

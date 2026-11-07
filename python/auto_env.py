@@ -130,7 +130,7 @@ class AutoEnv(SkillEnv):
 
     def _pick_stage(self):
         family = self.exam_family or curriculum.pick_family(self.levels, self.np_random, self.mastered, self.practice)
-        settings, tested = curriculum.draw(self.levels, family, self.np_random, "all" if self.exam_family and self.exam_all else None)
+        settings, tested = curriculum.draw(self.levels, family, self.np_random, "all" if self.exam_family and self.exam_all else None, practice_next=not self.exam_family)
         return family, settings, tested
 
     def _use_task(self, picked):

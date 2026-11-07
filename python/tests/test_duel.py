@@ -99,6 +99,14 @@ def main():
         cost[distance] = v.batch.report(0)["parts"].get("missed swing", 0.0)  # the round so far
     assert abs(cost[3] + 20 * 0.01 * 0.1) < 1e-9, cost  # every click at 11 blocks (parts are after the 0.1 scale)
     assert cost[0] > cost[3], cost  # at 2 blocks the clicks that land cost nothing
+    # A fifth of training rounds practise the next opponent, without testing anything; exams never do.
+    lv = curriculum.Curriculum().levels
+    lv["duel"]["bot"] = 1
+    rng = np.random.default_rng(0)
+    draws = [curriculum.draw(lv, "duel", rng) for _ in range(2000)]
+    nxt = [t for s, t in draws if s["bot"] == "medium walker"]
+    assert 0.15 < len(nxt) / len(draws) < 0.25 and all(t is None for t in nxt), len(nxt)
+    assert not any(s["bot"] == "medium walker" for s, _ in (curriculum.draw(lv, "duel", rng, practice_next=False) for _ in range(500)))
     # A win is only a win alive and standing: a fighter that runs on after its hit, off the island, never wins while it
     # is in the air or falling, and falling off after the dummy is a loss.
     import skill_env

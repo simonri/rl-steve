@@ -23,7 +23,7 @@ FLAT, SMALL_STEPS, HILLS, DROPS = (0,), (-1, 0, 1), (-3, -2, -1, 0, 1, 2, 3), (-
 CLIFFS = (-12, -8, -4, 0, 2, 4, 6)  # far down or well up: a way down to build, or a climb, inside a stack
 ROOMY, NORMAL, TIGHT, STRICT = (3.0, 2), (2.0, 2), (1.75, 2), (1.5, 2)
 EXACT = (1.25, 3)  # a quarter over a walkable bridge's need: little room for a wasted block
-BOTS = ("dummy", "slow walker", "walker", "strafer", "combo", "pusher")  # duel.rs Bot, easiest first
+BOTS = ("dummy", "slow walker", "medium walker", "walker", "strafer", "combo", "pusher")  # duel.rs Bot, easiest first
 PUSHES = (None, "hit", "sprint hit", "knockback")  # the strongest push a round can have, weaker when that one cannot be saved
 
 FAMILIES = {
@@ -294,10 +294,23 @@ def finished(levels, family):
     return all(levels[family][d] == len(values) - 1 for d, values in FAMILIES[family].items())
 
 
-def draw(levels, family, rng, tested=None):
+# Dials whose next level keeps being practised in a share of rounds, whatever their own level: a new opponent takes
+# longer to learn than the 30 rounds a dial is judged on, and a dial that goes back down would otherwise stop showing it.
+FRONTIER = {"duel": ("bot",)}
+FRONTIER_SHARE = 0.2
+
+
+def draw(levels, family, rng, tested=None, practice_next=True):
     """One round's settings, and what the round tests: a dial's name, "all", or None."""
     dials = FAMILIES[family]
     current = levels[family]
+    if practice_next and tested is None and FRONTIER.get(family) and rng.random() < FRONTIER_SHARE:
+        # Practice at the next level of a frontier dial: not a test, so it does not count for the dial either way.
+        dial = FRONTIER[family][int(rng.integers(len(FRONTIER[family])))]
+        if current[dial] + 1 < len(dials[dial]):
+            settings = {d: v[int(rng.integers(current[d] + 1))] for d, v in dials.items()}
+            settings[dial] = dials[dial][current[dial] + 1]
+            return settings, None
     chance = rng.random()
     if tested is None:
         near_top = sum(current.values()) / sum(len(v) - 1 for v in dials.values()) >= NEAR_TOP
