@@ -250,6 +250,10 @@ class AutoEnv(SkillEnv):
         spec["hotbar"] = [(int(k), int(c)) for k, c in self.hotbar]  # kinds, for the simulator
         spec["hotbar_items"] = [(items.GIVE[items.KINDS[k]] if c > 0 else "minecraft:air", int(c)) for k, c in self.hotbar]  # for the mod's give
         spec["slot"] = self.hotbar_slot
+        # The course's own blocks are Bed Wars shop blocks too (the mod builds its platforms of this). Not glass: the
+        # simulator builds platforms as full cubes, and glass does not push a player out of it (world.rs CLEAR).
+        floor = ("wool", "hardened clay", "end stone", "oak planks", "obsidian")
+        spec["floor"] = items.GIVE[floor[int(r.integers(len(floor)))]]
         return spec
 
     @staticmethod

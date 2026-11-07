@@ -52,6 +52,7 @@ import net.minecraft.world.scores.criteria.ObjectiveCriteria;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
@@ -325,6 +326,53 @@ public final class McBridge implements ClientModInitializer {
         }
     }
 
+    /**
+     * A new round's hotbar (AutoEnv._with_hotbar): "hotbar_items" as [registry name, count] per slot and "slot" selected;
+     * an older spec without them gets its blocks in the first slot, as before. On the server, and the client is told the slot.
+     */
+    private static void giveHotbar(ServerPlayer player, JsonObject spec) {
+        Inventory inv = player.getInventory();
+        inv.clearContent();
+        int slot = spec.has("slot") ? spec.get("slot").getAsInt() : 0;
+        if (spec.has("hotbar_items")) {
+            JsonArray h = spec.getAsJsonArray("hotbar_items");
+            for (int i = 0; i < Math.min(9, h.size()); i++) {
+                JsonArray e = h.get(i).getAsJsonArray();
+                Item item = itemNamed(e.get(0).getAsString());
+                int count = e.get(1).getAsInt();
+                if (item != null && count > 0) inv.setItem(i, new ItemStack(item, count));
+            }
+        } else {
+            int blocks = spec.has("blocks") ? spec.get("blocks").getAsInt() : 0;
+            if (blocks > 0) inv.setItem(0, new ItemStack(Items.STONE, blocks));
+        }
+        inv.setSelectedSlot(slot);
+        player.connection.send(new ClientboundSetHeldSlotPacket(slot));
+        player.inventoryMenu.sendAllDataToRemote();
+    }
+
+    /** What a course's platforms are built of: "floor", a Bed Wars shop block (AutoEnv._with_hotbar); stone if none. */
+    private BlockState floorBlock(JsonObject spec) {
+        if (!spec.has("floor")) return Blocks.STONE.defaultBlockState();
+        try {
+            return BlockStateParser.parseForBlock(server.registryAccess().lookupOrThrow(Registries.BLOCK), spec.get("floor").getAsString(), false).blockState();
+        } catch (Exception e) {
+            LOG.warn("unknown floor block: {}", spec.get("floor"));
+            return Blocks.STONE.defaultBlockState();
+        }
+    }
+
+    private static java.util.Map<String, Item> itemsByName;
+
+    /** An item by its registry name ("minecraft:white_wool"), or null. */
+    private static Item itemNamed(String name) {
+        if (itemsByName == null) {
+            itemsByName = new java.util.HashMap<>();
+            for (Item it : BuiltInRegistries.ITEM) itemsByName.put(BuiltInRegistries.ITEM.getKey(it).toString(), it);
+        }
+        return itemsByName.get(name);
+    }
+
     private void pasteBlocks(JsonArray palette, JsonArray rows) {
         var lookup = server.registryAccess().lookupOrThrow(Registries.BLOCK);
         BlockState[] states = new BlockState[palette.size()];
@@ -431,7 +479,7 @@ public final class McBridge implements ClientModInitializer {
         ServerLevel level = server.overworld();
         if (cmd.has("wipe")) wipeBlocks(ints(cmd.getAsJsonArray("wipe")));
         wipeBlocks(ints(cmd.getAsJsonArray("clear")));
-        BlockState stone = Blocks.STONE.defaultBlockState();
+        BlockState stone = floorBlock(cmd);
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (JsonElement e : cmd.getAsJsonArray("platforms")) {
             int[] b = ints(e.getAsJsonArray());
@@ -448,12 +496,7 @@ public final class McBridge implements ClientModInitializer {
             // Blocks to place only on courses that need them: then it has to be survival, otherwise nothing can be changed.
             int blocks = cmd.has("blocks") ? cmd.get("blocks").getAsInt() : 0;
             player.setGameMode(blocks > 0 ? GameType.SURVIVAL : GameType.ADVENTURE);
-            Inventory inv = player.getInventory();
-            inv.clearContent();
-            inv.setSelectedSlot(0);
-            player.connection.send(new ClientboundSetHeldSlotPacket(0));
-            if (blocks > 0) inv.setItem(0, new ItemStack(Items.STONE, blocks));
-            player.inventoryMenu.sendAllDataToRemote();
+            giveHotbar(player, cmd);
         }
         moveHuman(cmd);
     }
@@ -925,7 +968,7 @@ public final class McBridge implements ClientModInitializer {
             return;
         }
         wipeBlocks(ints(spec.getAsJsonArray("clear")));
-        BlockState stone = Blocks.STONE.defaultBlockState();
+        BlockState stone = floorBlock(spec);
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (JsonElement e : spec.getAsJsonArray("platforms")) {
             int[] b = ints(e.getAsJsonArray());
@@ -935,11 +978,7 @@ public final class McBridge implements ClientModInitializer {
                 }
             }
         }
-        Inventory inv = player.getInventory();
-        inv.clearContent();
-        inv.setSelectedSlot(0);
-        inv.setItem(0, new ItemStack(Items.STONE, spec.get("blocks").getAsInt()));
-        player.inventoryMenu.sendAllDataToRemote();
+        giveHotbar(player, spec);
         player.setDeltaMovement(Vec3.ZERO);
         player.fallDistance = 0;
         player.setHealth(player.getMaxHealth());
@@ -1041,8 +1080,17 @@ public final class McBridge implements ClientModInitializer {
         o.addProperty("collision", pl.horizontalCollision);
         o.addProperty("fall_distance", pl.fallDistance);
         o.addProperty("eye_height", pl.getEyeHeight());
-        o.addProperty("held_count", pl.getInventory().getItem(0).getCount()); // the blocks, whatever is in hand
+        o.addProperty("held_count", pl.getMainHandItem().getCount()); // what is in hand (the hotbar below says what it is)
         o.addProperty("slot", pl.getInventory().getSelectedSlot());
+        JsonArray hotbar = new JsonArray(); // each slot as the player sees it: registry name and count (items.py kind_of)
+        for (int i = 0; i < 9; i++) {
+            ItemStack st = pl.getInventory().getItem(i);
+            JsonArray slot = new JsonArray();
+            slot.add(st.isEmpty() ? "minecraft:air" : BuiltInRegistries.ITEM.getKey(st.getItem()).toString());
+            slot.add(st.isEmpty() ? 0 : st.getCount());
+            hotbar.add(slot);
+        }
+        o.add("hotbar", hotbar);
         o.addProperty("crouch_pose", pl.isCrouching());
         ServerPlayer sp = server == null ? null : server.getPlayerList().getPlayer(mc.getGameProfile().id());
         if (sp != null) {

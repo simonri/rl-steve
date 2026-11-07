@@ -108,7 +108,7 @@ public final class Fight18 {
         if (!(attacker instanceof Bot)) struck = true; // the client only sends a hit with the crosshair on someone in reach
         if (!(target instanceof LivingEntity victim) || !victim.isAlive() || victim.getHealth() <= 0) return null;
         State a = of(attacker), v = of(victim);
-        float amount = attacker.getInventory().getSelectedSlot() == 1 ? a.damage : 1.0f; // the sword's, or a bare hit's (combat.rs Swing)
+        float amount = isSword(attacker.getMainHandItem()) ? a.damage : 1.0f; // the sword's, or a bare hit's (combat.rs Swing)
         boolean falling = attacker.fallDistance > 0 && !attacker.onGround() && !attacker.onClimbable() && !attacker.isInWater();
         if (falling) amount *= 1.5f;
         boolean sprinting = attacker instanceof Bot ? a.serverSprint : attacker.isSprinting();
@@ -223,8 +223,12 @@ public final class Fight18 {
         s.serverSprint = false;
         var attackSpeed = p.getAttribute(Attributes.ATTACK_SPEED);
         if (attackSpeed != null && rules18) attackSpeed.setBaseValue(1024.0); // no cooldown: every click is a full hit
-        p.getInventory().setItem(1, sword(damage));
-        dress(p, armor);
+        dress(p, armor); // the sword is in the hotbar the round gives (McBridge giveHotbar), or the bot's own (addOpponent)
+    }
+
+    /** A sword in hand: its hits do the attack attribute's damage, anything else's 1 (items.rs is_sword). */
+    static boolean isSword(ItemStack s) {
+        return s.is(Items.WOODEN_SWORD) || s.is(Items.STONE_SWORD) || s.is(Items.IRON_SWORD) || s.is(Items.DIAMOND_SWORD);
     }
 
     static ItemStack sword(float damage) {
@@ -348,6 +352,7 @@ public final class Fight18 {
         server.getPlayerList().broadcastAll(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(p)));
         level.addNewPlayer(p);
         gear(p, cmd.get("damage").getAsFloat(), cmd.get("armor").getAsInt(), cmd.get("kb").getAsInt(), cmd.get("rules18").getAsBoolean());
+        p.getInventory().setItem(1, sword(cmd.get("damage").getAsFloat())); // a bot fights with its sword, never changes slot
         p.getInventory().setSelectedSlot(1);
         OPPONENTS.add(new Opponent(p, cmd.get("bot").getAsInt()));
     }
@@ -493,7 +498,7 @@ public final class Fight18 {
             e.addProperty("pitch", p.getXRot());
             e.addProperty("health", p.getHealth());
             e.addProperty("armor", s.armor);
-            e.addProperty("damage", p.getInventory().getSelectedSlot() == 1 ? s.damage : 1.0f);
+            e.addProperty("damage", isSword(p.getMainHandItem()) ? s.damage : 1.0f);
             e.addProperty("hurt_time", p.hurtTime);
             e.addProperty("on_ground", p.onGround());
             e.addProperty("sprinting", p.isSprinting());

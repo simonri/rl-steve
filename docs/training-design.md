@@ -22,6 +22,31 @@ Varje belöning och varje indata finns både i `sim/src/env.rs` och i `python/au
 `tests/test_sim_env.py` kontrollerar att de ger exakt samma tal. Riktiga spelet kontrolleras mot simulatorn med
 `checks/check_duel_real.py`.
 
+<a id="foremal"></a>
+### 2c. En riktig hotbar, som i Bed Wars (modell v4)
+
+Modellen har en hotbar med nio platser, ser vad som ligger i varje plats och hur många, och väljer själv plats med
+en tangent (1–9), som en spelare. Ett högerklick gör det som saken i handen gör: block placeras bara med block i
+handen, ett slag gör svärdets skada bara med svärdet i handen.
+
+- Föremålslistan är Hypixel Bed Wars butik (forumguiden "Every Item In Bedwars", ThePrestige 2020, redigerad april
+  2024; den officiella wikin gick inte att nå). Block: ull, härdad lera, sprängsäkert glas, end stone, stege,
+  plankor, obsidian. Listan är numrerad för gott och växer bara i slutet (`sim/src/items.rs`, `python/items.py`):
+  numret är en del av indata. Det som simulatorn inte kan än (stege, hackor, TNT …) finns i listan men delas aldrig
+  ut, så att indata aldrig visar något som beter sig fel.
+- Varje runda lägger blocken och svärdet på slumpade platser, så modellen måste läsa av hotbaren. Banor börjar med
+  blocken i handen, dueller med svärdet; i arenan "gap" måste den själv byta till block, bygga över och byta tillbaka.
+- Det som byggs och delas ut är bara shop-block. Banornas golv byggs av ull, lera, end stone, plankor eller obsidian
+  (inte glas: simulatorn bygger golv som hela block, och glas trycker inte ut en spelare). Kartterräng (Treenan,
+  Bedwars-kartorna) och slabs/trappor finns kvar, som på riktiga Hypixel-kartor.
+- Tangenten trycks före klicken i samma tick, som spelet hanterar ett ticks tangenter.
+- Utforskningen av tangenten väger en tiondel (`spatial.ENTROPY_WEIGHTS`), och den börjar på ungefär ett tryck på
+  tusen tick: med full vikt drev utforskningen slumpbyten till 1 % av alla tick, och i fighter höll den svärdet bara
+  23 % av tiden. Vår egen avvägning, inte från en artikel.
+- En äldre modell laddas med de nya indata på 0 och de gamla valen oförändrade (`train_auto.transfer`). De två gamla
+  värdena för handen ("slot 0", "slot 1") betyder nu "block eller tom hand" och "svärd i handen": samma värden som
+  förut i varje gammal situation.
+
 ## Mätning
 
 <a id="referenser"></a>
