@@ -303,7 +303,7 @@ public final class Fight18 {
     public static void spawn(MinecraftServer server, JsonObject cmd) {
         ServerLevel level = server.overworld();
         int i = OPPONENTS.size();
-        GameProfile profile = new GameProfile(UUID.nameUUIDFromBytes(("mcbridge-opponent-" + i).getBytes()), "Bot" + (i + 1));
+        GameProfile profile = new GameProfile(UUID.nameUUIDFromBytes(("mcbridge-opponent-" + i).getBytes()), "Enemy " + (i + 1)); // the name over its head
         Bot p = new Bot(level, profile);
         JsonArray pos = cmd.getAsJsonArray("pos");
         float yaw = cmd.get("yaw").getAsFloat();

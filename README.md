@@ -32,7 +32,7 @@ Java 25 (`mise install java@temurin-25`) och `uv`. Bygg en gång, och efter varj
 ## Starta allt (från `python/`)
 Spelinstanserna öppnas på workspace 19:
 
-    python3 launch.py bot0 --port 25601 --watch-port 25701   # visning
+    python3 launch.py bot0 --port 25601 --watch-port 25701 --username Claudia   # visning: spelaren heter Claudia
     python3 launch.py bot1 --port 25602 --watch-port 25702   # träning, går att titta på
     python3 launch.py bot2 --port 25603                      # träning
     python3 launch.py bot3 --port 25606                      # träning
