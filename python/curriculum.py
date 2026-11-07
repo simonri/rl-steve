@@ -38,8 +38,8 @@ FAMILIES = {
         # Harder, and only open once all of the above is at its limit. Every jump still has to pass the jump math.
         far=(False, True),  # adds the longest jump that is still possible from a single block
         mix=(False, True),  # every jump of a course can be a different one
-        bend=(False, True),  # the course can turn, so the next block is not always further the same way
-        longer=(1, 2, 3),  # times the number of blocks
+        bend=(0.0, 0.1, 0.3),  # chance per block that the course turns, so the next block is not always further the same way
+        longer=(1, 1.5, 2, 3),  # times the number of blocks
         shapes=(False, True),  # some blocks are slabs: half a block lower to land on, half a block harder to jump from
     ),
     "path": dict(

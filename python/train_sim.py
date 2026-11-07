@@ -9,6 +9,7 @@ real game unchanged: live_auto.py shows it on a real server you can join.
 import argparse
 import json
 import os
+import signal
 from pathlib import Path
 
 import torch
@@ -83,7 +84,19 @@ def main():
         resumed_steps = saved_state.get("steps") or (json.loads((out / "status.json").read_text()).get("steps", 0) if (out / "status.json").exists() else 0)
         model.num_timesteps = resumed_steps
         print(f"continuing this run from {resumed_steps} decisions", flush=True)
-    model.learn(a.steps, callback=ta.Progress(vec, out, curriculum, 2), reset_num_timesteps=resumed_steps == 0)
+    progress = ta.Progress(vec, out, curriculum, 2)
+    if continuing:
+        progress.resume_last_exam = saved_state.get("last_exam")
+
+    def stop(*_):
+        raise KeyboardInterrupt  # a stop (start.sh, a redeploy) ends learning where it is, and the run is saved below
+
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        model.learn(a.steps, callback=progress, reset_num_timesteps=resumed_steps == 0)
+    except KeyboardInterrupt:
+        progress.save_latest()  # nothing since the last save is lost
+        print(f"stopped at {model.num_timesteps} decisions: saved", flush=True)
 
 
 if __name__ == "__main__":

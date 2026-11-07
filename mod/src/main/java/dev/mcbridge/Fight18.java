@@ -73,6 +73,15 @@ public final class Fight18 {
     /** The model's last hit that counted, not yet reported: feet distance across, and 1 if critical (attack). */
     private static volatile double[] landed;
 
+    /** The model's client sent a hit on an opponent (its crosshair was on one in reach), counted or not. */
+    private static volatile boolean struck;
+
+    public static boolean takeStruck() {
+        boolean was = struck;
+        struck = false;
+        return was;
+    }
+
     /** The model's hit that counted since the last call, or null; clears it. */
     public static double[] takeLanded() {
         double[] was = landed;
@@ -95,6 +104,7 @@ public final class Fight18 {
 
     /** A hit from attacker on target, as the 1.8.9 server works it out. */
     public static void attack(ServerPlayer attacker, Entity target) {
+        if (!(attacker instanceof Bot)) struck = true; // the client only sends a hit with the crosshair on someone in reach
         if (!(target instanceof LivingEntity victim) || !victim.isAlive() || victim.getHealth() <= 0) return;
         State a = of(attacker), v = of(victim);
         float amount = attacker.getInventory().getSelectedSlot() == 1 ? a.damage : 1.0f; // the sword's, or a bare hit's (combat.rs Swing)

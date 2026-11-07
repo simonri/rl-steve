@@ -65,6 +65,7 @@ pub struct Events {
     pub clicked_block: bool,                   // the click was on a block, placed or not (UseBlockCallback)
     pub damage: f32,
     pub landed: Option<(f64, bool)>, // the model's own hit that counted this tick: feet distance across, critical (fight_tick)
+    pub struck: bool,                // its left click this tick was on an opponent in reach (fight_tick)
 }
 
 #[derive(Clone, Debug)]

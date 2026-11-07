@@ -62,7 +62,7 @@ DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
 FIGHT_RESULT = 10.0  # env.rs: winning or losing
 AIM_POINTS = 0.005  # env.rs: per tick with the crosshair on an opponent in reach
-SWING_COST, SWING_REACH = 0.01, 4.0  # env.rs: a left click with the nearest opponent further than this, feet to feet
+SWING_COST = 0.01  # env.rs: a left click that is not on an opponent in reach
 LONG_HIT_POINTS, LONG_HIT_FROM, CRIT_POINTS = 0.4, 2.0, 0.3  # env.rs: a hit from further off, a critical hit
 DEATH_HEALTH = 4.0  # a fall that leaves this little counts as dying: the game can differ by a point or two, and a near miss there is a death
 CLUTCH_BONUS = 2.0  # back on a block after a push, without falling
@@ -248,9 +248,9 @@ class AutoEnv(SkillEnv):
             offsets.append(FAR_JUMP)
         sign = 1 if r.random() < 0.5 else -1
         blocks, poles = [], []
-        for _ in range(t["count"] * t.get("longer", 1)):
+        for _ in range(int(t["count"] * t.get("longer", 1))):  # never longer than asked
             ahead, sideways = offsets[int(r.integers(len(offsets)))]
-            if t.get("bend") and r.random() < 0.3:
+            if t.get("bend") and r.random() < t["bend"]:
                 main = (main[1], main[0]) if r.random() < 0.5 else (-main[1], -main[0])
             # The first way that keeps clear of the course so far. With nowhere left, the course ends here.
             ways = [(h, g) for h in (main, (main[1], main[0]), (-main[1], -main[0])) for g in (sign, -sign)]
@@ -856,19 +856,14 @@ class AutoEnv(SkillEnv):
     def _fight_tick(self, keys, clicked, turn_yaw, turn_pitch, attack):
         """env.rs fight_step: what was dealt and taken, and the result."""
         before = [p["health"] for p in self.obs.get("players", [])]
-        # A left click with nobody near (env.rs SWING_COST); before the game shows the opponents, where they were put.
-        here, out = self.obs["pos"], self.out
-        shown = self.obs.get("players") or [dict(pos=pos, health=20.0) for _, pos, *_ in self.duel["opponents"]]
-        near = [sum((a - b) ** 2 for a, b in zip(p["pos"], here)) for i, p in enumerate(shown) if not (i < len(out) and out[i]) and p["health"] > 0]
-        swung_at_nothing = attack and min(near, default=math.inf) > SWING_REACH ** 2
         mine = self.obs["health"]
         o = self._send(keys, clicked, turn_yaw, turn_pitch, attack)
         for c in o.get("clicks") or []:  # blocks built in a fight, maybe outside the arena
             self._mark_dirty(c)
             self.placed_cells.append(c[:3])
         reward = self._points("time", -TICK_COST)
-        if swung_at_nothing:
-            reward += self._points("swing out of reach", -SWING_COST)
+        if attack and not o.get("struck"):  # the game says whether its click was on an opponent in reach
+            reward += self._points("missed swing", -SWING_COST)
         landed = o.get("landed")  # its own hit that counted: (feet distance across, critical)
         if landed:
             reward += self._points("long hit", LONG_HIT_POINTS * max(0.0, landed[0] - LONG_HIT_FROM))

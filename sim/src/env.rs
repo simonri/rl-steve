@@ -77,7 +77,7 @@ const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimate
 /// The point rules, in the order info["parts"] lists them.
 pub const PARTS: [&str; 24] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
-    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "swing out of reach", "long hit", "critical hit",
+    "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aimed", "missed swing", "long hit", "critical hit",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -107,10 +107,9 @@ const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 /// Per tick with the crosshair on an opponent in reach: what leads to hits, so a fight has something to learn from
 /// before the first hit lands (at most 3 in a 600-tick round, against 10 for winning and about 1 a hit).
 const AIM_POINTS: f64 = 0.005;
-/// A left click when the nearest opponent is further than SWING_REACH (feet to feet; the reach is 3 to its body) can
-/// never land: it costs this, so swinging at someone 6 blocks off is worse than not swinging.
+/// A left click that is not on an opponent in reach (too far, or beside it) costs this: a swing at nothing is worse
+/// than not swinging.
 const SWING_COST: f64 = 0.01;
-const SWING_REACH: f64 = 4.0;
 /// A hit that lands from further off is worth more: this per block of distance (feet to feet, across) beyond
 /// LONG_HIT_FROM. A hit from the edge of reach (about 3.3) gets about 0.5 more, on top of about 1 for the damage: the
 /// one who hits from further away takes fewer hits back.
@@ -650,9 +649,6 @@ impl Env {
     /// server handles the hits with the places it knew when the clicks came (combat.rs). AutoEnv._fight_tick.
     fn fight_step(&mut self, input: &Input) -> (f64, bool) {
         let centre = self.course.duel.as_ref().map_or([0.0; 3], |d| d.centre);
-        let me = self.player.pos;
-        let nearest = self.opponents.iter().filter(|o| !o.gone()).map(|o| duel::dist2(&o.player.pos, &me)).fold(f64::INFINITY, f64::min);
-        let swung_at_nothing = input.attack && nearest > SWING_REACH * SWING_REACH;
         let health_before: Vec<f32> = self.opponents.iter().map(|o| o.player.health).collect();
         let my_health = self.player.shown_health();
         let ev = fight_tick(&mut self.world, &mut self.player, &mut self.opponents, input, centre, self.t, &mut self.since_hit, &mut self.since_hurt, &mut self.queued);
@@ -662,7 +658,7 @@ impl Env {
         self.hit = self.player.pick(&self.world);
         // Points: what was dealt and taken, and the result.
         let mut reward = self.points(P_TIME, -TICK_COST);
-        if swung_at_nothing {
+        if input.attack && !ev.struck {
             reward += self.points(P_SWING, -SWING_COST);
         }
         if let Some((across, critical)) = ev.landed {
@@ -1019,6 +1015,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     let boxes: Vec<Option<_>> = opponents.iter().map(|o| if o.gone() { None } else { Some(combat::body(&o.player)) }).collect();
     let my_box = Some(combat::body(player));
     let target = if input.attack { combat::click(player, world, &boxes) } else { None };
+    let struck = target.is_some();
     if let Some(j) = target {
         *queued = Some((Swing::of(player), j));
         combat::recoil(player);
@@ -1033,6 +1030,7 @@ pub fn fight_tick(world: &mut World, player: &mut Player, opponents: &mut [Oppon
     }
     let mut ev = player.rest(world, input);
     ev.landed = landed;
+    ev.struck = struck;
     // Players do not push each other: Hypixel's teams have collisionRule never, and so do the mod's (Fight18.gear).
     for (o, i) in opponents.iter_mut().zip(&inputs) {
         if !o.gone() {
@@ -1150,6 +1148,21 @@ mod tests {
         assert!(ev.landed.is_some_and(|(_, c)| c), "a hit while falling is critical");
         let ev = fight_tick(&mut w, &mut p, &mut o, &Input::default(), [0.5, 100.0, 0.5], 1, &mut since_hit, &mut since_hurt, &mut None);
         assert!(ev.landed.is_none(), "nothing landed this tick");
+    }
+
+    /// A left click on the opponent in front is a strike; one turned away from it is a miss (what the missed-swing cost
+    /// goes by).
+    #[test]
+    fn a_click_strikes_or_misses() {
+        let click = Input { attack: true, ..Input::default() };
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.0);
+        let (mut since_hit, mut since_hurt) = (99, 99);
+        let ev = fight_tick(&mut w, &mut p, &mut o, &click, [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut None);
+        assert!(ev.struck, "straight ahead, 2 blocks");
+        let (mut w, mut p, mut o) = arena(Bot::Dummy, 2.0);
+        p.yaw = 90.0;
+        let ev = fight_tick(&mut w, &mut p, &mut o, &click, [0.5, 100.0, 0.5], 0, &mut since_hit, &mut since_hurt, &mut None);
+        assert!(!ev.struck, "looking the other way");
     }
 
     /// Bots turn by the step itself, as Fight18.drive adds it; the model turns through the mouse (multiples of 0.15).

@@ -142,6 +142,9 @@ impl Single {
         if let Some((across, critical)) = ev.landed {
             d.set_item("landed", (across, critical))?; // as the mod reports the model's counted hit
         }
+        if ev.struck {
+            d.set_item("struck", true)?; // its click was on an opponent, as the mod reports it
+        }
         if let Some((t, s)) = ev.placed {
             d.set_item("placed", (t, s))?;
         }

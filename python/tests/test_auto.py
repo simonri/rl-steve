@@ -568,7 +568,7 @@ print("practice ok")
 top = {"hop": {d: len(v) - 1 for d, v in FAMILIES["hop"].items()}}
 c = Curriculum(top)
 changes = [c.record("hop", "all", False) for _ in range(2 * curriculum.WINDOW)]
-assert [x for x in changes if x] == [("longer", 1)], changes
+assert [x for x in changes if x] == [("longer", len(FAMILIES["hop"]["longer"]) - 2)], changes  # one step down
 assert c.levels["hop"]["count"] == len(FAMILIES["hop"]["count"]) - 1
 c = Curriculum(top)
 assert not any(c.record("hop", "all", i % 2 == 0) for i in range(3 * curriculum.WINDOW)), "half won: stays"

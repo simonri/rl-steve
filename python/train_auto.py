@@ -296,6 +296,7 @@ class Progress(BaseCallback):
         self.first_step = None
         self.rounds = 0
         self.last_log = self.last_save = self.last_text = self.last_exam = 0
+        self.resume_last_exam = None  # when the run's last exam was, if it is continuing (train_sim)
         self.clean = {f: deque(maxlen=WINDOW) for f in FAMILIES}
         self.results, self.falls, self.stalls = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
         self.damage, self.speeds, self.shift, self.parts = deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW), deque(maxlen=WINDOW)
@@ -366,7 +367,7 @@ class Progress(BaseCallback):
         os.replace(tmp, self.out / "levels.json")
         # The steps these weights have, and what the curriculum remembers, so a restart picks up exactly here.
         tmp = self.out / "latest.tmp"
-        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state())))
+        tmp.write_text(json.dumps(dict(steps=self.num_timesteps, curriculum=self.cur.state(), last_exam=self.last_exam)))
         os.replace(tmp, self.out / "latest.json")
 
     def show(self, title="TRAINING"):
@@ -389,8 +390,10 @@ class Progress(BaseCallback):
 
     def _on_step(self):
         if self.first_step is None:
-            # A resumed run counts from where it is: no save and full exam the moment it starts.
-            self.first_step = self.last_save = self.last_exam = self.num_timesteps
+            # A resumed run counts from where it is: no save the moment it starts, and the exams keep their schedule
+            # (resume_last_exam, from latest.json), so restarts do not keep putting them off.
+            self.first_step = self.last_save = self.num_timesteps
+            self.last_exam = self.resume_last_exam if self.resume_last_exam is not None else self.num_timesteps
         moved = False
         for done, info in zip(self.locals["dones"], self.locals["infos"]):
             if not done:

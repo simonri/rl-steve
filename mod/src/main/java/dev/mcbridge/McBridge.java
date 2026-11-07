@@ -109,6 +109,7 @@ public final class McBridge implements ClientModInitializer {
     private boolean resetting;
     private boolean died; // a death since the last reply (the respawn follows at once)
     private boolean beatenLastTick; // a fight beat it during the last reply's tick (Fight18.takeDowned)
+
     private int settleTicks;
     private long settleStart;
     private String settleReason = "";
@@ -1054,6 +1055,8 @@ public final class McBridge implements ClientModInitializer {
             o.addProperty("since_hurt", s.sinceHurt);
         }
         o.add("players", Fight18.players());
+        boolean st = Fight18.takeStruck();
+        if (st) o.addProperty("struck", true); // its left click was on an opponent (a click that is not costs)
         double[] hit = Fight18.takeLanded();
         if (hit != null) { // its own hit that counted: feet distance across, critical (AutoEnv's long and critical hit points)
             JsonArray h = new JsonArray();
