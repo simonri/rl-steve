@@ -4,7 +4,9 @@ import copy
 import csv
 import json
 import os
+import tempfile
 import time
+import types
 from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
@@ -407,6 +409,22 @@ class SplitPPO(RecurrentPPO):
                 else:
                     self.ema[name].mul_(self.ema_decay).add_(t.detach(), alpha=1.0 - self.ema_decay)
 
+    def ema_policy(self):
+        """A copy of the policy holding the averaged weights, for what judges or shows the model (the benchmark, the
+        rating, its frozen copies). The A/B on 2026-11-08 (73M -> 81M decisions of auto8, 40 minutes per arm): the
+        average beat the last weights 0.59 [0.54-0.64] in direct duels, and scored higher on every hard course
+        (bedwars 0.65 -> 0.81, stairs 0.88 -> 0.95, bridge 0.80 -> 0.85)."""
+        # Through a model file, like every frozen copy: built exactly as a loaded model is.
+        with tempfile.TemporaryDirectory() as d:
+            self.save_ema(Path(d) / "ema")
+            return load_policy(Path(d) / "ema.zip", self.device)
+
+    def judged(self):
+        """What the benchmark and the rating take: the averaged model when there is one, else the model itself."""
+        if self.ema is None:
+            return self
+        return types.SimpleNamespace(policy=self.ema_policy(), device=self.device, save=self.save_ema)
+
     def save_ema(self, path):
         """The averaged weights as a model file like any other (load_policy, the rating, the viewer read it)."""
         own = {k: v.clone() for k, v in self.policy.state_dict().items()}
@@ -621,7 +639,8 @@ class Progress(BaseCallback):
         import benchmark
 
         self.last_bench = self.num_timesteps
-        result = benchmark.run(self.model.policy, self.model.device)
+        judged = self.model.judged()  # the averaged weights when the run keeps them
+        result = benchmark.run(judged.policy, judged.device)
         with open(self.out / "benchmark.jsonl", "a") as f:
             f.write(json.dumps(dict(steps=self.num_timesteps, rounds=benchmark.ROUNDS, result=result)) + "\n")
         brief = ", ".join(f"{fam} {' '.join(str(t['sampled']['clean']) for t in tiers.values())}" for fam, tiers in result.items())
@@ -826,7 +845,7 @@ class Progress(BaseCallback):
         rate_due = self.last_rated is None or self.num_timesteps - self.last_rated >= self.rate_every
         if self.rating is not None and rate_due:  # strength against frozen references (docs/training-design.md#referenser)
             self.last_rated = self.num_timesteps
-            self.rated = self.rating.rate(self.model, self.num_timesteps)
+            self.rated = self.rating.rate(self.model.judged(), self.num_timesteps)
             print(f"rating at {self.num_timesteps}: Elo {self.rated['elo']} +-{self.rated.get('ci', 0)}, "
                   + ", ".join(f"{k} {v:.2f}" for k, v in self.rated["scores"].items()), flush=True)
             if self.rated.get("added"):

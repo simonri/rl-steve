@@ -134,13 +134,15 @@ def turn_once():
             playing = False
         time.sleep(1.0)
         return
-    if not (out / "latest.zip").exists():
+    # The averaged weights when the run keeps them (train_sim --ema): steadier, and stronger in the A/B of 2026-11-08.
+    path = out / "ema.zip" if (out / "ema.zip").exists() else out / "latest.zip"
+    if not path.exists():
         time.sleep(1.0)
         return
     playing = True
-    m = (out / "latest.zip").stat().st_mtime
+    m = path.stat().st_mtime
     if m != mtime:
-        model = load(out / "latest.zip")
+        model = load(path)
         mtime = m
     s = status()
     levels = Curriculum(s.get("levels")).levels

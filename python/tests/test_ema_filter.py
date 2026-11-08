@@ -38,6 +38,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert torch.allclose(loaded[name], m.ema[name]), "the file holds the average"
     m.save(Path(tmp) / "plain")
     assert "ema" not in ta.saved_keys(str(Path(tmp) / "plain.zip")), "not inside the ordinary model file"
+    # The benchmark and rating judge the average; a run without one judges the model itself.
+    judged = m.judged()
+    assert torch.allclose(judged.policy.state_dict()[name], m.ema[name]) and judged.device == m.device
+    assert torch.equal(m.policy.state_dict()[name], now[name])
+    judged.save(Path(tmp) / "snap")
+    assert torch.allclose(ta.load_policy(Path(tmp) / "snap.zip", "cpu").state_dict()[name], m.ema[name]), "a frozen copy is of the average"
+    plain = make()
+    assert plain.judged() is plain
 
 # ---- Filtering: only the top quarter of advantage sizes count, never an empty batch ----
 m = make()

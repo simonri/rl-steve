@@ -238,7 +238,6 @@ class MemoryPolicy(RecurrentActorCriticPolicy):
         out[real] = seen
         return out
 
-    @staticmethod
     def _get_constructor_parameters(self):
         data = super()._get_constructor_parameters()
         data["hl_gauss"] = self.hl_gauss  # so a saved model is rebuilt with its value head
