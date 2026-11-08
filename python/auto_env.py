@@ -22,7 +22,7 @@ import curriculum
 import items
 import mcsim
 from jump_physics import hits_pole, jump_possible
-from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, LANDING_BONUS, MAX_DEATHS,
+from skill_env import (BLOCK_COST, FACES, DAMAGE_SETTLE_TICKS, MAX_DROP, EMPTY_CLICK_COST, GOAL_REWARD, HISTORY, HOPS, LANDING_BONUS, MAX_DEATHS,
                        POLE_HEIGHT, RESPAWN_TICKS, RUN, RUN_HOLES, SNEAK_CLICK_TICKS, STALL_TICKS, STAYED_HOME_COST, TICK_COST, TREENAN,
                        WASTE_COST, Y, SkillEnv, pace, rotate)
 
@@ -172,7 +172,7 @@ class AutoEnv(SkillEnv):
             self.extras = None
             down = t.get("way") == "up or down" and self.np_random.random() < 0.5
             self.gap = max(2, round(t["rise"] / t.get("steep", 1.0)))
-            self.heights, self.directions, self.start = (-t["rise"] if down else t["rise"],), t["directions"], t["start"]
+            self.heights, self.directions, self.start = (-min(t["rise"], MAX_DROP) if down else t["rise"],), t["directions"], t["start"]
         elif self.family == "duel":
             self.extras = "duel"
             self.goal_half, self.field_margin, self.fall_margin = 0, 6, DUEL_FALL_MARGIN
@@ -240,6 +240,8 @@ class AutoEnv(SkillEnv):
         spec = self._hop_spec() if self.family == "hop" else self._path_spec() if self.family == "path" else super()._spec()
         if self.push_spare and spec.get("blocks", 0) > 0:
             spec["blocks"] = self.blocks_given = min(64, spec["blocks"] + self.push_spare)
+        if self.dy < -MAX_DROP:  # only a deadly fall would reach it: another round instead
+            raise RuntimeError(f"goal {self.dy} below the start")
         spec["block_radius"] = RADIUS
         spec["map_radius"] = MAP_RADIUS
         return self._with_hotbar(spec)
@@ -1146,13 +1148,15 @@ class AutoEnv(SkillEnv):
             # building it, and a block put on ground it already reached is worth nothing.
             x, y, z = o["pos"]
             reward += self._closer(math.floor(x), math.floor(y) - 1, math.floor(z))
-        success = self.reached(o)
-        # A fall that (nearly) kills is a death too; one that kills outright the game has already respawned from.
-        fell = (self.fell(o) or o["health"] <= DEATH_HEALTH or bool(o.get("died"))) and not success
-        if success:
+        landed = self.reached(o)
+        if landed:
             for _ in range(DAMAGE_SETTLE_TICKS):  # damage from this landing arrives a moment later
                 o = self.c.step()
             self.obs = o
+        # A landing on the goal that (nearly) kills is no win: dying to get there is never the way (env.rs step).
+        success = landed and o["health"] > DEATH_HEALTH and not o.get("died")
+        # A fall that (nearly) kills is a death too; one that kills outright the game has already respawned from.
+        fell = (self.fell(o) or o["health"] <= DEATH_HEALTH or bool(o.get("died"))) and not success
         # Stuck: no closer for 2 s and still about where it was then. A way around something first leads away from the
         # goal, so moving on counts too, for up to 10 s without getting any closer.
         if math.dist(o["pos"], self.anchor) > MOVED_ON:

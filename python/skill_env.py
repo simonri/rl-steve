@@ -63,6 +63,10 @@ WIDE_ZIGZAG_GAP = (1, 1)  # one empty block ahead and two sideways: a truly diag
 ISLAND_GAP = (1, 1)  # empty blocks between the single blocks it has to stop on
 STOP_BONUS = 0.3  # the first time it stands still on each island block
 STALL_TICKS = 40  # 2 seconds of game time
+# The deepest a goal may lie below the start: a straight drop of 12 costs 9 of 20 health. Blocks cannot be built
+# downward into the air, so a goal further down is reached only by a fall that kills (24 down: 21 damage). Stairs
+# going down drew such goals in 29 % of rounds at the top level, and treenan now and then (down to 19).
+MAX_DROP = 12
 DAMAGE_SETTLE_TICKS = 3  # the server reports landing damage a moment after the client lands
 AXIS, EIGHT, ANY = "axis", "eight", "any"
 KEYS = ("forward", "back", "left", "right", "sneak", "jump", "sprint")
@@ -260,6 +264,8 @@ class SkillEnv(gym.Env):
                 gap = max(fits, MIN_GAP)
                 placed, (gx, gy, gz) = data.layout(target, gap, r, Y, rise, start, any_top)
             self.goal_x, self.goal_z, self.dy = gx, gz, gy - Y
+            if self.dy < -MAX_DROP:  # reached only by a deadly fall (auto_env.MAX_DROP): another spot
+                continue
             other = data.last_other
             self.blocked = {(x, z) for (x, y, z) in placed if ((gy + 2 <= y <= gy + 3) if (x, y, z) in other else (Y + 2 <= y <= Y + 3))}
             self.blocked -= {(x, z) for x in range(-1, 2) for z in range(-1, 2)}

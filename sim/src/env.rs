@@ -716,15 +716,17 @@ impl Env {
             let p = self.player.pos;
             reward += self.closer([p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32]);
         }
-        let success = self.reached();
-        let fell = (self.fell() || self.player.health <= DEATH_HEALTH) && !success; // a fall that (nearly) kills is a death too
-        if success {
+        let landed = self.reached();
+        if landed {
             // The landing's damage arrives a moment later; the keys are let go meanwhile.
             for _ in 0..DAMAGE_SETTLE_TICKS {
                 self.game_tick(&Input::default());
             }
             self.hit = self.player.pick(&self.world);
         }
+        // A landing on the goal that (nearly) kills is no win: dying to get there is never the way (AutoEnv._tick).
+        let success = landed && self.player.health > DEATH_HEALTH;
+        let fell = (self.fell() || self.player.health <= DEATH_HEALTH) && !success; // a fall that (nearly) kills is a death too
         // Stuck: no closer for 2 s and still about where it was then. A way around something first leads away from the
         // goal, so moving on counts too, for up to 10 s without getting any closer.
         let p = self.player.pos;
