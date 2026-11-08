@@ -101,14 +101,19 @@ class SimVecEnv(VecEnv):
         # Rounds where taking the blocks out is the point: they start without blocks in hand and have some (a course
         # with another slot selected, a duel arena that needs bridging). Training explores the hotbar key in these
         # only (SplitPPO.hotbar_floor); random key presses elsewhere took bridging from level 37 to 30.
+        # Only until the blocks are in hand: a floor that went on pressing random keys took them out again about every
+        # 3 s (8 keys of 9 hold no blocks), so even a round where it found them could not be won, and nothing showed
+        # that finding them leads anywhere (hand round still 0 at 106M).
         self.explore = np.zeros(n, bool)
+        self.explore_round = np.zeros(n, bool)
 
     def _new(self, i):
         spec, meta = self.makers[i].draw()
         hotbar, slot = spec["hotbar"], spec["slot"]
         has = any(items.placeable(k) and c > 0 for k, c in hotbar)
         in_hand = items.placeable(hotbar[slot][0]) and hotbar[slot][1] > 0
-        self.explore[i] = has and not in_hand and (spec["duel"] is None or spec["needs_blocks"])
+        self.explore_round[i] = has and not in_hand and (spec["duel"] is None or spec["needs_blocks"])
+        self.explore[i] = self.explore_round[i]
         self.batch.set_course(i, spec)
         self.batch.observe(i, self.obs[i])
         self.meta[i] = meta
@@ -131,6 +136,8 @@ class SimVecEnv(VecEnv):
     def step_wait(self):
         self.batch.step(self.actions, self.obs, self.rewards, self.dones)
         self.returns += self.rewards
+        for i in np.flatnonzero(self.explore_round):
+            self.explore[i] = self.batch.player(int(i))["held_count"] == 0
         infos = [{} for _ in range(self.num_envs)]
         for i in np.flatnonzero(self.dones):
             info = self.batch.report(int(i))

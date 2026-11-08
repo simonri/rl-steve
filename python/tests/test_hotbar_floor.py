@@ -59,4 +59,17 @@ with tempfile.TemporaryDirectory() as tmp:
     loaded = ta.load_policy(Path(tmp) / "f.zip", "cpu")
     assert loaded.action_dist.floor == 0.0, "the game plays without the floor"
     assert ta.SplitPPO.load(Path(tmp) / "f.zip", device="cpu", custom_objects=ta.QUIET_LOAD).hotbar_floor is None
+
+# The floor stops once the blocks are in hand: random presses after that would only take them out again.
+v = SimVecEnv(N, curriculum.Curriculum().levels, seed=6)
+v.set_attr("hand", "random")
+v.reset()
+i = int(np.flatnonzero(v.explore)[0])
+hot = v.batch.player(i)["hotbar"]
+key = next(s for s in range(items.SLOTS) if items.placeable(hot[s][0]) and hot[s][1] > 0) + 1
+acts = np.zeros((N, len(v.action_space.nvec)), np.int64)
+acts[:, 6] = acts[:, 7] = 5  # no turning
+acts[i, 9] = key
+v.step(acts)
+assert v.explore_round[i] and not v.explore[i], "blocks in hand: no more floor this round"
 print("hotbar floor ok")
