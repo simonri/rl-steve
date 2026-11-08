@@ -301,6 +301,11 @@ class ShortStretches(RecurrentRolloutBuffer):
     stretch of play once and does the padding there."""
 
     kick = None  # a Kickstart: the teacher's choices are kept for every tick (train_sim --kick)
+    # Learn only from the ticks whose advantage is at or above this quantile in size (train_sim --adv-filter), as
+    # Ataraxos does (arXiv 2511.07312: the top quarter, which learnt faster and ended higher). Most of a round's ticks
+    # are routine steps whose advantage is about 0: they still run through the network (the memory needs the whole
+    # sequence) but add nothing to any loss, value and policy alike, as there.
+    keep_quantile = None
 
     def reset(self):
         super().reset()
@@ -313,15 +318,30 @@ class ShortStretches(RecurrentRolloutBuffer):
             self.teacher[self.pos] = self.kick.label(args[0], args[3])
         super().add(*args, lstm_states=lstm_states, **kwargs)
 
+    def compute_returns_and_advantage(self, last_values, dones):
+        super().compute_returns_and_advantage(last_values, dones)
+        if self.keep_quantile is not None:
+            size = np.abs(self.advantages)
+            self.keep = (size >= np.quantile(size, self.keep_quantile)).astype(np.float32)
+
     def get(self, batch_size=None):
         if self.kick is not None and not self.generator_ready:
             self.teacher = self.swap_and_flatten(self.teacher)  # in the same order as everything else
+        if self.keep_quantile is not None and not self.generator_ready:
+            self.keep = self.swap_and_flatten(self.keep)
         yield from super().get(batch_size)
 
     def _card(self, name):
         if name not in self.on_card:
             self.on_card[name] = torch.as_tensor(self.__dict__[name], device=self.device)
         return self.on_card[name]
+
+    def _kept(self, picked):
+        """1 for each tick that counts in the losses (all, or the filtered ones), never none in a batch."""
+        if self.keep_quantile is None:
+            return torch.ones(len(picked), device=self.device)
+        kept = self._card("keep")[picked].flatten()
+        return kept if bool(kept.any()) else torch.ones_like(kept)
 
     def _get_samples(self, batch_inds, env_change, env=None):
         starts = np.logical_or(self.episode_starts[batch_inds].ravel() > 0, env_change[batch_inds].ravel() > 0)
@@ -358,7 +378,7 @@ class ShortStretches(RecurrentRolloutBuffer):
             returns=column("returns"),
             lstm_states=RNNStates((states[0], states[1]), (states[2], states[3])),
             episode_starts=column("episode_starts"),
-            mask=pad(torch.ones(len(batch_inds), device=self.device)),
+            mask=pad(self._kept(picked)),
         )
 
 
@@ -370,7 +390,31 @@ class SplitPPO(RecurrentPPO):
     def _excluded_save_params(self):
         # What the games looked like when it stopped is no use later, and with hundreds of simulated rounds it is most
         # of the file. Learning starts the games afresh when these are missing.
-        return super()._excluded_save_params() + ["actor", "_last_obs", "_last_original_obs", "_last_episode_starts", "_last_lstm_states", "ep_info_buffer", "ep_success_buffer"]
+        return super()._excluded_save_params() + ["actor", "_last_obs", "_last_original_obs", "_last_episode_starts", "_last_lstm_states", "ep_info_buffer", "ep_success_buffer",
+                                                  "ema", "ema_decay"]
+
+    ema = None  # an exponential moving average of the policy's weights (train_sim --ema), {name: tensor}
+    ema_decay = None
+
+    def update_ema(self):
+        """After each learning pass: ema = d * ema + (1 - d) * weights. Ataraxos (arXiv 2511.07312) evaluates and plays
+        with such an average: as good or better than the last weights, and far steadier from one point to the next.
+        Our duel Elo swung 1431 -> 1794 -> 1647 between ratings 4M decisions apart."""
+        with torch.no_grad():
+            for name, t in self.policy.state_dict().items():
+                if name not in self.ema or not t.is_floating_point():
+                    self.ema[name] = t.detach().clone()
+                else:
+                    self.ema[name].mul_(self.ema_decay).add_(t.detach(), alpha=1.0 - self.ema_decay)
+
+    def save_ema(self, path):
+        """The averaged weights as a model file like any other (load_policy, the rating, the viewer read it)."""
+        own = {k: v.clone() for k, v in self.policy.state_dict().items()}
+        self.policy.load_state_dict(self.ema)
+        try:
+            self.save(path)
+        finally:
+            self.policy.load_state_dict(own)
 
     def _setup_model(self):
         super()._setup_model()
@@ -439,6 +483,10 @@ class SplitPPO(RecurrentPPO):
                 del policy.evaluate_actions
                 if pull > 0:
                     del policy._get_action_dist_from_latent
+            if self.ema is not None:
+                self.update_ema()
+            if self.rollout_buffer.keep_quantile is not None and hasattr(self.rollout_buffer, "keep"):
+                self.logger.record("train/kept", float(self.rollout_buffer.keep.mean()))
             if pulls:
                 self.logger.record("train/kick_weight", pull)
                 self.logger.record("train/kick_ce", float(np.mean(pulls)))  # how far from the teacher, in nats
@@ -603,6 +651,9 @@ class Progress(BaseCallback):
     def save_latest(self):
         self.model.save(self.out / "latest_tmp")
         os.replace(self.out / "latest_tmp.zip", self.out / "latest.zip")
+        if self.model.ema is not None:
+            self.model.save_ema(self.out / "ema_tmp")
+            os.replace(self.out / "ema_tmp.zip", self.out / "ema.zip")
         tmp = self.out / "levels.tmp"
         tmp.write_text(json.dumps(self.cur.levels))
         os.replace(tmp, self.out / "levels.json")
