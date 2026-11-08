@@ -43,6 +43,12 @@ handen, ett slag gör svärdets skada bara med svärdet i handen.
 - Utforskningen av tangenten väger en tiondel (`spatial.ENTROPY_WEIGHTS`), och den börjar på ungefär ett tryck på
   tusen tick: med full vikt drev utforskningen slumpbyten till 1 % av alla tick, och i fighter höll den svärdet bara
   23 % av tiden. Vår egen avvägning, inte från en artikel.
+- Den låga vikten räckte inte för att hålla utforskningen vid liv: vid 76M beslut tryckte auto8 en tangent med under
+  0,0002 i sannolikhet per tick. Den hittade aldrig att det lönar sig att ta fram blocken, handrundan låg på 0, och
+  duell-arenan "gap" stoppade duell-läroplanen i 40M beslut. Därför ett golv under träning (`--hotbar-floor`,
+  `spatial.WeightedMultiCategorical.floor`): en andel av tangentvalen dras jämnt fördelat, oavsett hur lågt
+  modellens egen sannolikhet går. 0,005 ger ett tryck ungefär var 11:e sekund. PPO räknar med den blandade
+  fördelningen, så sannolikheterna stämmer. Spelet, viewern, benchmark och rating spelar utan golv.
 - En äldre modell laddas med de nya indata på 0 och de gamla valen oförändrade (`train_auto.transfer`). De två gamla
   värdena för handen ("slot 0", "slot 1") betyder nu "block eller tom hand" och "svärd i handen": samma värden som
   förut i varje gammal situation.

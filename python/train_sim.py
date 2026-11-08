@@ -55,6 +55,7 @@ def main():
     p.add_argument("--kick-over", type=int, default=20_000_000, help="decisions until the pull is gone")
     p.add_argument("--ema", type=float, help="keep an average of the weights with this decay per learning pass, saved as ema.zip (e.g. 0.99). Kept in net.json")
     p.add_argument("--adv-filter", type=float, help="learn only from ticks whose advantage size is at or above this quantile (e.g. 0.75). Kept in net.json")
+    p.add_argument("--hotbar-floor", type=float, help="while training, this share of hotbar-key choices is uniform (spatial.WeightedMultiCategorical.floor, e.g. 0.005). Kept in net.json")
     p.add_argument("--minutes", type=float, help="stop after this long (experiments that compare settings at the same wall-clock time)")
     p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
@@ -82,7 +83,7 @@ def main():
     net = json.loads(net_file.read_text()) if net_file.exists() else dict(critic_memory=a.critic_memory, normalize_inputs=a.normalize_inputs, entities=a.entities,
                                                                            hl_gauss=a.hl_gauss, gamma=a.gamma or ta.GAMMA,
                                                                            kick=dict(teacher=str(Path(a.kick).resolve()), weight=a.kick_weight, over=a.kick_over) if a.kick else None,
-                                                                           ema=a.ema, adv_filter=a.adv_filter)
+                                                                           ema=a.ema, adv_filter=a.adv_filter, hotbar_floor=a.hotbar_floor)
     net.setdefault("hl_gauss", False)
     net.setdefault("gamma", ta.GAMMA)  # runs from before it could be set
     if a.gamma and a.gamma != net["gamma"]:
@@ -95,6 +96,9 @@ def main():
                   ent_coef=ta.ENTROPY, target_kl=ta.TARGET_KL, device="cuda", policy_kwargs=ta.policy_kwargs(net["critic_memory"], net["entities"], hl_gauss=net["hl_gauss"]), seed=a.seed)
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     model.rollout_buffer.keep_quantile = net.get("adv_filter")
+    if net.get("hotbar_floor"):
+        model.policy.action_dist.floor = net["hotbar_floor"]  # training only: a loaded model has none
+        print(f"hotbar key: {net['hotbar_floor']} of its choices uniform while training", flush=True)
     if net.get("kick"):
         k = net["kick"]
         model.rollout_buffer.kick = ta.Kickstart(ta.load_policy(k["teacher"], model.device), k["weight"], k["over"])
