@@ -170,7 +170,8 @@ class WeightedMultiCategorical(MultiCategoricalDistribution):
     """MultiCategoricalDistribution whose entropy weighs each action by ENTROPY_WEIGHTS.
 
     `floor` (training only, train_sim --hotbar-floor): the hotbar key is drawn from (1 - floor) * the model's choice
-    + floor * uniform over its 10 values. Why: with the small entropy weight above, auto8's chance to press any key
+    + floor * uniform over its 10 values. A number for every row, or a column with one per row (SplitPPO sets it per
+    round: only rounds that start without blocks in hand get one). Why: with the small entropy weight above, auto8's chance to press any key
     fell below 0.0002 a tick by 76M decisions (measured 2026-11-08), so it never found that taking its blocks out pays
     (+0.5), and the duel arena that needs it ("gap") stalled the duel curriculum for 40M decisions. A floor keeps a
     little exploration however low the model's own leaning goes, unlike an entropy bonus that the reward can outweigh.
@@ -181,9 +182,11 @@ class WeightedMultiCategorical(MultiCategoricalDistribution):
 
     def proba_distribution(self, action_logits):
         super().proba_distribution(action_logits)
-        if self.floor > 0 and len(self.distribution) == len(ENTROPY_WEIGHTS):
+        floor = self.floor
+        some = bool((floor > 0).any()) if torch.is_tensor(floor) else floor > 0
+        if some and len(self.distribution) == len(ENTROPY_WEIGHTS):
             last = self.distribution[-1]
-            probs = (1.0 - self.floor) * last.probs + self.floor / last.probs.shape[-1]
+            probs = (1.0 - floor) * last.probs + floor / last.probs.shape[-1]
             self.distribution[-1] = torch.distributions.Categorical(probs=probs)
         return self
 

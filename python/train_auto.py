@@ -308,16 +308,24 @@ class ShortStretches(RecurrentRolloutBuffer):
     # are routine steps whose advantage is about 0: they still run through the network (the memory needs the whole
     # sequence) but add nothing to any loss, value and policy alike, as there.
     keep_quantile = None
+    # The hotbar floor each round played with this tick (SplitPPO.hotbar_floor): learning must use the same one, or
+    # the probabilities PPO compares would not be those it played with.
+    floors = False
+    current_floor = None
 
     def reset(self):
         super().reset()
         self.on_card = {}
         if self.kick is not None:
             self.teacher = np.zeros((self.buffer_size, self.n_envs, self.kick.width), np.float32)
+        if self.floors:
+            self.floor_used = np.zeros((self.buffer_size, self.n_envs), np.float32)
 
     def add(self, *args, lstm_states, **kwargs):
         if self.kick is not None:  # args: observations, actions, rewards, episode starts, values, log-probs
             self.teacher[self.pos] = self.kick.label(args[0], args[3])
+        if self.floors and self.current_floor is not None:
+            self.floor_used[self.pos] = self.current_floor
         super().add(*args, lstm_states=lstm_states, **kwargs)
 
     def compute_returns_and_advantage(self, last_values, dones):
@@ -331,6 +339,8 @@ class ShortStretches(RecurrentRolloutBuffer):
             self.teacher = self.swap_and_flatten(self.teacher)  # in the same order as everything else
         if self.keep_quantile is not None and not self.generator_ready:
             self.keep = self.swap_and_flatten(self.keep)
+        if self.floors and not self.generator_ready:
+            self.floor_used = self.swap_and_flatten(self.floor_used)
         yield from super().get(batch_size)
 
     def _card(self, name):
@@ -366,6 +376,8 @@ class ShortStretches(RecurrentRolloutBuffer):
         firsts = picked[torch.as_tensor(first, device=self.device)]
         states = [self._card(name)[firsts].swapaxes(0, 1).contiguous() for name in ("hidden_states_pi", "cell_states_pi", "hidden_states_vf", "cell_states_vf")]
         self.last_returns = column("returns")  # for an HL-Gauss value's loss (SplitPPO.train)
+        if self.floors:
+            self.last_floor = column("floor_used").unsqueeze(1)  # the hotbar floor each tick was played with
         if self.kick is not None:
             # Padding rows get -inf: no teacher choice there, so they add nothing to the pull (SplitPPO.train).
             self.last_teacher = pad(self._card("teacher")[picked], float("-inf"))
@@ -393,7 +405,7 @@ class SplitPPO(RecurrentPPO):
         # What the games looked like when it stopped is no use later, and with hundreds of simulated rounds it is most
         # of the file. Learning starts the games afresh when these are missing.
         return super()._excluded_save_params() + ["actor", "_last_obs", "_last_original_obs", "_last_episode_starts", "_last_lstm_states", "ep_info_buffer", "ep_success_buffer",
-                                                  "ema", "ema_decay"]
+                                                  "ema", "ema_decay", "hotbar_floor"]
 
     ema = None  # an exponential moving average of the policy's weights (train_sim --ema), {name: tensor}
     ema_decay = None
@@ -470,9 +482,15 @@ class SplitPPO(RecurrentPPO):
                 to_dist = policy._get_action_dist_from_latent
                 policy._get_action_dist_from_latent = lambda latent: dists.append(to_dist(latent)) or dists[-1]
 
+            floors = self.rollout_buffer.floors
+
             def counted(*args, **kwargs):
                 calls[0] += 1
+                if floors:
+                    policy.action_dist.floor = self.rollout_buffer.last_floor
                 values, log_prob, entropy = evaluate(*args, **kwargs)
+                if floors:
+                    policy.action_dist.floor = 0.0
                 if getattr(policy, "hl_gauss", False):
                     # The library's value loss is mean((returns - values)^2). Handing it returns - sqrt(CE) makes
                     # that exactly the cross-entropy of the value's bins against the HL-Gauss target, gradient and
@@ -527,9 +545,35 @@ class SplitPPO(RecurrentPPO):
             f.write(prof.key_averages().table(sort_by="cpu_time_total", row_limit=25, max_name_column_width=70))
         os.environ.pop("PROFILE_LEARNING")
 
+    hotbar_floor = None  # train_sim --hotbar-floor: the floor for rounds that start without blocks in hand
+
     def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
-        with self.playing():
-            return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+        rounds = env
+        while not hasattr(rounds, "explore") and hasattr(rounds, "venv"):
+            rounds = rounds.venv
+        if not self.hotbar_floor or not hasattr(rounds, "explore"):
+            with self.playing():
+                return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+        policy = self.policy
+        forward = policy.forward
+
+        def with_floor(*args, **kwargs):
+            # The floor only while the model picks its own inputs: the model-played opponents use this policy too,
+            # after it, and get none.
+            floor = rounds.explore.astype(np.float32) * self.hotbar_floor
+            rollout_buffer.current_floor = floor
+            policy.action_dist.floor = torch.as_tensor(floor, device=self.device).unsqueeze(1)
+            try:
+                return forward(*args, **kwargs)
+            finally:
+                policy.action_dist.floor = 0.0
+
+        policy.forward = with_floor
+        try:
+            with self.playing():
+                return super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+        finally:
+            del policy.forward
 
 
 def bonus_weight_for(cur):

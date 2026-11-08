@@ -47,8 +47,12 @@ handen, ett slag gör svärdets skada bara med svärdet i handen.
   0,0002 i sannolikhet per tick. Den hittade aldrig att det lönar sig att ta fram blocken, handrundan låg på 0, och
   duell-arenan "gap" stoppade duell-läroplanen i 40M beslut. Därför ett golv under träning (`--hotbar-floor`,
   `spatial.WeightedMultiCategorical.floor`): en andel av tangentvalen dras jämnt fördelat, oavsett hur lågt
-  modellens egen sannolikhet går. 0,005 ger ett tryck ungefär var 11:e sekund. PPO räknar med den blandade
-  fördelningen, så sannolikheterna stämmer. Spelet, viewern, benchmark och rating spelar utan golv.
+  modellens egen sannolikhet går. PPO räknar med den blandade fördelningen, så sannolikheterna stämmer. Spelet,
+  viewern, benchmark och rating spelar utan golv.
+- Först gällde golvet (0,005) i alla rundor. På 4,4M beslut föll bridge från nivå 37 till 30 (provet 28/32 → 6/32)
+  och läroplanen från 184 till 164: slumptryck tog blocken ur handen mitt på banorna. Nu gäller golvet bara i rundor
+  som börjar utan block i handen men har block (banor med slumpad hand, duell-arenan "gap"; `SimVecEnv.explore`),
+  där bytet är själva uppgiften. Där är det 0,02. Varje ticks golv sparas och används igen i inlärningen.
 - En äldre modell laddas med de nya indata på 0 och de gamla valen oförändrade (`train_auto.transfer`). De två gamla
   värdena för handen ("slot 0", "slot 1") betyder nu "block eller tom hand" och "svärd i handen": samma värden som
   förut i varje gammal situation.

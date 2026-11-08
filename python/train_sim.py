@@ -55,7 +55,7 @@ def main():
     p.add_argument("--kick-over", type=int, default=20_000_000, help="decisions until the pull is gone")
     p.add_argument("--ema", type=float, help="keep an average of the weights with this decay per learning pass, saved as ema.zip (e.g. 0.99). Kept in net.json")
     p.add_argument("--adv-filter", type=float, help="learn only from ticks whose advantage size is at or above this quantile (e.g. 0.75). Kept in net.json")
-    p.add_argument("--hotbar-floor", type=float, help="while training, this share of hotbar-key choices is uniform (spatial.WeightedMultiCategorical.floor, e.g. 0.005). Kept in net.json")
+    p.add_argument("--hotbar-floor", type=float, help="while training, this share of hotbar-key choices is uniform in rounds that start without blocks in hand (e.g. 0.02). Kept in net.json")
     p.add_argument("--minutes", type=float, help="stop after this long (experiments that compare settings at the same wall-clock time)")
     p.add_argument("--no-evals", action="store_true", help="no exams, ratings or benchmarks during the run (experiments: benchmark after)")
     a = p.parse_args()
@@ -97,8 +97,11 @@ def main():
     model = ta.SplitPPO(MemoryPolicy, vec, **kwargs)
     model.rollout_buffer.keep_quantile = net.get("adv_filter")
     if net.get("hotbar_floor"):
-        model.policy.action_dist.floor = net["hotbar_floor"]  # training only: a loaded model has none
-        print(f"hotbar key: {net['hotbar_floor']} of its choices uniform while training", flush=True)
+        # Only in rounds that start without blocks in hand (SimVecEnv.explore), and only while training.
+        model.hotbar_floor = net["hotbar_floor"]
+        model.rollout_buffer.floors = True
+        model.rollout_buffer.reset()
+        print(f"hotbar key: {net['hotbar_floor']} of its choices uniform in rounds that start without blocks in hand", flush=True)
     if net.get("kick"):
         k = net["kick"]
         model.rollout_buffer.kick = ta.Kickstart(ta.load_policy(k["teacher"], model.device), k["weight"], k["over"])

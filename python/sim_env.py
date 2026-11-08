@@ -98,9 +98,17 @@ class SimVecEnv(VecEnv):
         self.meta = [None] * n
         self.actions = None
         self.opponents = None  # opponents.Opponents when fights' opponents may be played by a model (self-play)
+        # Rounds where taking the blocks out is the point: they start without blocks in hand and have some (a course
+        # with another slot selected, a duel arena that needs bridging). Training explores the hotbar key in these
+        # only (SplitPPO.hotbar_floor); random key presses elsewhere took bridging from level 37 to 30.
+        self.explore = np.zeros(n, bool)
 
     def _new(self, i):
         spec, meta = self.makers[i].draw()
+        hotbar, slot = spec["hotbar"], spec["slot"]
+        has = any(items.placeable(k) and c > 0 for k, c in hotbar)
+        in_hand = items.placeable(hotbar[slot][0]) and hotbar[slot][1] > 0
+        self.explore[i] = has and not in_hand and (spec["duel"] is None or spec["needs_blocks"])
         self.batch.set_course(i, spec)
         self.batch.observe(i, self.obs[i])
         self.meta[i] = meta
