@@ -254,10 +254,16 @@ class AutoEnv(SkillEnv):
         kind = items.BUILD_BLOCKS[int(r.integers(len(items.BUILD_BLOCKS)))]
         # A fight starts with the sword. A course starts with its blocks in hand, except RANDOM_HAND of those that give
         # blocks: then something else is selected, and finding the blocks pays once (env.rs TOOK_BLOCKS_BONUS).
-        # Only in rounds that test nothing: in exams and in the rounds that move a dial, a hand it has not learned to
-        # change yet failed a third of them (bridge exam 31 -> 19/32, stairs 31 -> 10/32) and could lower its levels.
-        practice = self.tested is None and not self.exam_family
-        hold = "sword" if self.family == "duel" else "random" if r.random() < self.random_hand and practice else "blocks"
+        # Never in exams: a hand it has not learned to change yet failed a third of them (bridge exam 31 -> 19/32,
+        # stairs 31 -> 10/32). At first only rounds that test nothing got one, but late in the curriculum nearly every
+        # round tests a dial: on 2026-11-08 only 1 % of auto8's ticks were in such rounds, too few to learn changing slot
+        # at all (the hand round stayed at 0). Now any training round that gives blocks may, and one that does then
+        # tests nothing, so a hand it cannot change yet never lowers a dial.
+        draw = r.random()
+        gives = int(spec.get("blocks", 0)) > 0
+        hold = "sword" if self.family == "duel" else "random" if gives and not self.exam_family and draw < self.random_hand else "blocks"
+        if hold == "random":
+            self.tested = None
         if self.hand is not None and self.family != "duel":  # set from outside: the benchmark's hand round (benchmark.py)
             hold = self.hand
         self.hotbar, self.hotbar_slot = items.layout(r, int(spec.get("blocks", 0)), kind, sword, hold)

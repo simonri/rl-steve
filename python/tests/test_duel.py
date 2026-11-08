@@ -165,8 +165,8 @@ def main():
     line = [(step[0] * a, step[1] * a) for a in range(12)]
     assert [c in cols for c in line] == [True] * 2 + [False] * 9 + [True], [c in cols for c in line]
     assert spec["blocks"] >= 9
-    # A course to build on starts with something else in hand now and then (RANDOM_HAND), in rounds that test nothing
-    # (never in an exam or a round that moves a dial), and the first time it has its blocks in hand that pays once
+    # A course to build on starts with something else in hand now and then (RANDOM_HAND; never in an exam, and such a
+    # round then tests nothing, so it cannot move a dial), and the first time it has its blocks in hand that pays once
     # (took blocks); a course that starts with them in hand never pays it.
     import auto_env
     K = len(items.KINDS) + 1
@@ -187,8 +187,9 @@ def main():
     v = SimVecEnv(256, lv, seed=8)  # training rounds, of every open kind
     obs = v.reset()
     holds, blocks = hands(obs)
-    building = np.array([b is not None for b in blocks]) & np.array([m["tested"] is None and m["family"] != "duel" for m in v.meta])
-    assert 0.1 < 1 - holds[building].mean() < 0.5, holds[building].mean()
+    building = np.array([b is not None for b in blocks]) & np.array([m["family"] != "duel" for m in v.meta])
+    assert 0.1 < 1 - holds[building].mean() < 0.5, holds[building].mean()  # about RANDOM_HAND of every training course
+    assert all(v.meta[i]["tested"] is None for i in np.flatnonzero(building & ~holds)), "a round with another hand tests nothing"
     a = idle(obs, 0)
     a[:, 9] = [b + 1 if b is not None else 0 for b in blocks]
     for t in range(3):  # pressing the blocks' key three times: it pays once, only where they were not in hand
