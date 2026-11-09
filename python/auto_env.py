@@ -59,7 +59,8 @@ DETOUR_TICKS = 200  # longest it may go around something without getting closer:
 RULES18 = True  # 1.8 healing and combat, as on Hypixel (combat18.py); the mod sets the same
 DUEL_FALL_MARGIN = 3.0  # below the arena by this much is out of the fight
 RANDOM_HAND = 0.3  # of courses that give blocks: they start with another slot selected (_with_hotbar)
-TOOK_BLOCKS_BONUS = 0.5  # env.rs: the first time in such a round it has blocks in hand
+TOOK_BLOCKS_BONUS = 0.5
+GAP_CLOSER, GAP_ARRIVED = 0.1, 1.0  # env.rs: per block closer than ever to the other island in a fight that needs blocks  # env.rs: the first time in such a round it has blocks in hand
 DUEL_BLOCKS = 16  # in hand for a fight, to clutch or block a way
 DUEL_TICKS = 600  # 30 seconds to win a fight
 HEALTH_POINTS = 0.3  # env.rs: per health point dealt or taken
@@ -812,6 +813,7 @@ class AutoEnv(SkillEnv):
         has_blocks = any(items.placeable(k_) and c_ > 0 for k_, c_ in getattr(self, "hotbar", []))
         needs = self.family == "duel" and getattr(self, "needs_blocks", False)
         self.took_blocks = (self.family == "duel" and not needs) or not has_blocks or (items.placeable(k) and c > 0)  # env.rs took_blocks
+        self.gap_best = self._gap_distance(self.obs) if needs else math.inf  # env.rs gap_best
         self.foe_hits = 1.0  # env.rs foe_hits
         self.visited = set()
         self.history2 = collections.deque([(0.0,)] * HISTORY, maxlen=HISTORY)
@@ -969,6 +971,11 @@ class AutoEnv(SkillEnv):
         if not self.took_blocks and self._in_hand(o) > 0:  # a fight that needs blocks (env.rs needs_blocks): found them
             self.took_blocks = True
             reward += self._points("took blocks", TOOK_BLOCKS_BONUS)
+        if math.isfinite(self.gap_best) and self.gap_best > GAP_ARRIVED:  # env.rs GAP_CLOSER
+            now = self._gap_distance(o)
+            if now < self.gap_best:
+                reward += self._points("closer to the island", GAP_CLOSER * (self.gap_best - max(now, GAP_ARRIVED)))
+                self.gap_best = now
         players = o.get("players", [])
         # The event bonuses, zero-sum and weighted (shaping.rs): the game says whether its click was on an opponent in
         # reach ("struck"), its hit that counted ("landed": feet distance across, critical, with a sword), and the same
@@ -1014,6 +1021,11 @@ class AutoEnv(SkillEnv):
                 "blocks_used": 0, "blocks_needed": self.par, "family": self.family, "tested": self.tested, "at": self.drawn_at, "landed": 0, "pushes": self.pushes_given, "shift_share": 0.0,
                 "parts": dict(self.parts)}
         return float(reward) * self.reward_scale, term, False, info
+
+    def _gap_distance(self, o):
+        """env.rs gap_distance: across the ground to the middle of the goal's block, the near edge of the other island."""
+        x, _, z = o["pos"]
+        return math.hypot(x - self.goal_x - 0.5, z - self.goal_z - 0.5)
 
     def _target(self, o):
         """In a fight, the goal the model goes for (env.rs track_target): the nearest opponent still in it that stands

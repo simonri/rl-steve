@@ -77,10 +77,10 @@ const CLUTCH_BONUS: f64 = 2.0; // back on a block after a push, without falling
 const SAVED_BLOCK_BONUS: f64 = 0.3; // at the goal, per block under the estimated need: as much as a block over it costs
 
 /// The point rules, in the order info["parts"] lists them.
-pub const PARTS: [&str; 26] = [
+pub const PARTS: [&str; 27] = [
     "time", "click without blocks", "shift without blocks", "looking up", "landed on a block", "progress", "blocks", "closer than ever", "fall damage", "goal",
     "speed", "death", "stuck", "stayed on the start", "clutched", "blocks saved", "damage dealt", "damage taken", "won", "lost", "aim", "missed swing", "long hit", "critical hit", "took blocks",
-    "swing at nobody",
+    "swing at nobody", "closer to the island",
 ];
 const P_TIME: usize = 0;
 const P_EMPTY_CLICK: usize = 1;
@@ -107,9 +107,18 @@ const P_LONG_HIT: usize = 22;
 const P_CRIT: usize = 23;
 const P_TOOK_BLOCKS: usize = 24;
 const P_BLIND_SWING: usize = 25;
+const P_GAP: usize = 26;
 /// A course to build on that starts with something else in hand (AutoEnv._with_hotbar, RANDOM_HAND): the first time in
 /// the round it has blocks in hand pays this, once. Finding them in the hotbar is the one new thing such a round asks.
 const TOOK_BLOCKS_BONUS: f64 = 0.5;
+/// In a fight that needs blocks (Course.needs_blocks): per block closer than ever to the near edge of the opponent's
+/// island (the course goal), across the ground, until within GAP_ARRIVED. Why: on 2026-11-09 auto8 took its blocks
+/// out in 100 % of these rounds but then placed about 6 of 16 and ended 9.8 blocks away on average: nothing in a
+/// fight paid for building toward the other island, as "closer than ever" does on a course, and 57 % timed out.
+/// About 1 for the whole way over (a 9-block gap); only its own way to a fixed spot counts, so an opponent cannot
+/// give it, and it cannot be farmed (only a new best pays). AutoEnv GAP_CLOSER.
+const GAP_CLOSER: f64 = 0.1;
+const GAP_ARRIVED: f64 = 1.0;
 const HEALTH_POINTS: f64 = 0.3; // per health point dealt or taken in a fight: a trade of hits is worth nothing
 const FIGHT_RESULT: f64 = 10.0; // winning or losing a fight
 /// Below the world (its bottom at -64, less 64) a player takes this every tick, whatever its hurt resistance.
@@ -338,6 +347,7 @@ pub struct Env {
     push_airborne: bool, // it has left the ground since
     pushes_given: i32,
     took_blocks: bool, // it has had blocks in hand this round (TOOK_BLOCKS_BONUS), or the round needs none
+    gap_best: f64,     // its nearest yet to the opponent's island, across the ground (GAP_CLOSER); infinite when not needed
     pub skills: Skills,
     foe_hits: f64,     // hand_share of the opponents' hits last tick: their damage shows this tick
     pub opponents: Vec<Opponent>,
@@ -447,6 +457,7 @@ impl Env {
             push_airborne: false,
             pushes_given: 0,
             took_blocks: true, // set below from the hand it starts with
+            gap_best: f64::INFINITY,
             skills: Skills { took_blocks_at: -1, ..Skills::default() },
             foe_hits: 1.0,
             opponents: Vec::new(),
@@ -467,6 +478,9 @@ impl Env {
         env.potential = env.fight_potential();
         env.took_blocks = (env.course.duel.is_some() && !env.course.needs_blocks) || env.player.blocks() == 0 || env.player.held() > 0;
         env.skills.needed_blocks = !env.took_blocks;
+        if env.course.duel.is_some() && env.course.needs_blocks {
+            env.gap_best = env.gap_distance();
+        }
         env.best = env.distance();
         env.ground_distance = env.best;
         env.hit = env.player.pick(&env.world);
@@ -484,6 +498,13 @@ impl Env {
 
     /// AutoEnv._target: in a fight, the goal moves to the nearest opponent still in it that stands over the arena's
     /// floor. One going over the edge leaves it where it last was over the floor, so the goal is never out over the void.
+    /// Across the ground from the model to the middle of the course goal's block: the near edge of the opponent's
+    /// island in a fight (GAP_CLOSER).
+    fn gap_distance(&self) -> f64 {
+        let [x, _, z] = self.player.pos;
+        (x - self.course.goal[0] as f64 - 0.5).hypot(z - self.course.goal[1] as f64 - 0.5)
+    }
+
     fn track_target(&mut self) {
         if self.course.duel.is_none() {
             return;
@@ -804,6 +825,13 @@ impl Env {
             self.took_blocks = true; // a fight that needs blocks to get to the opponent (Course.needs_blocks)
             self.skills.took_blocks_at = self.t;
             reward += self.points(P_TOOK_BLOCKS, TOOK_BLOCKS_BONUS);
+        }
+        if self.gap_best.is_finite() && self.gap_best > GAP_ARRIVED {
+            let now = self.gap_distance();
+            if now < self.gap_best {
+                reward += self.points(P_GAP, GAP_CLOSER * (self.gap_best - now.max(GAP_ARRIVED)));
+                self.gap_best = now;
+            }
         }
         if input.attack {
             self.skills.swings += 1;

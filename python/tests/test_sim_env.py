@@ -49,10 +49,16 @@ def main():
     auto_env.RANDOM_HAND = 0.0  # blocks in hand from the start: a push is only given when it can be saved
     pushes = compare(max(40, rounds), ["bridge", "treenan", "bedwars"], 7, 5000, keys=0.01, push=True)
     assert pushes > 0, "rounds with pushes"
+    # Fights that need blocks: taking them out and building toward the other island pay the same in both.
+    compare(30, ["duel"], 11, 9000, keys=0.05, force=dict(arena=3, distance=len(curriculum.FAMILIES["duel"]["distance"]) - 1))
+    assert SEEN["closer to the island"] > 0 and SEEN["took blocks"] > 0, SEEN
     print("sim env ok")
 
 
-def compare(rounds, families, seed0, course0, keys, push=False):
+SEEN = {"closer to the island": 0, "took blocks": 0}
+
+
+def compare(rounds, families, seed0, course0, keys, push=False, force=None):
     rng = np.random.default_rng(seed0)
     worst, ticks, bad, pushes = 0.0, 0, 0, 0
     ref = None
@@ -62,6 +68,8 @@ def compare(rounds, families, seed0, course0, keys, push=False):
         for d, values in curriculum.FAMILIES[family].items():
             if True:  # every dial, expert ones too
                 levels[family][d] = int(rng.integers(len(values)))
+        if force:
+            levels[family].update(force)
         if push and "push" in curriculum.FAMILIES[family]:
             levels[family]["push"] = len(curriculum.FAMILIES[family]["push"]) - 1
         if ref is None:
@@ -103,6 +111,8 @@ def compare(rounds, families, seed0, course0, keys, push=False):
                     assert rep[key] == info[key], (n, key, rep[key], info[key])
                 for k, v in info["parts"].items():
                     assert abs(rep["parts"].get(k, 0.0) - v) < 1e-6, (n, k, rep["parts"].get(k), v)
+                    if k in SEEN and v != 0:
+                        SEEN[k] += 1
                 break
         else:
             pushes += ref.pushes_given  # a round that ran on: its pushes count too
